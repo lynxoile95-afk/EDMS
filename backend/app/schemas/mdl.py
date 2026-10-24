@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+import uuid
+from datetime import date, datetime
+
+from pydantic import BaseModel, Field
+
+from app.schemas.common import ORMModel
+
+
+class MDLPreviewRequest(BaseModel):
+    sheet_name: str | None = None
+
+
+class MDLPreviewOut(BaseModel):
+    sheets: list[str]
+    active_sheet: str | None
+    header_row: int
+    headers: list[str]
+    suggested_mapping: dict[str, int]
+    sample_rows: list[list] = []
+
+
+class MDLImportRequest(BaseModel):
+    """Sent as a JSON string in the `config` form field of the multipart request."""
+
+    sheet_name: str | None = None
+    header_row: int | None = None
+    mapping: dict[str, int]
+    auto_create_lookups: bool = True
+    dry_run: bool = False
+
+
+class MDLImportEntry(BaseModel):
+    row: int
+    severity: str
+    column: str | None = None
+    message: str
+
+
+class MDLImportReport(BaseModel):
+    status: str
+    batch_id: str | None = None
+    total_rows: int = 0
+    imported: int = 0
+    updated: int = 0
+    errors: int = 0
+    warnings: int = 0
+    entries: list[MDLImportEntry] = []
+
+
+class MDLItemOut(ORMModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    doc_code: str
+    title: str
+    doc_type: str | None = None
+    current_rev: str | None = None
+    rev_seq: int = 0
+    status: str | None = None
+    weight: float = 1.0
+    page_count: int | None = None
+    due_date: date | None = None
+    planned_issue_date: date | None = None
+    is_active: bool
+    discipline_id: uuid.UUID | None = None
+    unit_id: uuid.UUID | None = None
+    discipline_code: str | None = None
+    unit_code: str | None = None
+    revision_count: int = 0
+
+
+class MDLItemUpdate(BaseModel):
+    title: str | None = None
+    doc_type: str | None = None
+    current_rev: str | None = None
+    status: str | None = None
+    weight: float | None = None
+    discipline_code: str | None = None
+    unit_code: str | None = None
+    aliases: list[str] | None = None
+    reason: str | None = None
+
+
+class MDLImportBatchOut(ORMModel):
+    id: uuid.UUID
+    filename: str
+    status: str
+    row_count: int
+    imported_count: int
+    error_count: int
+    warning_count: int
+    created_at: datetime
+    report: list = []

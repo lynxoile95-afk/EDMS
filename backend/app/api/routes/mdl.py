@@ -1,0 +1,279 @@
+"""MDL import wizard, listing, editing and export."""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import uuid
+
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import Response
+from sqlalchemy import func, or_, select
+
+from app.api.deps import CurrentUser, DbSession, ProjectDep
+from app.models import DocumentRevision, Discipline, MDLImportBatch, MDLItem, ProjectMember, Unit
+from app.models.enums import ProjectRole, Severity
+from app.schemas.mdl import (
+    MDLImportBatchOut,
+    MDLImportRequest,
+    MDLImportReport,
+    MDLItemOut,
+    MDLItemUpdate,
+    MDLPreviewOut,
+)
+from app.services import acl, audit, mdl_import
+from app.services.normalization import is_valid_code, normalize_code, normalize_title
+from app.services.revisions import rev_to_seq
+
+router = APIRouter(prefix="/projects/{project_id}/mdl", tags=["mdl"])
+
+
+def _item_out(item: MDLItem, revision_count: int = 0) -> MDLItemOut:
+    return MDLItemOut(
+        id=item.id,
+        project_id=item.project_id,
+        doc_code=item.doc_code,
+        title=item.title,
+        doc_type=item.doc_type,
+        current_rev=item.current_rev,
+        rev_seq=item.rev_seq,
+        status=item.status,
+        weight=item.weight,
+        page_count=item.page_count,
+        due_date=item.due_date,
+        planned_issue_date=item.planned_issue_date,
+        is_active=item.is_active,
+        discipline_id=item.discipline_id,
+        unit_id=item.unit_id,
+        discipline_code=item.discipline.code if item.discipline else None,
+        unit_code=item.unit.code if item.unit else None,
+        revision_count=revision_count,
+    )
+
+
+async def _save_temp(upload: UploadFile) -> str:
+    suffix = os.path.splitext(upload.filename or "mdl.xlsx")[1] or ".xlsx"
+    handle, path = tempfile.mkstemp(suffix=suffix)
+    try:
+        with os.fdopen(handle, "wb") as out:
+            while chunk := await upload.read(1024 * 1024):
+                out.write(chunk)
+    except Exception:
+        os.unlink(path)
+        raise
+    return path
+
+
+@router.post("/preview", response_model=MDLPreviewOut, summary="پیش‌نمایش فایل MDL و پیشنهاد نگاشت ستون‌ها")
+async def preview_mdl(
+    project: ProjectDep,
+    db: DbSession,
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    sheet_name: str | None = Form(None),
+) -> MDLPreviewOut:
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=422, detail="فقط فایل اکسل (xlsx) پذیرفته می‌شود.")
+    path = await _save_temp(file)
+    try:
+        data = mdl_import.preview(path, sheet_name)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"خواندن فایل ممکن نشد: {exc}") from exc
+    finally:
+        os.unlink(path)
+    return MDLPreviewOut(**data)
+
+
+@router.post("/import", response_model=MDLImportReport, summary="ایمپورت MDL با گزارش کامل اعتبارسنجی")
+async def import_mdl(
+    project: ProjectDep,
+    db: DbSession,
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    config: str = Form(..., description="JSON مطابق MDLImportRequest"),
+) -> MDLImportReport:
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    try:
+        request = MDLImportRequest(**json.loads(config))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"تنظیمات ایمپورت نامعتبر است: {exc}") from exc
+    if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=422, detail="فقط فایل اکسل (xlsx) پذیرفته می‌شود.")
+
+    path = await _save_temp(file)
+    try:
+        report = mdl_import.import_mdl(
+            db,
+            project=project,
+            file_path=path,
+            filename=file.filename or "mdl.xlsx",
+            mapping=request.mapping,
+            actor=user,
+            sheet_name=request.sheet_name,
+            header_row=request.header_row,
+            auto_create_lookups=request.auto_create_lookups,
+            dry_run=request.dry_run,
+        )
+        if request.dry_run:
+            db.rollback()
+        else:
+            db.commit()
+    finally:
+        os.unlink(path)
+    return MDLImportReport(**report.as_dict())
+
+
+@router.get("/items", summary="فهرست مدارک MDL با فیلتر و صفحه‌بندی")
+def list_items(
+    project: ProjectDep,
+    db: DbSession,
+    q: str | None = Query(None, description="جست‌وجو در کد یا عنوان"),
+    discipline: str | None = None,
+    status: str | None = None,
+    has_revision: bool | None = None,
+    page: int = Query(1, ge=1),
+    size: int = Query(25, ge=1, le=200),
+) -> dict:
+    stmt = select(MDLItem).where(MDLItem.project_id == project.id)
+    if q:
+        term = f"%{normalize_code(q)}%" if any(ch.isdigit() for ch in q) else f"%{q.strip()}%"
+        stmt = stmt.where(or_(MDLItem.doc_code_norm.like(term), MDLItem.title.like(f"%{q.strip()}%")))
+    if discipline:
+        stmt = stmt.join(Discipline, MDLItem.discipline_id == Discipline.id).where(
+            Discipline.code == discipline.upper()
+        )
+    if status:
+        stmt = stmt.where(MDLItem.status == status)
+    if has_revision is not None:
+        subquery = select(DocumentRevision.mdl_item_id).where(DocumentRevision.project_id == project.id)
+        stmt = stmt.where(MDLItem.id.in_(subquery) if has_revision else MDLItem.id.not_in(subquery))
+
+    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    items = list(
+        db.execute(
+            stmt.order_by(MDLItem.doc_code_norm).offset((page - 1) * size).limit(size)
+        ).scalars()
+    )
+    counts = dict(
+        db.execute(
+            select(DocumentRevision.mdl_item_id, func.count(DocumentRevision.id))
+            .where(DocumentRevision.project_id == project.id)
+            .group_by(DocumentRevision.mdl_item_id)
+        ).all()
+    )
+    return {
+        "total": total,
+        "page": page,
+        "size": size,
+        "items": [_item_out(item, counts.get(item.id, 0)).model_dump() for item in items],
+    }
+
+
+@router.patch("/items/{item_id}", response_model=MDLItemOut, summary="ویرایش ردیف MDL (با ثبت دلیل)")
+def update_item(
+    project: ProjectDep,
+    item_id: uuid.UUID,
+    payload: MDLItemUpdate,
+    db: DbSession,
+    user: CurrentUser,
+) -> MDLItemOut:
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    item = db.get(MDLItem, item_id)
+    if item is None or item.project_id != project.id:
+        raise HTTPException(status_code=404, detail="ردیف MDL یافت نشد.")
+    before = {
+        "title": item.title, "current_rev": item.current_rev, "status": item.status,
+        "doc_type": item.doc_type, "weight": item.weight,
+    }
+    updates = payload.model_dump(exclude_unset=True, exclude={"reason", "discipline_code", "unit_code"})
+    for field, value in updates.items():
+        setattr(item, field, value)
+    if payload.title:
+        item.title_norm = normalize_title(payload.title)
+    if payload.current_rev:
+        item.rev_seq = rev_to_seq(payload.current_rev, "auto")
+    if payload.discipline_code:
+        discipline = db.execute(
+            select(Discipline).where(
+                Discipline.project_id == project.id, Discipline.code == payload.discipline_code.upper()
+            )
+        ).scalar_one_or_none()
+        if discipline:
+            item.discipline_id = discipline.id
+    if payload.unit_code:
+        unit = db.execute(
+            select(Unit).where(Unit.project_id == project.id, Unit.code == payload.unit_code.upper())
+        ).scalar_one_or_none()
+        if unit:
+            item.unit_id = unit.id
+    if payload.aliases is not None:
+        item.aliases = payload.aliases
+    audit.record(
+        db, action="mdl.item.update", entity_type="mdl_item", entity_id=item.id, actor=user,
+        project_id=project.id, before=before,
+        after={**updates, "reason": payload.reason},
+    )
+    db.commit()
+    db.refresh(item)
+    return _item_out(item)
+
+
+@router.get("/import-batches", response_model=list[MDLImportBatchOut], summary="تاریخچه ایمپورت‌ها")
+def list_batches(project: ProjectDep, db: DbSession) -> list[MDLImportBatchOut]:
+    rows = db.execute(
+        select(MDLImportBatch)
+        .where(MDLImportBatch.project_id == project.id)
+        .order_by(MDLImportBatch.created_at.desc())
+        .limit(50)
+    ).scalars()
+    return [MDLImportBatchOut.model_validate(r) for r in rows]
+
+
+@router.get("/export", summary="خروجی اکسل MDL")
+def export_mdl(project: ProjectDep, db: DbSession) -> Response:
+    items = list(
+        db.execute(
+            select(MDLItem).where(MDLItem.project_id == project.id).order_by(MDLItem.doc_code_norm)
+        ).scalars()
+    )
+    payload = mdl_import.export_mdl_bytes(items)
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="MDL-{project.code}.xlsx"'},
+    )
+
+
+@router.get("/search", summary="جست‌وجوی فازی برای انتخاب مدرک")
+def search(
+    project: ProjectDep,
+    db: DbSession,
+    q: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=50),
+) -> list[dict]:
+    from app.services.code_matching import CodeMatcher
+
+    matcher = CodeMatcher(db, project.id)
+    candidates = matcher.match(q, None, limit=limit)
+    if candidates:
+        return [c.as_dict() for c in candidates]
+    like = f"%{q.strip()}%"
+    rows = db.execute(
+        select(MDLItem)
+        .where(MDLItem.project_id == project.id, MDLItem.title.like(like))
+        .limit(limit)
+    ).scalars()
+    return [
+        {
+            "mdl_item_id": str(item.id),
+            "doc_code": item.doc_code,
+            "title": item.title,
+            "discipline_code": item.discipline.code if item.discipline else None,
+            "score": 0.5,
+            "method": "title",
+            "reasons": ["تطبیق بر اساس عنوان"],
+        }
+        for item in rows
+    ]

@@ -1,0 +1,29 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Node / frontend ----
+node_modules/
+dist/
+.vite/
+*.local
+
+# ---- Env & secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Runtime artefacts ----
+uploads/
+storage/
+*.log
+celerybeat-schedule*
+.DS_Store

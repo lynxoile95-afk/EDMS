@@ -1,0 +1,63 @@
+"""SQLAlchemy models. Importing this package registers all mappers."""
+
+from app.models.core import (
+    Discipline,
+    Project,
+    ProjectMember,
+    TitleBlockTemplate,
+    Unit,
+    User,
+)
+from app.models.documents import (
+    DocumentRevision,
+    ExtractionField,
+    ExtractionResult,
+    ExtractionRun,
+    MDLImportBatch,
+    MDLItem,
+    Sheet,
+    SourceFile,
+    UploadSession,
+    ValidationIssue,
+)
+from app.models.transmittal import (
+    AuditLog,
+    Comment,
+    CommentList,
+    DDMRule,
+    DDMRuleRecipient,
+    NotificationLog,
+    NumberSequence,
+    Transmittal,
+    TransmittalLine,
+    TransmittalRecipient,
+)
+
+__all__ = [
+    "Discipline",
+    "Project",
+    "ProjectMember",
+    "TitleBlockTemplate",
+    "Unit",
+    "User",
+    "DocumentRevision",
+    "ExtractionField",
+    "ExtractionResult",
+    "ExtractionRun",
+    "MDLImportBatch",
+    "MDLItem",
+    "Sheet",
+    "SourceFile",
+    "UploadSession",
+    "ValidationIssue",
+    "AuditLog",
+    "Comment",
+    "CommentList",
+    "DDMRule",
+    "DDMRuleRecipient",
+    "NotificationLog",
+    "NumberSequence",
+    "Transmittal",
+    "TransmittalLine",
+    "TransmittalRecipient",
+]

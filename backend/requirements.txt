@@ -1,0 +1,36 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+gunicorn==23.0.0
+sqlalchemy==2.0.36
+alembic==1.14.0
+psycopg[binary]==3.2.3
+pydantic==2.10.4
+pydantic-settings==2.7.0
+email-validator==2.2.0
+python-multipart==0.0.20
+PyJWT==2.10.1
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+
+# storage / queue
+boto3==1.35.90
+celery[redis]==5.4.0
+redis==5.2.1
+
+# documents, extraction
+openpyxl==3.1.5
+PyMuPDF==1.25.1
+pdfplumber==0.11.4
+rapidfuzz==3.11.1
+pillow==11.0.0
+pytesseract==0.3.13
+httpx==0.28.1
+
+# rendering (transmittal cover sheet, Persian/RTL shaping)
+jinja2==3.1.5
+weasyprint==63.1
+reportlab==4.2.5
+arabic-reshaper==3.0.0
+python-bidi==0.6.3
+
+python-dateutil==2.9.0.post0

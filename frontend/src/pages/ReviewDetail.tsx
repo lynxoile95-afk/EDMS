@@ -25,6 +25,7 @@ export function ReviewDetail() {
 
   const [result, setResult] = useState<ExtractionResultDetail | null>(null);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
@@ -50,8 +51,12 @@ export function ReviewDetail() {
       setNotes(data.review_note ?? "");
       try {
         setFileUrl(await api.blobUrl(`/files/source-files/${data.source_file_id}`));
-      } catch {
+        setPreviewError(null);
+      } catch (previewFailure) {
         setFileUrl(null);
+        setPreviewError(
+          previewFailure instanceof ApiError ? previewFailure.detail : "دریافت فایل نقشه ناموفق بود.",
+        );
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "بارگذاری نتیجه استخراج ناموفق بود.");
@@ -144,7 +149,23 @@ export function ReviewDetail() {
             {fileUrl ? (
               <PdfViewer url={fileUrl} highlight={titleBlockBBox && titleBlockBBox.length === 4 ? normalizeBBox(titleBlockBBox, result) : null} />
             ) : (
-              <p className="p-6 text-center text-sm text-slate-500">فایل قابل نمایش نیست.</p>
+              <div className="flex h-full flex-col items-center justify-center gap-2">
+                <p className="text-sm text-rose-700">{previewError ?? "فایل قابل نمایش نیست."}</p>
+                <div className="flex gap-2">
+                  <Button className="btn-sm" onClick={() => void load()}>
+                    تلاش دوباره
+                  </Button>
+                  <Button
+                    className="btn-sm"
+                    onClick={() => void api.download(`/files/source-files/${result.source_file_id}`, result.file_name ?? "drawing.pdf")}
+                  >
+                    دریافت فایل
+                  </Button>
+                </div>
+                <p className="text-[10px] text-[#5c6b78]">
+                  اگر نمایش درون‌مروری مسدود باشد، فایل را دریافت و در مرورگر باز کنید.
+                </p>
+              </div>
             )}
           </div>
         </Card>

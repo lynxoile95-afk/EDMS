@@ -64,6 +64,25 @@ function dropCookie(name: string) {
   document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax`;
 }
 
+/**
+ * Headers that carry the credential on *three* channels.
+ *
+ * Some preview proxies strip `Authorization`, which is why the same token is also
+ * sent as `X-Access-Token` and as a cookie. Binary downloads go through the same
+ * helper — before this existed they only sent `Authorization` and every preview
+ * silently failed with 401 (the PDF viewer then showed «فایل قابل نمایش نیست»).
+ */
+function authHeaders(extra?: HeadersInit): Headers {
+  const headers = new Headers(extra);
+  const access = tokens.access;
+  if (access) {
+    headers.set("Authorization", `Bearer ${access}`);
+    headers.set("X-Access-Token", access);
+  }
+  headers.set("X-Requested-With", "XMLHttpRequest");
+  return headers;
+}
+
 export const tokens = {
   get access(): string | null {
     return localStorage.getItem(ACCESS_KEY);
@@ -93,18 +112,10 @@ export function setUnauthorizedHandler(handler: () => void) {
 }
 
 async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
-  const headers = new Headers(init.headers);
+  const headers = authHeaders(init.headers);
   if (!(init.body instanceof FormData) && init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const access = tokens.access;
-  if (access) {
-    headers.set("Authorization", `Bearer ${access}`);
-    // Second carrier: survives proxies that strip Authorization. The cookie set
-    // by `tokens.set` is the third one and needs no code here.
-    headers.set("X-Access-Token", access);
-  }
-  headers.set("X-Requested-With", "XMLHttpRequest");
 
   const response = await fetch(`${BASE_URL}${path}`, { ...init, headers, credentials: "include" });
 
@@ -177,12 +188,24 @@ export const api = {
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
   postForm: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
   /** Fetch a protected binary resource as a blob URL (used by the PDF viewer). */
-  async blobUrl(path: string): Promise<string> {
-    const headers = new Headers();
-    const access = tokens.access;
-    if (access) headers.set("Authorization", `Bearer ${access}`);
-    const response = await fetch(`${BASE_URL}${path}`, { headers, redirect: "follow" });
-    if (!response.ok) throw new ApiError(response.status, "دریافت فایل ناموفق بود.");
+  async blobUrl(path: string, retry = true): Promise<string> {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      headers: authHeaders(),
+      credentials: "include",
+      redirect: "follow",
+    });
+    if (response.status === 401 && retry && tokens.refresh) {
+      if (await tryRefresh()) return api.blobUrl(path, false);
+    }
+    if (!response.ok) {
+      const message =
+        response.status === 401
+          ? "برای دریافت فایل باید دوباره وارد شوید."
+          : response.status === 404
+            ? "فایل در مخزن پیدا نشد."
+            : `دریافت فایل ناموفق بود (کد ${response.status}).`;
+      throw new ApiError(response.status, message);
+    }
     return URL.createObjectURL(await response.blob());
   },
   async download(path: string, filename: string): Promise<void> {

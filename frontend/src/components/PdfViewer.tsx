@@ -118,7 +118,13 @@ export function PdfViewer({
 
       <div className="relative flex-1 overflow-auto bg-slate-200/60 p-3">
         {loading ? <Spinner label="در حال بارگذاری نقشه…" /> : null}
-        {error ? <p className="p-4 text-sm text-rose-700">{error}</p> : null}
+        {error ? (
+          <div className="p-3">
+            <p className="mb-2 text-sm text-rose-700">{error}</p>
+            {/* Fallback: let the browser's own PDF plugin render the same blob. */}
+            <iframe src={url} title="پیش‌نمایش PDF" className="h-[60vh] w-full border border-slate-300 bg-white" />
+          </div>
+        ) : null}
         <div className="pdf-page relative mx-auto w-fit">
           <canvas ref={canvasRef} className="rounded bg-white" />
           {highlight && highlight.length === 4 ? (

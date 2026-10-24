@@ -236,3 +236,39 @@ def test_acknowledge_by_non_recipient_fails(db: Session, project, users, ddm_rul
     db.commit()
     with pytest.raises(ValueError):
         transmittal_service.acknowledge(db, transmittal=draft, user=users["submitter"])
+
+
+def test_discipline_rule_without_purpose_applies_to_every_poi(db, project, users):
+    """Regression: a discipline rule pinned to IFR lost its reviewers for an IFC issue."""
+    from app.models import DDMRule, DDMRuleRecipient, Discipline, Unit
+    from app.models.enums import ActionRequired
+    from app.services import ddm
+
+    discipline = db.query(Discipline).filter_by(project_id=project.id, code="CIV").one()
+    rule = DDMRule(
+        project_id=project.id,
+        name="CIV routing",
+        discipline_id=discipline.id,
+        doc_type="DWG",
+        purpose=None,
+        default_action=ActionRequired.REVIEW,
+        due_days=10,
+        priority=10,
+    )
+    db.add(rule)
+    db.flush()
+    db.add(DDMRuleRecipient(rule_id=rule.id, user_id=users["reviewer"].id, action=ActionRequired.REVIEW))
+    db.commit()
+
+    for purpose in ("IFR", "IFC", "IFE", "IPC"):
+        resolved = ddm.resolve(
+            db,
+            project_id=project.id,
+            discipline_id=discipline.id,
+            unit_id=None,
+            doc_type="DWG",
+            purpose=purpose,
+            settings=project.settings,
+        )
+        recipient_ids = {r.user_id for r in resolved.recipients}
+        assert users["reviewer"].id in recipient_ids, f"purpose {purpose} lost the reviewer"

@@ -27,7 +27,7 @@ from app.models import (
     Unit,
     User,
 )
-from app.models.enums import ActionRequired, ProjectRole, PurposeOfIssue
+from app.models.enums import ActionRequired, ProjectRole
 from app.services.normalization import normalize_code, normalize_title
 from app.services.project_settings import merge_settings
 
@@ -159,7 +159,10 @@ def seed_demo() -> None:
                 name=f"توزیع {discipline_code} — نقشه",
                 discipline_id=disciplines[discipline_code].id,
                 doc_type=doc_type,
-                purpose=PurposeOfIssue.IFR,
+                # Purpose left open on purpose: discipline routing applies to every
+                # P.O.I (IFR/IFC/IFE/…). Pinning IFR made a later IFC issue fall back
+                # to the catch-all rule and silently lose the discipline reviewers.
+                purpose=None,
                 default_action=ActionRequired.REVIEW,
                 due_days=due,
                 priority=10,

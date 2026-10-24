@@ -87,8 +87,10 @@ def project(db: Session) -> Project:
     db.flush()
     civ = Discipline(project_id=project.id, code="CIV", name="عمران")
     mec = Discipline(project_id=project.id, code="MEC", name="مکانیک")
+    ele = Discipline(project_id=project.id, code="ELE", name="برق")
+    arc = Discipline(project_id=project.id, code="ARC", name="معماری")
     unit = Unit(project_id=project.id, code="U-100", name="یوتیلیتی")
-    db.add_all([civ, mec, unit])
+    db.add_all([civ, mec, ele, arc, unit])
     db.flush()
     for code, title, discipline, rev in (
         ("TST-CIV-DR-001", "Plot Plan", civ, "A"),
@@ -123,6 +125,7 @@ def users(db: Session, project: Project) -> dict[str, User]:
         ("reviewer", "reviewer@edms-test.com", ProjectRole.REVIEWER),
         ("submitter", "submitter@edms-test.com", ProjectRole.SUBMITTER),
         ("pm", "pm@edms-test.com", ProjectRole.PROJECT_MANAGER),
+        ("em", "em@edms-test.com", ProjectRole.ENGINEERING_MANAGER),
     ):
         user = User(
             email=email,

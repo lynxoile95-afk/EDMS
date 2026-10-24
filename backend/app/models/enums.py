@@ -11,10 +11,21 @@ class StrEnum(str, Enum):
 
 
 class ProjectRole(StrEnum):
+    """Role inside a project.
+
+    The review route this system implements is:
+
+    ``SUBMITTER`` (contractor) creates the sheet → ``DCC`` (document control)
+    controls and forwards it → ``ENGINEERING_MANAGER`` refers it to the right
+    discipline → the discipline ``REVIEWER`` answers → back to management.
+    ``PROJECT_MANAGER`` shares the management step.
+    """
+
     SUBMITTER = "submitter"
     REVIEWER = "reviewer"
     DCC = "dcc"
     PROJECT_MANAGER = "project_manager"
+    ENGINEERING_MANAGER = "engineering_manager"
     SYSTEM_ADMIN = "system_admin"
 
 
@@ -136,6 +147,22 @@ class TransmittalStatus(StrEnum):
     ACKNOWLEDGED = "acknowledged"
     CLOSED = "closed"
     CANCELLED = "cancelled"
+
+
+class TransmittalStage(StrEnum):
+    """Where the sheet sits in the review route (kept apart from its status)."""
+
+    DRAFT = "draft"            # contractor is still assembling it
+    DCC = "dcc"                # document control is checking it
+    MANAGEMENT = "management"  # project / engineering manager is directing it
+    DISCIPLINE = "discipline"  # a discipline engineer is reviewing it
+    CLOSED = "closed"          # route finished
+
+
+class ReferralStatus(StrEnum):
+    PENDING = "pending"
+    DONE = "done"
+    CANCELED = "canceled"
 
 
 class TransmittalLineStatus(StrEnum):

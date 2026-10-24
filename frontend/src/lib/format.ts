@@ -118,6 +118,30 @@ export const REFERRAL_LABELS: Record<string, string> = {
   for_construction: "For Information",
 };
 
+/** Where the sheet sits on contractor → DCC → management → discipline. */
+export const STAGE_LABELS: Record<string, string> = {
+  draft: "پیش‌نویس — پیمانکار",
+  dcc: "در حال کنترل — کارشناس کنترل اسناد",
+  management: "در حال بررسی مدیریت",
+  discipline: "در حال بررسی دیسیپلین",
+  closed: "بسته‌شده",
+};
+
+/** Stage chip tone, matching the status lamps used everywhere else. */
+export const STAGE_TONES: Record<string, "green" | "yellow" | "blue" | "red"> = {
+  draft: "yellow",
+  dcc: "blue",
+  management: "blue",
+  discipline: "yellow",
+  closed: "green",
+};
+
+export const REFERRAL_STATUS_LABELS: Record<string, string> = {
+  pending: "در انتظار پاسخ",
+  done: "پاسخ داده شد",
+  canceled: "لغو‌شده",
+};
+
 export const ACTION_LABELS: Record<string, string> = {
   review: "بررسی",
   approve: "تأیید",

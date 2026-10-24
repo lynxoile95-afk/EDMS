@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from app.models.enums import CommentDisposition, PURPOSE_PATTERN
+from app.models.enums import ActionRequired, CommentDisposition, PURPOSE_PATTERN
 from pydantic import BaseModel, Field
 
 from app.schemas.common import ORMModel
@@ -42,6 +42,46 @@ class TransmittalCreate(BaseModel):
     extra_recipient_ids: list[uuid.UUID] = []
 
 
+class ReferralOut(ORMModel):
+    id: uuid.UUID
+    transmittal_id: uuid.UUID
+    from_user_id: uuid.UUID | None = None
+    from_user_name: str | None = None
+    to_user_id: uuid.UUID
+    to_user_name: str | None = None
+    discipline_id: uuid.UUID | None = None
+    discipline_code: str | None = None
+    action: str
+    note: str | None = None
+    due_date: date | None = None
+    status: str
+    responded_at: datetime | None = None
+    response_note: str | None = None
+    created_at: datetime
+
+
+class ForwardRequest(BaseModel):
+    """Document control → project/engineering management."""
+
+    to_user_id: uuid.UUID | None = None
+    note: str | None = Field(default=None, max_length=2000)
+    due_days: int = Field(default=7, ge=1, le=90)
+
+
+class ReferRequest(BaseModel):
+    """Management → a discipline engineer (or a named user)."""
+
+    discipline_id: uuid.UUID | None = None
+    to_user_id: uuid.UUID | None = None
+    action: ActionRequired = ActionRequired.REVIEW
+    note: str | None = Field(default=None, max_length=2000)
+    due_days: int = Field(default=14, ge=1, le=120)
+
+
+class CompleteRequest(BaseModel):
+    note: str | None = Field(default=None, max_length=2000)
+
+
 class TransmittalOut(ORMModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -55,6 +95,7 @@ class TransmittalOut(ORMModel):
     issued_at: datetime | None = None
     remarks: str | None = None
     meta: dict = {}
+    stage: str = "draft"
     created_at: datetime
     line_count: int = 0
     recipient_count: int = 0
@@ -64,8 +105,11 @@ class TransmittalOut(ORMModel):
 class TransmittalDetail(TransmittalOut):
     lines: list[LineOut] = []
     recipients: list[RecipientOut] = []
+    referrals: list[ReferralOut] = []
     pdf_url: str | None = None
     preview_number: str | None = None
+    stage: str = "draft"
+    stage_label: str | None = None
 
 
 class AcknowledgeRequest(BaseModel):

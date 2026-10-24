@@ -117,6 +117,8 @@ class Transmittal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True)
     recipient_snapshot: Mapped[list] = mapped_column(default=list)
     meta: Mapped[dict] = mapped_column(default=dict)
+    #: stage of the review route (see TransmittalStage); status stays the sheet's own state
+    stage: Mapped[str] = mapped_column(String(16), default="draft", server_default="draft", index=True)
 
     lines: Mapped[list["TransmittalLine"]] = relationship(
         back_populates="transmittal", cascade="all, delete-orphan", lazy="selectin",
@@ -124,6 +126,10 @@ class Transmittal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     recipients: Mapped[list["TransmittalRecipient"]] = relationship(
         back_populates="transmittal", cascade="all, delete-orphan", lazy="selectin"
+    )
+    referrals: Mapped[list["TransmittalReferral"]] = relationship(
+        back_populates="transmittal", cascade="all, delete-orphan", lazy="selectin",
+        order_by="TransmittalReferral.created_at",
     )
 
 
@@ -209,6 +215,40 @@ class Comment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     comment_list: Mapped[CommentList] = relationship(back_populates="comments")
     revision: Mapped["DocumentRevision"] = relationship(back_populates="comments")  # noqa: F821
     author: Mapped["User"] = relationship(foreign_keys=[author_id], lazy="joined")  # noqa: F821
+
+
+class TransmittalReferral(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """One hop of the review route: who handed the sheet to whom, and why.
+
+    This is the table behind «گردش مدرک» in the reference system: sender,
+    receiver, action, receive date, answer date. A referral is created by
+    ``POST /transmittals/{id}/forward`` (document control → management) and by
+    ``POST /transmittals/{id}/refer`` (management → a discipline engineer).
+    """
+
+    __tablename__ = "transmittal_referrals"
+    __table_args__ = (
+        Index("ix_referral_transmittal_status", "transmittal_id", "status"),
+        Index("ix_referral_to_status", "to_user_id", "status"),
+    )
+
+    transmittal_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("transmittals.id", ondelete="CASCADE"), index=True
+    )
+    from_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    to_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    discipline_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("disciplines.id", ondelete="SET NULL"))
+    action: Mapped[str] = mapped_column(String(24), default="review")
+    note: Mapped[str | None] = mapped_column(Text)
+    due_date: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    response_note: Mapped[str | None] = mapped_column(Text)
+
+    transmittal: Mapped[Transmittal] = relationship(back_populates="referrals")
+    from_user: Mapped["User | None"] = relationship(foreign_keys=[from_user_id], lazy="joined")  # noqa: F821
+    to_user: Mapped["User"] = relationship(foreign_keys=[to_user_id], lazy="joined")  # noqa: F821
+    discipline: Mapped["Discipline | None"] = relationship(lazy="joined")  # noqa: F821
 
 
 class NotificationLog(UUIDPrimaryKeyMixin, TimestampMixin, Base):

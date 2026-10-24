@@ -29,6 +29,20 @@ class ProjectSettingsUpdate(BaseModel):
     settings: dict
 
 
+class MemberOut(BaseModel):
+    """One project membership: who, in which role, on which discipline."""
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    full_name: str
+    email: str
+    role: str
+    discipline_id: uuid.UUID | None = None
+    discipline_code: str | None = None
+    discipline_name: str | None = None
+    is_active: bool = True
+
+
 class ProjectOut(ORMModel):
     id: uuid.UUID
     code: str

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from app.api.deps import CurrentUser, DbSession, ProjectDep
 from app.models import (
@@ -22,14 +22,18 @@ from app.models.enums import ProjectRole, TransmittalStatus, TransmittalType
 from app.schemas.transmittals import (
     AcknowledgeRequest,
     CancelRequest,
+    CompleteRequest,
+    ForwardRequest,
     IssueRequest,
     LineOut,
     RecipientOut,
+    ReferRequest,
+    ReferralOut,
     TransmittalCreate,
     TransmittalDetail,
     TransmittalOut,
 )
-from app.services import acl, audit, notification, numbering, transmittal_service
+from app.services import acl, audit, notification, numbering, routing, transmittal_service
 from app.services.project_settings import merge_settings
 from app.services.storage import get_storage
 from app.utils.jalali import format_jalali
@@ -58,10 +62,31 @@ def _out(transmittal: Transmittal) -> TransmittalOut:
             "due_date_jalali": format_jalali(transmittal.due_date) if transmittal.due_date else None,
             "issued_at_jalali": format_jalali(transmittal.issued_at) if transmittal.issued_at else None,
         },
+        stage=str(transmittal.stage or "draft"),
         created_at=transmittal.created_at,
         line_count=len(transmittal.lines),
         recipient_count=len(transmittal.recipients),
         acknowledged_count=acknowledged,
+    )
+
+
+def _referral_out(referral) -> ReferralOut:
+    return ReferralOut(
+        id=referral.id,
+        transmittal_id=referral.transmittal_id,
+        from_user_id=referral.from_user_id,
+        from_user_name=referral.from_user.full_name if referral.from_user else None,
+        to_user_id=referral.to_user_id,
+        to_user_name=referral.to_user.full_name if referral.to_user else None,
+        discipline_id=referral.discipline_id,
+        discipline_code=referral.discipline.code if referral.discipline else None,
+        action=str(referral.action),
+        note=referral.note,
+        due_date=referral.due_date,
+        status=str(referral.status),
+        responded_at=referral.responded_at,
+        response_note=referral.response_note,
+        created_at=referral.created_at,
     )
 
 
@@ -112,8 +137,10 @@ def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
         **base.model_dump(),
         lines=lines,
         recipients=recipients,
+        referrals=[_referral_out(item) for item in transmittal.referrals],
         pdf_url=pdf_url,
         preview_number=None if transmittal.number else preview,
+        stage_label=routing.STAGE_LABELS.get(str(transmittal.stage)),
     )
 
 
@@ -121,13 +148,41 @@ def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
 def list_transmittals(
     project: ProjectDep,
     db: DbSession,
+    user: CurrentUser,
     status: str | None = Query(None),
     purpose: str | None = Query(None),
     q: str | None = Query(None),
+    mine: bool = Query(False, description="فقط برگه‌هایی که در کارتابل من هستند"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ) -> dict:
     stmt = select(Transmittal).where(Transmittal.project_id == project.id)
+    if mine:
+        # An inbox is what is waiting on *me*: a pending referral, a recipient row
+        # of my own, or — for document control — a sheet still on its desk.
+        waiting = routing.pending_for_user(db, project.id, user.id)
+        clauses = [
+            # an open referral addressed to me
+            Transmittal.id.in_(waiting),
+            # a routed sheet nobody has acknowledged me on yet
+            Transmittal.recipients.any(
+                and_(
+                    TransmittalRecipient.user_id == user.id,
+                    TransmittalRecipient.ack_status != "acknowledged",
+                )
+            ),
+        ]
+        # document control's own desk: drafts taken over by DCC and sheets awaiting its check
+        if acl.has_role(
+            db,
+            user,
+            project.id,
+            ProjectRole.DCC,
+            ProjectRole.PROJECT_MANAGER,
+            ProjectRole.SYSTEM_ADMIN,
+        ):
+            clauses.append(Transmittal.stage.in_(["draft", "dcc"]))
+        stmt = stmt.where(or_(*clauses))
     if status:
         stmt = stmt.where(Transmittal.status == status)
     if purpose:
@@ -188,6 +243,136 @@ def create_transmittal(
     return _detail(db, drafts[0])
 
 
+# ---------------------------------------------------------------------------
+# Review route: contractor → document control → management → discipline
+# ---------------------------------------------------------------------------
+
+
+def _routing_error(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=422, detail=str(exc))
+
+
+@router.get(
+    "/transmittals/{transmittal_id}/referrals",
+    response_model=list[ReferralOut],
+    summary="گردش مدرک — تاریخچه ارجاع‌ها",
+)
+def list_referrals(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> list[ReferralOut]:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_project(db, user, transmittal.project_id)
+    return [_referral_out(item) for item in transmittal.referrals]
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/forward",
+    response_model=TransmittalDetail,
+    summary="ارجاع از کنترل اسناد به مدیر مهندسی / مدیر پروژه",
+)
+def forward(
+    transmittal_id: uuid.UUID,
+    payload: ForwardRequest,
+    db: DbSession,
+    user: CurrentUser,
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_project(
+        db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER]
+    )
+    try:
+        routing.forward_to_management(
+            db,
+            transmittal=transmittal,
+            actor=user,
+            to_user_id=payload.to_user_id,
+            note=payload.note,
+            due_days=payload.due_days,
+        )
+        db.commit()
+    except routing.RoutingError as exc:
+        db.rollback()
+        raise _routing_error(exc) from exc
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/refer",
+    response_model=TransmittalDetail,
+    summary="ارجاع از مدیریت به کارشناس دیسیپلین",
+)
+def refer(
+    transmittal_id: uuid.UUID,
+    payload: ReferRequest,
+    db: DbSession,
+    user: CurrentUser,
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_project(
+        db,
+        user,
+        transmittal.project_id,
+        [ProjectRole.ENGINEERING_MANAGER, ProjectRole.PROJECT_MANAGER],
+    )
+    try:
+        routing.refer_to_discipline(
+            db,
+            transmittal=transmittal,
+            actor=user,
+            discipline_id=payload.discipline_id,
+            to_user_id=payload.to_user_id,
+            action=payload.action,
+            note=payload.note,
+            due_days=payload.due_days,
+        )
+        db.commit()
+    except routing.RoutingError as exc:
+        db.rollback()
+        raise _routing_error(exc) from exc
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/referrals/{referral_id}/complete",
+    response_model=TransmittalDetail,
+    summary="پایان بررسی کارشناس دیسیپلین و بازگشت به مدیریت",
+)
+def complete_referral(
+    transmittal_id: uuid.UUID,
+    referral_id: uuid.UUID,
+    payload: CompleteRequest,
+    db: DbSession,
+    user: CurrentUser,
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_project(db, user, transmittal.project_id)
+    referral = next((item for item in transmittal.referrals if item.id == referral_id), None)
+    if referral is None:
+        raise HTTPException(status_code=404, detail="ارجاع یافت نشد.")
+    if referral.to_user_id != user.id and not acl.has_role(
+        db, user, transmittal.project_id, ProjectRole.ENGINEERING_MANAGER, ProjectRole.PROJECT_MANAGER
+    ):
+        raise HTTPException(status_code=403, detail="فقط گیرنده ارجاع می‌تواند آن را ببندد.")
+    try:
+        routing.complete_referral(
+            db, transmittal=transmittal, referral=referral, actor=user, note=payload.note
+        )
+        db.commit()
+    except routing.RoutingError as exc:
+        db.rollback()
+        raise _routing_error(exc) from exc
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
 @router.get("/transmittals/{transmittal_id}", response_model=TransmittalDetail, summary="جزئیات برگه ارسال")
 def get_transmittal(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> TransmittalDetail:
     transmittal = db.get(Transmittal, transmittal_id)
@@ -215,6 +400,8 @@ def issue_transmittal(
         transmittal_service.issue_transmittal(
             db, transmittal=transmittal, actor=user, storage=get_storage()
         )
+        # the sheet now waits on document control, not on the contractor
+        routing.mark_issued(db, transmittal)
         db.commit()
     except ValueError as exc:
         db.rollback()

@@ -228,6 +228,53 @@ cd backend
 * **تأییدیه:** فقط گیرنده می‌تواند Acknowledge کند؛ وضعیت برگه به `partially_acknowledged` / `acknowledged` می‌رود.
 * **PDF:** قالب فارسی RTL با WeasyPrint (و در نبود آن ReportLab) از روی داده دیتابیس — نه فایل ذخیره‌شده.
 
+### ۸-۱. گردش بازبینی (Review Route)
+
+برگه ارسال پس از صدور از چهار دست عبور می‌کند. هر گذر یک ردیف در جدول
+`transmittal_referrals` می‌سازد، پس تاریخ گردش از خود داده‌ها بازسازی می‌شود، نه از حافظه.
+
+```text
+پیمانکار            کارشناس کنترل اسناد       مدیر مهندسی / مدیر پروژه     کارشناس دیسیپلین
+submitter  ──صدور──▶ dcc  ────forward────▶  management  ────refer────▶  discipline
+                                          ◀────complete (بازگشت به مدیریت)────
+```
+
+| مرحله (`stage`) | معنی | چه کسی اقدام می‌کند |
+|---|---|---|
+| `draft` | پیش‌نویس، هنوز صادر نشده | پیمانکار / کنترل اسناد |
+| `dcc` | صادر شده و روی میز کنترل اسناد است | `dcc` → `POST /transmittals/{id}/forward` |
+| `management` | در دست بررسی مدیریت | `engineering_manager` یا `project_manager` → `POST /transmittals/{id}/refer` |
+| `discipline` | ارجاع‌شده به کارشناس یک دیسیپلین | گیرنده ارجاع → `POST /transmittals/{id}/referrals/{rid}/complete` (برمی‌گردد به `management`) |
+| `closed` | گردش تمام شده | — |
+
+قواعد سخت‌گیرانه:
+
+* `forward` فقط از `dcc` (یا `project_manager`) پذیرفته می‌شود؛ `refer` فقط از مدیریت.
+* `refer` یا `discipline_id` می‌خواهد یا `to_user_id`. اگر دیسیپلین انتخاب شود و هیچ کارشناسی
+  به آن تخصیص نیافته باشد، پاسخ `422` با پیام «برای دیسیپلین … کارشناس تعریف نشده است» است.
+* هر ارجاع تا پاسخ گیرنده `pending` است و برگه در کارتابل او می‌ماند
+  (`GET /projects/{id}/transmittals?mine=true`).
+* کارشناس یک دیسیپلین، برگه‌های دیسیپلین دیگر را در کارتابل خود نمی‌بیند.
+
+### ۸-۲. هشت حساب لازم برای این مرحله
+
+`SEED_DEMO=true python -m app.bootstrap` این حساب‌ها را می‌سازد (رمز همه: `Demo1234!`):
+
+| # | ورود | نقش | مسئولیت |
+|---|---|---|---|
+| ۱ | `submitter@example.com` | `submitter` | ایجاد برگه ارسال و ارسال به کنترل اسناد |
+| ۲ | `dcc@example.com` | `dcc` | کنترل محتوا/پیوست و ارسال به مدیریت |
+| ۳ | `pm@example.com` | `project_manager` | مرحله مدیریت (هر یک از دو مدیر می‌تواند اقدام کند) |
+| ۴ | `em@example.com` | `engineering_manager` | بررسی و ارجاع به دیسیپلین |
+| ۵ | `ele@example.com` | `reviewer` + دیسیپلین ELE | کارشناس برق |
+| ۶ | `civ@example.com` | `reviewer` + دیسیپلین CIV | کارشناس سیویل |
+| ۷ | `arc@example.com` | `reviewer` + دیسیپلین ARC | کارشناس معماری |
+| ۸ | `mec@example.com` | `reviewer` + دیسیپلین MEC | کارشناس تاسیسات |
+
+به‌علاوه `admin@example.com` / `Admin123!` به‌عنوان ابرکاربر. فهرست کامل اعضا با نقش و
+دیسیپلین از `GET /api/v1/projects/{id}/members` خوانده می‌شود و همان چیزی است که دیالوگ
+«ارجاع به دیسیپلین» را پر می‌کند.
+
 ---
 
 ## ۹. نقش‌ها و دسترسی
@@ -237,7 +284,8 @@ cd backend
 | `system_admin` | مدیریت کاربران، ممیزی، وضعیت سیستم |
 | `project_manager` | تنظیمات پروژه، تأیید برگه خارجی، تصمیم‌های نهایی |
 | `dcc` | ایمپورت MDL، صف بازبینی، ثبت بازنگری، صدور برگه ارسال |
-| `reviewer` | مشاهده مدارک، ثبت نظر (بدون توانایی ثبت بازنگری) |
+| `engineering_manager` | بررسی برگه ارسال و ارجاع به کارشناس دیسیپلین |
+| `reviewer` | مشاهده مدارک، ثبت نظر (بدون توانایی ثبت بازنگری)؛ با `discipline_id` کارشناس همان دیسیپلین است |
 | `submitter` | بارگذاری فایل و مشاهده وضعیت مدارک خود |
 
 ACL پروژه‌ای است: کاربر غیرعضو، پروژه را `404` می‌بیند (نه `403`) تا وجود آن افشا نشود.
@@ -359,7 +407,8 @@ ACL پروژه‌ای است: کاربر غیرعضو، پروژه را `404` م
 | بارگذاری | `POST /projects/{id}/upload-sessions` · `POST /upload-sessions/{id}/files` · `POST /upload-sessions/{id}/commit` |
 | بازبینی | `GET /projects/{id}/review-queue` · `GET /extraction-results/{id}` · `POST /extraction-results/{id}/review` · `POST /projects/{id}/review/bulk` |
 | مدارک | `GET /projects/{id}/documents` · `GET /revisions/{id}` · `GET /mdl-items/{id}/revisions` |
-| برگه ارسال | `GET/POST /projects/{id}/transmittals` · `POST /transmittals/{id}/issue` · `/acknowledge` · `/cancel` · `/remind` · `GET /pdf` |
+| برگه ارسال | `GET/POST /projects/{id}/transmittals` (`?mine=true` = کارتابل من) · `POST /transmittals/{id}/issue` · `/forward` (کنترل اسناد) · `/refer` (مدیریت) · `/referrals/{rid}/complete` (کارشناس) · `GET /transmittals/{id}/referrals` · `/acknowledge` · `/cancel` · `/remind` · `GET /pdf` |
+| اعضای پروژه | `GET /projects/{id}/members` (نقش + دیسیپلین؛ خوراک دیالوگ ارجاع) |
 | DDM | `GET/POST /projects/{id}/ddm/rules` · `PATCH/DELETE …/{rule_id}` · `POST /projects/{id}/ddm/simulate` |
 | نظرات | `GET /revisions/{id}/comment-lists` · `POST /revisions/{id}/comments` · `POST /comments/{id}/respond` · `/close` |
 | فایل | `GET /files/source-files/{id}` · `/files/sheets/{id}/thumbnail` · `/files/sheets/{id}/title-block` · `/files/results/{id}/raw-text` |

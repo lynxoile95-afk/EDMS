@@ -21,6 +21,7 @@ const MENU: { title: string; items: { to: string; label: string; icon: string; b
     items: [
       { to: "/dashboard", label: "کارتابل من", icon: "▣", badge: "unread" },
       { to: "/transmittals", label: "برگه‌های ارسال", icon: "✉" },
+      { to: "/transmittals?mine=1", label: "کارتابل ارجاع من", icon: "⇄" },
       { to: "/mdl", label: "MDL — فهرست مدارک", icon: "☰" },
       { to: "/upload", label: "ثبت و بارگذاری مدرک", icon: "⇧" },
       { to: "/review", label: "صف بازبینی (DCC)", icon: "⚑", badge: "queue" },

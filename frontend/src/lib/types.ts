@@ -1,6 +1,48 @@
 /** API contracts (snake_case mirrors the backend Pydantic schemas). */
 
-export type Role = "submitter" | "reviewer" | "dcc" | "project_manager" | "system_admin";
+export type Role =
+  | "submitter"
+  | "reviewer"
+  | "dcc"
+  | "project_manager"
+  | "engineering_manager"
+  | "system_admin";
+
+/** Where a transmittal sits on the contractor → DCC → management → discipline route. */
+export type TransmittalStage = "draft" | "dcc" | "management" | "discipline" | "closed";
+
+export type ReferralStatus = "pending" | "done" | "canceled";
+
+export interface TransmittalReferral {
+  id: string;
+  transmittal_id: string;
+  from_user_id: string | null;
+  from_user_name: string | null;
+  to_user_id: string;
+  to_user_name: string | null;
+  discipline_id: string | null;
+  discipline_code: string | null;
+  action: string;
+  note: string | null;
+  due_date: string | null;
+  status: ReferralStatus;
+  responded_at: string | null;
+  response_note: string | null;
+  created_at: string;
+}
+
+/** One project membership, as returned by `/projects/{id}/members`. */
+export interface ProjectMember {
+  id: string;
+  user_id: string;
+  full_name: string;
+  email: string;
+  role: Role;
+  discipline_id: string | null;
+  discipline_code: string | null;
+  discipline_name: string | null;
+  is_active: boolean;
+}
 
 export interface Membership {
   project_id: string;
@@ -234,6 +276,7 @@ export interface Transmittal {
   type: "internal" | "external";
   purpose: string;
   status: TransmittalStatus;
+  stage?: TransmittalStage;
   from_org: string | null;
   to_org: string | null;
   due_date: string | null;
@@ -276,8 +319,11 @@ export interface TransmittalRecipient {
 export interface TransmittalDetail extends Transmittal {
   lines: TransmittalLine[];
   recipients: TransmittalRecipient[];
+  referrals: TransmittalReferral[];
   pdf_url: string | null;
   preview_number: string | null;
+  stage: TransmittalStage;
+  stage_label: string | null;
 }
 
 export interface Comment {

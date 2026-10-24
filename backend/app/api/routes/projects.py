@@ -11,6 +11,7 @@ from app.api.deps import CurrentUser, DbSession, ProjectDep
 from app.models import (
     Discipline,
     DocumentRevision,
+    ProjectMember,
     MDLItem,
     Project,
     ProjectMember,
@@ -23,6 +24,7 @@ from app.schemas.auth import MemberCreate, MemberOut
 from app.schemas.projects import (
     LookupCreate,
     LookupOut,
+    MemberOut,
     ProjectCreate,
     ProjectOut,
     ProjectSettingsUpdate,
@@ -159,6 +161,34 @@ def create_discipline(project: ProjectDep, payload: LookupCreate, db: DbSession,
     db.add(row)
     db.commit()
     return LookupOut.model_validate(row)
+
+
+@router.get(
+    "/{project_id}/members",
+    response_model=list[MemberOut],
+    summary="اعضای پروژه با نقش و دیسیپلین",
+)
+def list_members(project: ProjectDep, db: DbSession) -> list[MemberOut]:
+    """The roster the referral dialog needs: each discipline's engineer by name."""
+    rows = db.execute(
+        select(ProjectMember)
+        .where(ProjectMember.project_id == project.id)
+        .order_by(ProjectMember.role, ProjectMember.created_at)
+    ).scalars()
+    return [
+        MemberOut(
+            id=row.id,
+            user_id=row.user_id,
+            full_name=row.user.full_name if row.user else "—",
+            email=row.user.email if row.user else "—",
+            role=str(row.role),
+            discipline_id=row.discipline_id,
+            discipline_code=row.discipline.code if row.discipline else None,
+            discipline_name=row.discipline.name if row.discipline else None,
+            is_active=row.user.is_active if row.user else True,
+        )
+        for row in rows
+    ]
 
 
 @router.get("/{project_id}/units", response_model=list[LookupOut])

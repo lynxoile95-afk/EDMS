@@ -34,11 +34,18 @@ from app.services.project_settings import merge_settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bootstrap")
 
-DEMO_USERS = [
-    ("dcc@example.com", "کارشناس کنترل مدارک", ProjectRole.DCC),
-    ("reviewer@example.com", "کارشناس بازبین", ProjectRole.REVIEWER),
-    ("submitter@example.com", "پیمانکار", ProjectRole.SUBMITTER),
-    ("pm@example.com", "مدیر پروژه", ProjectRole.PROJECT_MANAGER),
+#: The eight accounts one project needs for the review route:
+#: contractor → document control → management → four discipline engineers.
+#: The fourth element is the discipline code for a discipline engineer, else None.
+DEMO_USERS: list[tuple[str, str, ProjectRole, str | None]] = [
+    ("submitter@example.com", "مهندس رضا کریمی — پیمانکار", ProjectRole.SUBMITTER, None),
+    ("dcc@example.com", "مهندس مریم رستمی — کارشناس کنترل اسناد مهندسی", ProjectRole.DCC, None),
+    ("pm@example.com", "مهندس بهرام توکلی — مدیر پروژه", ProjectRole.PROJECT_MANAGER, None),
+    ("em@example.com", "مهندس فرهاد موحد — مدیر مهندسی", ProjectRole.ENGINEERING_MANAGER, None),
+    ("ele@example.com", "مهندس امیر رضایی — کارشناس برق", ProjectRole.REVIEWER, "ELE"),
+    ("civ@example.com", "مهندس سارا محمدی — کارشناس سیویل", ProjectRole.REVIEWER, "CIV"),
+    ("arc@example.com", "مهندس نگار حسینی — کارشناس معماری", ProjectRole.REVIEWER, "ARC"),
+    ("mec@example.com", "مهندس حامد صادقی — کارشناس تاسیسات", ProjectRole.REVIEWER, "MEC"),
 ]
 
 DEMO_DOCS = [
@@ -95,7 +102,13 @@ def seed_demo() -> None:
         db.add(ProjectMember(project_id=project.id, user_id=admin.id, role=ProjectRole.SYSTEM_ADMIN))
 
         disciplines: dict[str, Discipline] = {}
-        for code, name in (("CIV", "عمران"), ("MEC", "مکانیک"), ("ELE", "برق"), ("PRO", "فرآیند")):
+        for code, name in (
+            ("CIV", "سیویل / عمران"),
+            ("MEC", "تاسیسات / مکانیک"),
+            ("ELE", "برق"),
+            ("ARC", "معماری"),
+            ("PRO", "فرآیند"),
+        ):
             discipline = Discipline(project_id=project.id, code=code, name=name)
             db.add(discipline)
             disciplines[code] = discipline
@@ -106,23 +119,26 @@ def seed_demo() -> None:
             units[code] = unit
         db.flush()
 
-        for code, full_name, role in DEMO_USERS:
-            user = db.execute(select(User).where(User.email == code)).scalar_one_or_none()
+        for email, full_name, role, discipline_code in DEMO_USERS:
+            user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
             if user is None:
                 user = User(
-                    email=code,
+                    email=email,
                     full_name=full_name,
                     hashed_password=hash_password("Demo1234!"),
                     auth_provider="local",
                 )
                 db.add(user)
                 db.flush()
+            else:
+                # keep the display name in step with the seed (idempotent re-runs)
+                user.full_name = full_name
             db.add(
                 ProjectMember(
                     project_id=project.id,
                     user_id=user.id,
                     role=role,
-                    discipline_id=disciplines["MEC"].id if role == ProjectRole.REVIEWER else None,
+                    discipline_id=disciplines[discipline_code].id if discipline_code else None,
                 )
             )
 
@@ -146,14 +162,26 @@ def seed_demo() -> None:
             )
         db.flush()
 
-        reviewer = db.execute(select(User).where(User.email == "reviewer@example.com")).scalar_one()
+        # Each discipline rule names that discipline's own engineer: the review of a
+        # Civil drawing must land on the Civil engineer, not on a generic reviewer.
+        engineer_by_discipline = {
+            "MEC": "mec@example.com",
+            "CIV": "civ@example.com",
+            "ELE": "ele@example.com",
+            "ARC": "arc@example.com",
+        }
         dcc = db.execute(select(User).where(User.email == "dcc@example.com")).scalar_one()
         pm = db.execute(select(User).where(User.email == "pm@example.com")).scalar_one()
+        em = db.execute(select(User).where(User.email == "em@example.com")).scalar_one()
         for discipline_code, doc_type, due in (
             ("MEC", "DWG", 10),
             ("CIV", "DWG", 14),
             ("ELE", "DWG", 14),
+            ("ARC", "DWG", 14),
         ):
+            engineer = db.execute(
+                select(User).where(User.email == engineer_by_discipline[discipline_code])
+            ).scalar_one()
             rule = DDMRule(
                 project_id=project.id,
                 name=f"توزیع {discipline_code} — نقشه",
@@ -170,9 +198,10 @@ def seed_demo() -> None:
             db.add(rule)
             db.flush()
             db.add(
-                DDMRuleRecipient(rule_id=rule.id, user_id=reviewer.id, action=ActionRequired.REVIEW)
+                DDMRuleRecipient(rule_id=rule.id, user_id=engineer.id, action=ActionRequired.REVIEW)
             )
             db.add(DDMRuleRecipient(rule_id=rule.id, user_id=dcc.id, action=ActionRequired.INFO))
+            db.add(DDMRuleRecipient(rule_id=rule.id, user_id=em.id, action=ActionRequired.INFO))
             db.add(DDMRuleRecipient(rule_id=rule.id, user_id=pm.id, action=ActionRequired.INFO))
 
         fallback = DDMRule(

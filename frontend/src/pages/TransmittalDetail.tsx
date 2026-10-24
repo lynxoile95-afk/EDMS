@@ -2,8 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { CommentList as CommentListType, TransmittalDetail as Detail, TransmittalLine } from "@/lib/types";
-import { Button, EmptyState, ErrorBox, Spinner } from "@/components/ui";
+import type {
+  CommentList as CommentListType,
+  ProjectMember,
+  TransmittalDetail as Detail,
+  TransmittalLine,
+  TransmittalReferral,
+} from "@/lib/types";
+import { Button, EmptyState, ErrorBox, Modal, Spinner } from "@/components/ui";
 import { FieldGrid, FField, IconButton, Ribbon, StatusLamp, Window } from "@/components/window";
 import {
   IconAdd,
@@ -23,11 +29,21 @@ import {
   IconView,
 } from "@/components/icons";
 import { Tabs } from "@/components/Tabs";
-import { ACTION_LABELS, DISPOSITION_LABELS, PURPOSE_LABELS, STATUS_LABELS, jalali, jalaliDateTime, persianDigits } from "@/lib/format";
+import {
+  ACTION_LABELS,
+  DISPOSITION_LABELS,
+  PURPOSE_LABELS,
+  REFERRAL_STATUS_LABELS,
+  STAGE_LABELS,
+  STATUS_LABELS,
+  jalali,
+  jalaliDateTime,
+  persianDigits,
+} from "@/lib/format";
 
 export function TransmittalDetail() {
   const { transmittalId } = useParams<{ transmittalId: string }>();
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
   const [data, setData] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +53,14 @@ export function TransmittalDetail() {
   const [comments, setComments] = useState<Record<string, CommentListType[]>>({});
   const [records, setRecords] = useState<Record<string, TransmittalLine[]>>({});
   const [activeTab, setActiveTab] = useState("letters");
+  // review route: flow history, referral dialog, and the roster the dialog needs
+  const [flowOpen, setFlowOpen] = useState(false);
+  const [referOpen, setReferOpen] = useState(false);
+  const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [referForm, setReferForm] = useState({ discipline_id: "", note: "", due_days: "14" });
+  const [referError, setReferError] = useState<string | null>(null);
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [forwardForm, setForwardForm] = useState({ to_user_id: "", note: "", due_days: "7" });
 
   const load = useCallback(async () => {
     if (!transmittalId) return;
@@ -109,6 +133,106 @@ export function TransmittalDetail() {
   );
   const revisionIds = Array.from(new Set(data.lines.map((line) => line.revision_id)));
 
+  // --- review route -------------------------------------------------------
+  const stage = data.stage ?? "draft";
+  const isDcc = hasRole("dcc");
+  const isManagement = hasRole("engineering_manager") || hasRole("project_manager");
+  const canForward = isDcc && ["dcc", "draft"].includes(stage);
+  const canRefer = isManagement && stage === "management";
+  const pendingReferrals = (data.referrals ?? []).filter((item) => item.status === "pending");
+  /** A referral only the assignee may close — the API enforces the same rule. */
+  const myReferral = pendingReferrals.find((item) => item.to_user_id === user?.id);
+
+  const loadMembers = async () => {
+    if (members.length) return;
+    try {
+      setMembers(await api.get<ProjectMember[]>(`/projects/${data.project_id}/members`));
+    } catch {
+      setMembers([]);
+    }
+  };
+
+  const openRefer = async () => {
+    setReferError(null);
+    await loadMembers();
+    const first = members.find((member) => member.role === "reviewer" && member.discipline_id);
+    setReferForm((form) => ({ ...form, discipline_id: form.discipline_id || first?.discipline_id || "" }));
+    setReferOpen(true);
+  };
+
+  const openForward = async () => {
+    setReferError(null);
+    await loadMembers();
+    const manager =
+      members.find((member) => member.role === "engineering_manager") ??
+      members.find((member) => member.role === "project_manager");
+    setForwardForm((form) => ({ ...form, to_user_id: form.to_user_id || manager?.user_id || "" }));
+    setForwardOpen(true);
+  };
+
+  const submitRefer = async () => {
+    setReferError(null);
+    if (!referForm.discipline_id) {
+      setReferError("دیسیپلین مقصد را انتخاب کنید.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post(`/transmittals/${data.id}/refer`, {
+        discipline_id: referForm.discipline_id,
+        action: "review",
+        note: referForm.note || null,
+        due_days: Number(referForm.due_days) || 14,
+      });
+      setReferOpen(false);
+      setReferForm({ discipline_id: "", note: "", due_days: "14" });
+      await load();
+    } catch (err) {
+      setReferError(err instanceof ApiError ? err.detail : "ارجاع ناموفق بود.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitForward = async () => {
+    setReferError(null);
+    setBusy(true);
+    try {
+      await api.post(`/transmittals/${data.id}/forward`, {
+        to_user_id: forwardForm.to_user_id || null,
+        note: forwardForm.note || null,
+        due_days: Number(forwardForm.due_days) || 7,
+      });
+      setForwardOpen(false);
+      setForwardForm({ to_user_id: "", note: "", due_days: "7" });
+      await load();
+    } catch (err) {
+      setReferError(err instanceof ApiError ? err.detail : "ارجاع به مدیریت ناموفق بود.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const completeMyReferral = async (referral: TransmittalReferral) => {
+    const note = window.prompt("نتیجه بررسی خود را وارد کنید (اختیاری):") ?? undefined;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.post(`/transmittals/${data.id}/referrals/${referral.id}/complete`, {
+        note: note || null,
+      });
+      await load();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.detail : "ثبت پاسخ ناموفق بود.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disciplinesWithEngineer = members.filter(
+    (member) => member.role === "reviewer" && member.discipline_id,
+  );
+
   return (
     <div>
       {/* ---------- Transmittal Workspace window ---------- */}
@@ -134,6 +258,13 @@ export function TransmittalDetail() {
               <span className="text-[10px] text-[#33475b]">
                 {STATUS_LABELS[data.status] ?? data.status} ·{" "}
                 {data.type === "external" ? "Engineering — [OT]" : "Site — [OS]"}
+              </span>
+              {/* review route: where the sheet is right now */}
+              <span
+                className="rounded-sm border border-[#a8a284] bg-[#f3f0df] px-1.5 py-[1px] text-[9.5px] font-bold text-[#20365c]"
+                title="مرحله جاری گردش برگه ارسال"
+              >
+                مرحله: {data.stage_label ?? STAGE_LABELS[stage] ?? stage}
               </span>
             </span>
           </div>
@@ -175,6 +306,11 @@ export function TransmittalDetail() {
           <FField label="From:">{data.from_org ?? meta.issued_by ?? "—"}</FField>
           <FField label="Coordinator/Originator:">{meta.ddm_rule ?? "—"}</FField>
           <FField label="Status:">{STATUS_LABELS[data.status] ?? data.status}</FField>
+          <FField label="مرحله گردش:">{data.stage_label ?? STAGE_LABELS[stage] ?? stage}</FField>
+          <FField label="ارجاع‌های باز:">
+            {persianDigits(pendingReferrals.length)}
+            {myReferral ? " — یکی از آن‌ها در کارتابل شماست" : ""}
+          </FField>
           <FField label="P.O.I:">{PURPOSE_LABELS[data.purpose] ?? data.purpose}</FField>
           <FField label="Due Date:">{data.due_date ? jalali(data.due_date) : "در اسرع وقت"}</FField>
           <FField label="Recipients:">
@@ -254,7 +390,12 @@ export function TransmittalDetail() {
                     <IconButton icon={<IconArrow />} label="ارجاع" disabled />
                   </td>
                   <td className="cell-center">
-                    <IconButton icon={<IconFlow />} label="گردش مدرک" />
+                    <IconButton
+                      icon={<IconFlow />}
+                      label="گردش مدرک"
+                      disabled={(data.referrals ?? []).length === 0}
+                      onClick={() => setFlowOpen(true)}
+                    />
                   </td>
                   <td className="cell-center">
                     <IconButton
@@ -286,6 +427,48 @@ export function TransmittalDetail() {
             { label: "WorkSpace", icon: <IconDoc />, onClick: () => setActiveTab("letters") },
             { label: "گردش مدارک", icon: <IconChain />, groupStart: true, disabled: true, title: "فاز ۲" },
             { label: "لیست پاراف", icon: <IconEdit />, disabled: true, title: "فاز ۲" },
+            // --- the review route: only the role that owns the step sees the button
+            ...(canForward
+              ? [
+                  {
+                    label: "ارسال به مدیریت",
+                    icon: <IconArrow />,
+                    groupStart: true,
+                    disabled: busy,
+                    title: "گردش مدرک — کنترل اسناد ← مدیر مهندسی/مدیر پروژه",
+                    onClick: () => void openForward(),
+                  },
+                ]
+              : []),
+            ...(canRefer
+              ? [
+                  {
+                    label: "ارجاع به دیسیپلین",
+                    icon: <IconFlow />,
+                    groupStart: !canForward,
+                    disabled: busy,
+                    title: "گردش مدرک — مدیر مهندسی ← کارشناس دیسیپلین",
+                    onClick: () => void openRefer(),
+                  },
+                ]
+              : []),
+            ...(myReferral
+              ? [
+                  {
+                    label: "پایان بررسی",
+                    icon: <IconChain />,
+                    disabled: busy,
+                    title: `ارجاع باز برای شما تا ${myReferral.due_date ? jalali(myReferral.due_date) : "—"}`,
+                    onClick: () => void completeMyReferral(myReferral),
+                  },
+                ]
+              : []),
+            {
+              label: "گردش مدرک",
+              icon: <IconFlow />,
+              disabled: (data.referrals ?? []).length === 0,
+              onClick: () => setFlowOpen(true),
+            },
             {
               label: "یادآوری",
               icon: <IconClock />,
@@ -414,9 +597,15 @@ export function TransmittalDetail() {
                     <span className="flex items-center gap-1 text-[10px] text-[#33475b]">
                       <IconComment className="h-3.5 w-3.5" /> Show All Comment
                     </span>
-                    <span className="flex items-center gap-1 text-[10px] text-[#8a97a3]">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-[10px] font-bold text-[#1f4e79] hover:underline disabled:text-[#8a97a3]"
+                      disabled={(data.referrals ?? []).length === 0}
+                      onClick={() => setFlowOpen(true)}
+                    >
                       <IconFlow className="h-3.5 w-3.5" /> Show All Flow History
-                    </span>
+                      {persianDigits((data.referrals ?? []).length)}
+                    </button>
                     <span className="flex-1" />
                     <span className="text-[9.5px] text-[#5c6b78]">
                       Comment List: {persianDigits(allComments.length)} مورد
@@ -766,6 +955,199 @@ export function TransmittalDetail() {
         </div>
       </Window>
 
+
+      {/* ---------- گردش مدرک — the full referral history ---------- */}
+      <Modal
+        open={flowOpen}
+        title="گردش مدرک — Flow History"
+        onClose={() => setFlowOpen(false)}
+        width="max-w-4xl"
+        footer={
+          <div className="flex items-center justify-between">
+            <span className="text-[9.5px] text-[#5c6b78]">
+              مرحله جاری: {data.stage_label ?? STAGE_LABELS[stage] ?? stage}
+            </span>
+            <Button className="btn-sm" onClick={() => setFlowOpen(false)}>
+              بستن
+            </Button>
+          </div>
+        }
+      >
+        <table className="table-base">
+          <thead>
+            <tr>
+              <th style={{ width: 34 }}>ردیف</th>
+              <th style={{ width: 84 }}>وضعیت</th>
+              <th style={{ width: 138 }}>فرستنده</th>
+              <th style={{ width: 138 }}>گیرنده</th>
+              <th style={{ width: 74 }}>دیسیپلین</th>
+              <th style={{ width: 96 }}>عملیات ارجاع</th>
+              <th>دستور ارجاع</th>
+              <th style={{ width: 84 }}>تاریخ دریافت</th>
+              <th style={{ width: 84 }}>تاریخ پاسخ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(data.referrals ?? []).length === 0 ? (
+              <tr>
+                <td colSpan={9} className="text-center text-[10px] text-[#5c6b78]">
+                  هنوز ارجاعی ثبت نشده است.
+                </td>
+              </tr>
+            ) : (
+              (data.referrals ?? []).map((referral, index) => (
+                <tr key={referral.id}>
+                  <td className="cell-center">{persianDigits(index + 1)}</td>
+                  <td className="text-center">
+                    <span className="flex items-center justify-center gap-1">
+                      <StatusLamp tone={referral.status === "pending" ? "yellow" : "green"} />
+                      {REFERRAL_STATUS_LABELS[referral.status] ?? referral.status}
+                    </span>
+                  </td>
+                  <td className="truncate">{referral.from_user_name ?? "—"}</td>
+                  <td className="truncate">{referral.to_user_name ?? "—"}</td>
+                  <td className="text-center">{referral.discipline_code ?? "—"}</td>
+                  <td className="text-center">{ACTION_LABELS[referral.action] ?? referral.action}</td>
+                  <td className="truncate" title={referral.note ?? ""}>
+                    {referral.note || "—"}
+                  </td>
+                  <td className="cell-center">{referral.created_at ? jalali(referral.created_at) : "—"}</td>
+                  <td className="cell-center">
+                    {referral.responded_at ? jalali(referral.responded_at) : "—"}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+        <p className="mt-1 border border-[#a8a284] bg-[#fffdf3] px-2 py-1 text-[9.5px] leading-5 text-[#3b4b57]">
+          مسیر گردش: پیمانکار ← کارشناس کنترل اسناد مهندسی ← مدیر مهندسی/مدیر پروژه ←
+          کارشناس دیسیپلین ← مدیر مهندسی. هر ارجاع تا زمانی که گیرنده پاسخ نداده «در انتظار
+          پاسخ» است و برگه از کارتابل او خارج نمی‌شود.
+        </p>
+      </Modal>
+
+      {/* ---------- ارجاع به دیسیپلین (مدیر مهندسی) ---------- */}
+      <Modal
+        open={referOpen}
+        title="ارجاع مدرک — Refer To Discipline"
+        onClose={() => setReferOpen(false)}
+        width="max-w-2xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button className="btn-sm" onClick={() => setReferOpen(false)}>
+              انصراف
+            </Button>
+            <Button className="btn-sm btn-primary" disabled={busy} onClick={() => void submitRefer()}>
+              ارجاع
+            </Button>
+          </div>
+        }
+      >
+        {referError ? <ErrorBox message={referError} /> : null}
+        <FieldGrid>
+          <FField label="برگه ارسال:">
+            <span className="ltr">{data.number ?? data.preview_number ?? "Draft"}</span>
+          </FField>
+          <FField label="گیرنده:">
+            <select
+              className="input"
+              value={referForm.discipline_id}
+              onChange={(event) => setReferForm({ ...referForm, discipline_id: event.target.value })}
+            >
+              <option value="">— انتخاب دیسیپلین —</option>
+              {disciplinesWithEngineer.map((member) => (
+                <option key={member.discipline_id ?? member.id} value={member.discipline_id ?? ""}>
+                  {member.discipline_name ?? member.discipline_code} — {member.full_name}
+                </option>
+              ))}
+            </select>
+          </FField>
+          <FField label="دستور ارجاع:" full>
+            <input
+              className="input"
+              value={referForm.note}
+              placeholder="مثلاً: بررسی و اعلام نظر در خصوص نقشه‌های پیوست"
+              onChange={(event) => setReferForm({ ...referForm, note: event.target.value })}
+            />
+          </FField>
+          <FField label="مهلت پاسخ (روز):">
+            <input
+              className="input ltr"
+              type="number"
+              min={1}
+              max={120}
+              value={referForm.due_days}
+              onChange={(event) => setReferForm({ ...referForm, due_days: event.target.value })}
+            />
+          </FField>
+          <FField label="عملیات ارجاع:">بررسی و اعلام نظر</FField>
+        </FieldGrid>
+        <p className="mt-1 text-[9.5px] leading-5 text-[#5c6b78]">
+          هر دیسیپلین یک کارشناس دارد: برق، سیویل، معماری و تاسیسات. اگر برای دیسیپلین
+          انتخاب‌شده کارشناسی تعریف نشده باشد، سامانه ارجاع را نمی‌پذیرد.
+        </p>
+      </Modal>
+
+      {/* ---------- ارسال به مدیریت (کارشناس کنترل اسناد) ---------- */}
+      <Modal
+        open={forwardOpen}
+        title="ارجاع به مدیر مهندسی — Forward To Management"
+        onClose={() => setForwardOpen(false)}
+        width="max-w-2xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button className="btn-sm" onClick={() => setForwardOpen(false)}>
+              انصراف
+            </Button>
+            <Button className="btn-sm btn-primary" disabled={busy} onClick={() => void submitForward()}>
+              ارسال
+            </Button>
+          </div>
+        }
+      >
+        {referError ? <ErrorBox message={referError} /> : null}
+        <FieldGrid>
+          <FField label="برگه ارسال:">
+            <span className="ltr">{data.number ?? data.preview_number ?? "Draft"}</span>
+          </FField>
+          <FField label="مدیر مقصد:">
+            <select
+              className="input"
+              value={forwardForm.to_user_id}
+              onChange={(event) => setForwardForm({ ...forwardForm, to_user_id: event.target.value })}
+            >
+              <option value="">— پیش‌فرض: مدیر مهندسی —</option>
+              {members
+                .filter((member) => ["engineering_manager", "project_manager"].includes(member.role))
+                .map((member) => (
+                  <option key={member.user_id} value={member.user_id}>
+                    {member.role === "engineering_manager" ? "مدیر مهندسی" : "مدیر پروژه"} —{" "}
+                    {member.full_name}
+                  </option>
+                ))}
+            </select>
+          </FField>
+          <FField label="توضیح کنترل:" full>
+            <input
+              className="input"
+              value={forwardForm.note}
+              placeholder="مثلاً: مدارک کنترل و پیوست شد؛ جهت بررسی و ارجاع"
+              onChange={(event) => setForwardForm({ ...forwardForm, note: event.target.value })}
+            />
+          </FField>
+          <FField label="مهلت (روز):">
+            <input
+              className="input ltr"
+              type="number"
+              min={1}
+              max={90}
+              value={forwardForm.due_days}
+              onChange={(event) => setForwardForm({ ...forwardForm, due_days: event.target.value })}
+            />
+          </FField>
+        </FieldGrid>
+      </Modal>
 
       <p className="text-center text-[9.5px] text-[#5c6b78]">
         {revisionIds.length} بازنگری در این برگه · {persianDigits(allComments.length)} نظر ثبت‌شده

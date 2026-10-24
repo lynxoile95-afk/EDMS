@@ -31,6 +31,7 @@ from app.models.transmittal import (
     Transmittal,
     TransmittalLine,
     TransmittalRecipient,
+    TransmittalReferral,
 )
 
 __all__ = [
@@ -60,4 +61,5 @@ __all__ = [
     "Transmittal",
     "TransmittalLine",
     "TransmittalRecipient",
+    "TransmittalReferral",
 ]

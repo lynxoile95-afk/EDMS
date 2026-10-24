@@ -63,6 +63,18 @@ export const DECISION_STYLES: Record<string, { label: string; className: string 
   PENDING: { label: "در انتظار", className: "bg-slate-100 text-slate-700" },
 };
 
+/**
+ * Comment disposition, in the customer's own vocabulary (بصری مشاهده‌شده در سامانه مرجع).
+ * kept as the English screen value + a Persian label, like every other code/label pair.
+ */
+export const DISPOSITION_LABELS: Record<string, string> = {
+  accepted: "پذیرفته (Accepted)",
+  canceled: "ملغی (Canceled)",
+  commented: "اصلاح با نظر (Commented)",
+  no_comment: "بدون نظر (No Comment)",
+  rejected: "رد‌شده (Rejected)",
+};
+
 export const STATUS_LABELS: Record<string, string> = {
   draft: "پیش‌نویس",
   pending_approval: "در انتظار تأیید",

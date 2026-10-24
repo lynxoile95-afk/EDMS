@@ -291,6 +291,7 @@ export interface Comment {
   page_no: number | null;
   bbox: number[];
   status: "open" | "answered" | "closed";
+  disposition: "accepted" | "canceled" | "commented" | "no_comment" | "rejected" | null;
   response_text: string | null;
   responded_at: string | null;
   author_name: string | null;

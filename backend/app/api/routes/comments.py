@@ -13,8 +13,8 @@ from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession
 from app.models import Comment, CommentList, DocumentRevision, MDLItem, User
-from app.models.enums import CommentStatus, ProjectRole
-from app.schemas.transmittals import CommentCreate, CommentListOut, CommentOut, CommentRespond
+from app.models.enums import CommentDisposition, CommentStatus, ProjectRole
+from app.schemas.transmittals import CommentClose, CommentCreate, CommentListOut, CommentOut, CommentRespond
 from app.services import acl, audit, notification, transmittal_service
 from app.utils.jalali import format_jalali
 
@@ -33,6 +33,7 @@ def _comment_out(comment: Comment) -> CommentOut:
         page_no=comment.page_no,
         bbox=comment.bbox or [],
         status=str(comment.status),
+        disposition=str(comment.disposition) if comment.disposition else None,
         response_text=comment.response_text,
         responded_at=comment.responded_at,
         author_name=comment.author.full_name if comment.author else None,
@@ -174,17 +175,30 @@ def respond(comment_id: uuid.UUID, payload: CommentRespond, db: DbSession, user:
 
 
 @router.post("/comments/{comment_id}/close", response_model=CommentOut, summary="بستن نظر")
-def close(comment_id: uuid.UUID, db: DbSession, user: CurrentUser) -> CommentOut:
+def close(
+    comment_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    payload: CommentClose | None = None,
+) -> CommentOut:
     comment = db.get(Comment, comment_id)
     if comment is None:
         raise HTTPException(status_code=404, detail="نظر یافت نشد.")
     revision = db.get(DocumentRevision, comment.revision_id)
     project = acl.require_project(db, user, revision.project_id)
     acl.assert_can_review(db, user, project.id)
-    if comment.status is CommentStatus.OPEN:
+    # `status` is loaded as a plain string, so compare by value — an identity
+    # check against the StrEnum member is silently always False and made this
+    # guard dead code.
+    if comment.status == CommentStatus.OPEN:
         raise HTTPException(status_code=409, detail="نظر بدون پاسخ قابل بستن نیست.")
+    # A closed comment keeps its first disposition: re-closing is a no-op on it.
+    if comment.status != CommentStatus.CLOSED:
+        comment.disposition = str(
+            payload.disposition if payload is not None else CommentDisposition.ACCEPTED
+        )
     comment.status = CommentStatus.CLOSED
-    comment.closed_at = datetime.now(timezone.utc)
+    comment.closed_at = comment.closed_at or datetime.now(timezone.utc)
     comment_list = db.get(CommentList, comment.comment_list_id)
     if comment_list is not None:
         remaining = db.execute(

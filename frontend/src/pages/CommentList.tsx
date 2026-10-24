@@ -4,7 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { Comment, CommentList as CommentListType } from "@/lib/types";
 import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Field, Select, Spinner } from "@/components/ui";
-import { jalaliDateTime, persianDigits } from "@/lib/format";
+import { DISPOSITION_LABELS, jalaliDateTime, persianDigits } from "@/lib/format";
 
 const CODE_LABELS: Record<string, string> = {
   "1": "کد ۱ — رد / اصلاح اساسی",
@@ -22,6 +22,7 @@ export function CommentList() {
   const [code, setCode] = useState("2");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [closing, setClosing] = useState<{ id: string; disposition: string } | null>(null);
 
   const load = useCallback(async () => {
     if (!revisionId) return;
@@ -70,9 +71,12 @@ export function CommentList() {
     }
   };
 
-  const close = async (comment: Comment) => {
+  const close = async (comment: Comment, disposition: string) => {
+    // The coordinator records the disposition the reference system prints, so the
+    // contractor learns *why* the comment is closed, not only that it was.
     try {
-      await api.post(`/comments/${comment.id}/close`);
+      await api.post(`/comments/${comment.id}/close`, { disposition });
+      setClosing(null);
       await load();
     } catch (err) {
       setActionError(err instanceof ApiError ? err.detail : "بستن نظر ناموفق بود.");
@@ -131,6 +135,11 @@ export function CommentList() {
                   >
                     {comment.status === "closed" ? "بسته" : comment.status === "answered" ? "پاسخ داده‌شده" : "باز"}
                   </Badge>
+                  {comment.disposition ? (
+                    <Badge className="bg-violet-100 text-violet-800">
+                      {DISPOSITION_LABELS[comment.disposition] ?? comment.disposition}
+                    </Badge>
+                  ) : null}
                   <span className="text-[11px] text-slate-400">
                     {comment.author_name ?? "—"} · {jalaliDateTime(comment.created_at)}
                     {comment.page_no ? ` · صفحه ${persianDigits(comment.page_no)}` : ""}
@@ -151,9 +160,40 @@ export function CommentList() {
                     </Button>
                   ) : null}
                   {comment.status === "answered" && (hasRole("reviewer") || hasRole("dcc")) ? (
-                    <Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => void close(comment)}>
-                      بستن نظر
-                    </Button>
+                    closing?.id === comment.id ? (
+                      <span className="flex items-center gap-1">
+                        <select
+                          aria-label="وضعیت بستن نظر"
+                          className="h-7 rounded border border-slate-300 bg-white px-1 text-[11px]"
+                          value={closing.disposition}
+                          onChange={(event) => setClosing({ id: comment.id, disposition: event.target.value })}
+                        >
+                          {Object.entries(DISPOSITION_LABELS).map(([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          variant="ghost"
+                          className="px-2 py-1 text-[11px]"
+                          onClick={() => void close(comment, closing.disposition)}
+                        >
+                          ثبت
+                        </Button>
+                        <Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => setClosing(null)}>
+                          انصراف
+                        </Button>
+                      </span>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        className="px-2 py-1 text-[11px]"
+                        onClick={() => setClosing({ id: comment.id, disposition: comment.disposition ?? "accepted" })}
+                      >
+                        بستن نظر
+                      </Button>
+                    )
                   ) : null}
                   {comment.status !== "closed" ? (
                     <Button

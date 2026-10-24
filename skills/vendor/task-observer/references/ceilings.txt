@@ -1,0 +1,12 @@
+# Line ceilings for the reference files, read by scripts/validate-skill-bundle.py.
+# One line per file: <file.md> <ceiling> [<YYYY-MM-DD> <reason for the last raise>]
+# Over its ceiling, a file with more than 12 load triggers is split by episode;
+# one with 12 or fewer is trimmed, or its ceiling raised with a dated reason.
+# A ceiling more than 3 lines above its file's count is lowered to the count.
+environments.md 1829 2026-10-21 the digest operand and bin-check for bridged sessions, the lookup in the probe's batch, the stamp bumped at release
+migration.md 262 2026-10-16 the test branch: the split store, a log.md beside the observation directory
+observation-log.md 1447
+signals.md 234
+skill-authoring.md 1435 2026-10-23 the split threshold at eight load triggers with its measured reason, the pointer cross-check, the ceiling policy for mixed rounds, the LICENSE and feedback template forms
+starter-principles.md 504 2026-10-16 the marker is written after the answer, cited bodies are read, entry 23 covers the unmeasured baseline
+weekly-review.md 2104 2026-10-21 the -X compile form, the ceiling policy in the brief, use_evidence conformance, bin-check in the gate, created state files written directly

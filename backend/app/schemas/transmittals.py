@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from app.models.enums import PURPOSE_PATTERN
+from app.models.enums import CommentDisposition, PURPOSE_PATTERN
 from pydantic import BaseModel, Field
 
 from app.schemas.common import ORMModel
@@ -137,6 +137,13 @@ class CommentRespond(BaseModel):
     response_text: str = Field(min_length=1, max_length=4000)
 
 
+class CommentClose(BaseModel):
+    """Body of `POST /comments/{id}/close`."""
+
+    disposition: CommentDisposition = CommentDisposition.ACCEPTED
+    note: str | None = None
+
+
 class CommentOut(ORMModel):
     id: uuid.UUID
     revision_id: uuid.UUID
@@ -148,6 +155,7 @@ class CommentOut(ORMModel):
     page_no: int | None = None
     bbox: list = []
     status: str
+    disposition: str | None = None
     response_text: str | None = None
     responded_at: datetime | None = None
     author_name: str | None = None

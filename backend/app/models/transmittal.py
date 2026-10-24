@@ -199,6 +199,8 @@ class Comment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     page_no: Mapped[int | None] = mapped_column(Integer)
     bbox: Mapped[list] = mapped_column(default=list)
     status: Mapped[CommentStatus] = mapped_column(String(16), default=CommentStatus.OPEN)
+    # Set when the coordinator closes the comment; NULL while it is still open.
+    disposition: Mapped[str | None] = mapped_column(String(16))
     response_text: Mapped[str | None] = mapped_column(Text)
     responded_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

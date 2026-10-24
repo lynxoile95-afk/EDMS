@@ -165,6 +165,24 @@ class CommentCode(StrEnum):
     CODE3 = "3"  # information / minor
 
 
+class CommentDisposition(StrEnum):
+    """Disposition of a comment, as printed by the reference system.
+
+    A separate axis from the 1/2/3 comment code: the code says how serious the
+    remark is, the disposition says what the coordinator decided about it once
+    the contractor answered.
+    """
+
+    ACCEPTED = "accepted"
+    CANCELED = "canceled"
+    COMMENTED = "commented"
+    NO_COMMENT = "no_comment"
+    REJECTED = "rejected"
+
+
+DISPOSITION_VALUES: tuple[str, ...] = tuple(member.value for member in CommentDisposition)
+
+
 class CommentStatus(StrEnum):
     OPEN = "open"
     ANSWERED = "answered"

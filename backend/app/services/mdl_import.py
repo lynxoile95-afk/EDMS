@@ -23,6 +23,13 @@ from sqlalchemy.orm import Session
 from app.models import Discipline, MDLImportBatch, MDLItem, Project, Unit, User
 from app.models.enums import MDLImportStatus, Severity
 from app.services import audit
+from app.services.code_structure import (
+    describe_mismatch,
+    serial_outside_block,
+    group_to_discipline,
+    parse_code,
+    resolve_discipline_code,
+)
 from app.services.normalization import (
     is_valid_code,
     normalize_code,
@@ -41,7 +48,24 @@ COLUMN_ALIASES: dict[str, list[str]] = {
               "شرح", "موضوع", "ناممدرک"],
     "discipline": ["discipline", "dept", "department", "disciplinecode", "رشته", "دیسیپلین", "دپارتمان"],
     "unit": ["unit", "unitcode", "area", "یونیت", "واحد"],
-    "doc_type": ["type", "documenttype", "doctype", "نوع", "نوعمدرک"],
+    "doc_type": [
+        "type",
+        "documenttype",
+        "doctype",
+        "category",          # the customer's sheet calls the type column "Category"
+        "کدمدرک",
+        "نوع",
+        "نوعمدرک",
+        "دسته",
+    ],
+    # ---- the sheet's own columns for the six-part code -------------------------
+    "category": ["disciplinegroup", "group", "disciplinecategory", "گروه", "دستهبندی"],
+    "phase": ["phase", "projectphase", "فاز"],
+    "serial_no": ["serialno", "serial", "serno", "serialnumber", "شمارهسریال", "سریال"],
+    "doc_class": ["class", "docclass", "classification", "کلاس", "رده"],
+    "basic_detail": ["basicdetail", "basic", "basicordetail", "پایهیاتفصیلی"],
+    "poi": ["poi", "purposeofissue", "purpose", "هدفارسال", "هدفصدور"],
+    "remark": ["remark", "remarks", "note", "notes", "توضیح", "توضیحات", "ملاحظات"],
     "current_rev": ["rev", "revision", "currentrev", "currentrevision", "بازنگری", "ویرایش", "ریویژن"],
     "status": ["status", "docstatus", "وضعیت", "وضعیتمدرک"],
     "responsible": ["responsible", "owner", "assignee", "resp", "مسئول", "مسئولتهیه"],
@@ -261,10 +285,7 @@ def import_mdl(
             report.add(row.row_number, Severity.ERROR, "کد مدرک خالی است.", "doc_code")
             continue
         if not is_valid_code(code_norm, pattern):
-            report.add(
-                row.row_number, Severity.ERROR,
-                f"کد «{raw_code}» با الگوی شماره‌گذاری پروژه سازگار نیست.", "doc_code",
-            )
+            report.add(row.row_number, Severity.ERROR, describe_mismatch(str(raw_code)), "doc_code")
         if code_norm in seen_codes:
             report.add(
                 row.row_number, Severity.ERROR,
@@ -277,8 +298,36 @@ def import_mdl(
         if not title:
             report.add(row.row_number, Severity.WARNING, "عنوان مدرک خالی است.", "title")
 
-        discipline_code = str(row.values.get("discipline") or "").strip().upper() or None
-        unit_code = str(row.values.get("unit") or "").strip().upper() or None
+        # The six-part code is authoritative for the segment fields: when the sheet
+        # leaves a column empty (or names the discipline as a group, e.g.
+        # "CIVIL & STRUCTURE"), the code fills it in.
+        parsed = parse_code(code_norm, pattern)
+
+        raw_discipline = str(row.values.get("discipline") or "").strip().upper() or None
+        # the sheet's "Discipline" column may hold a group name rather than a code
+        discipline_code = (
+            raw_discipline if raw_discipline in disciplines else group_to_discipline(raw_discipline or "")
+        ) or parsed.get("discipline")
+        unit_code = (str(row.values.get("unit") or "").strip().upper() or None) or parsed.get("unit")
+        doc_type_value = (str(row.values.get("doc_type") or "").strip().upper() or None) or parsed.get("type")
+        phase_value = (str(row.values.get("phase") or "").strip().upper() or None) or parsed.get("phase")
+        serial_value = (str(row.values.get("serial_no") or "").strip() or None) or parsed.get("serial")
+        # the raw group text is kept as a readable category when it is not a code
+        category_value = (
+            str(row.values.get("category") or "").strip() or None
+        ) or (raw_discipline if raw_discipline and raw_discipline != discipline_code else None)
+
+        discipline_code = resolve_discipline_code(discipline_code, set(disciplines))
+        block = serial_outside_block(discipline_code, serial_value)
+        if block is not None:
+            report.add(
+                row.row_number,
+                Severity.WARNING,
+                f"شماره سریال «{serial_value}» بیرون از بازه دیسیپلین {discipline_code} "
+                f"({block[0]}–{block[1]}) است.",
+                "serial_no",
+            )
+
         discipline = disciplines.get(discipline_code) if discipline_code else None
         unit = units.get(unit_code) if unit_code else None
 
@@ -306,7 +355,14 @@ def import_mdl(
                 "title_norm": normalize_title(title),
                 "discipline_code": discipline_code,
                 "unit_code": unit_code,
-                "doc_type": str(row.values.get("doc_type") or "").strip() or None,
+                "doc_type": doc_type_value,
+                "phase": phase_value,
+                "serial_no": serial_value,
+                "category": category_value,
+                "doc_class": str(row.values.get("doc_class") or "").strip().upper() or None,
+                "basic_detail": str(row.values.get("basic_detail") or "").strip().upper() or None,
+                "poi": str(row.values.get("poi") or "").strip().upper() or None,
+                "remark": str(row.values.get("remark") or "").strip() or None,
                 "current_rev": rev or None,
                 "rev_seq": rev_to_seq(rev, cfg["rev_scheme"]) if rev else 0,
                 "status": str(row.values.get("status") or "").strip() or None,
@@ -385,6 +441,13 @@ def import_mdl(
                 weight=row["weight"],
                 page_count=row["page_count"],
                 source_row=row["row"],
+                phase=row["phase"],
+                serial_no=row["serial_no"],
+                category=row["category"],
+                doc_class=row["doc_class"],
+                basic_detail=row["basic_detail"],
+                poi=row["poi"],
+                remark=row["remark"],
                 aliases=[],
                 attributes={},
             )
@@ -397,6 +460,13 @@ def import_mdl(
             item.discipline_id = discipline.id if discipline else item.discipline_id
             item.unit_id = unit.id if unit else item.unit_id
             item.doc_type = row["doc_type"] or item.doc_type
+            item.phase = row["phase"] or item.phase
+            item.serial_no = row["serial_no"] or item.serial_no
+            item.category = row["category"] or item.category
+            item.doc_class = row["doc_class"] or item.doc_class
+            item.basic_detail = row["basic_detail"] or item.basic_detail
+            item.poi = row["poi"] or item.poi
+            item.remark = row["remark"] or item.remark
             item.current_rev = row["current_rev"] or item.current_rev
             item.rev_seq = row["rev_seq"] if row["current_rev"] else item.rev_seq
             item.status = row["status"] or item.status

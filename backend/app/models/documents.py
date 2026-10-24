@@ -74,6 +74,20 @@ class MDLItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     discipline_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("disciplines.id", ondelete="SET NULL"))
     unit_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("units.id", ondelete="SET NULL"))
     doc_type: Mapped[str | None] = mapped_column(String(64))
+    # ---- segments of the customer's six-part code (services/code_structure.py) ----
+    #: EB (basic) / ED (detail)
+    phase: Mapped[str | None] = mapped_column(String(8))
+    #: the SER. NO. segment, kept as text so leading zeros survive
+    serial_no: Mapped[str | None] = mapped_column(String(8))
+    #: the sheet's "Discipline" column: GENERAL, CIVIL & STRUCTURE, …
+    category: Mapped[str | None] = mapped_column(String(64))
+    #: CLASS column: A / R
+    doc_class: Mapped[str | None] = mapped_column(String(4))
+    #: BASIC/DETAIL column: B / D
+    basic_detail: Mapped[str | None] = mapped_column(String(4))
+    #: purpose of issue of this row, e.g. IFR / IFA
+    poi: Mapped[str | None] = mapped_column(String(8))
+    remark: Mapped[str | None] = mapped_column(String(255))
     current_rev: Mapped[str | None] = mapped_column(String(16))
     rev_seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     status: Mapped[str | None] = mapped_column(String(64))

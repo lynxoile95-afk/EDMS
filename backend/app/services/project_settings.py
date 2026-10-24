@@ -5,10 +5,10 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-DEFAULT_DOC_CODE_PATTERN = (
-    r"^(?P<project>[A-Z0-9]{2,6})-(?P<discipline>[A-Z]{2,4})-"
-    r"(?P<type>[A-Z]{1,4})-(?P<seq>\d{3,5})(?:-(?P<suffix>[A-Z0-9]{1,4}))?$"
-)
+#: The default now accepts the customer's six-part code
+#: (``2102-20-EB-GN-MDL-9001``) *and* the four-part legacy shape
+#: (``PRJ-CIV-DR-0101``). See ``app/services/code_structure.py``.
+from app.services.code_structure import DEFAULT_CODE_PATTERN as DEFAULT_DOC_CODE_PATTERN  # noqa: E402
 
 DEFAULT_PROJECT_SETTINGS: dict[str, Any] = {
     # ---- document identity ----

@@ -24,6 +24,14 @@ from app.schemas.mdl import (
     MDLPreviewOut,
 )
 from app.services import acl, audit, mdl_import
+from app.services.code_structure import (
+    describe_mismatch,
+    discipline_name,
+    parse_code,
+    resolve_discipline_code,
+    structure_description,
+)
+from app.services.project_settings import merge_settings
 from app.services.normalization import is_valid_code, normalize_code, normalize_title
 from app.services.revisions import rev_to_seq
 
@@ -50,6 +58,13 @@ def _item_out(item: MDLItem, revision_count: int = 0) -> MDLItemOut:
         discipline_code=item.discipline.code if item.discipline else None,
         unit_code=item.unit.code if item.unit else None,
         revision_count=revision_count,
+        phase=item.phase,
+        serial_no=item.serial_no,
+        category=item.category,
+        doc_class=item.doc_class,
+        basic_detail=item.basic_detail,
+        poi=item.poi,
+        remark=item.remark,
     )
 
 
@@ -241,37 +256,69 @@ def create_item(
     """
     acl.require_project(db, user, project.id, [ProjectRole.DCC])
     doc_code = payload.doc_code.strip().upper()
+    cfg = merge_settings(project.settings)
+    if not is_valid_code(normalize_code(doc_code), cfg["doc_code_pattern"]):
+        raise HTTPException(status_code=422, detail=describe_mismatch(doc_code))
+    parsed = parse_code(doc_code, cfg["doc_code_pattern"])
     duplicate = db.execute(
         select(MDLItem).where(MDLItem.project_id == project.id, MDLItem.doc_code_norm == normalize_code(doc_code))
     ).scalar_one_or_none()
     if duplicate is not None:
         raise HTTPException(status_code=409, detail=f"کد مدرک «{doc_code}» قبلاً در MDL ثبت شده است.")
 
+    phase = (payload.phase or "").strip().upper() or parsed.get("phase")
+    serial_no = (payload.serial_no or "").strip() or parsed.get("serial")
+    doc_type = (payload.doc_type or "").strip().upper() or parsed.get("type")
+    unit_code = (payload.unit_code or "").strip().upper() or parsed.get("unit")
+    discipline_code = (payload.discipline_code or "").strip().upper() or parsed.get("discipline")
+    known_disciplines = {
+        row.code.strip().upper()
+        for row in db.execute(
+            select(Discipline).where(Discipline.project_id == project.id)
+        ).scalars()
+    }
+    discipline_code = resolve_discipline_code(discipline_code, known_disciplines)
+
+    # A code typed into the form is trusted to name its own segments, and the
+    # import behaves the same way: an unknown discipline/unit coming *from the code*
+    # is created as a lookup. A value typed explicitly into the discipline/unit fields
+    # is treated as a claim about an existing lookup and must resolve, so a typo is
+    # refused instead of silently inventing "CIVL".
     discipline_id = None
-    if payload.discipline_code:
+    if discipline_code:
         discipline = db.execute(
             select(Discipline).where(
                 Discipline.project_id == project.id,
-                Discipline.code == payload.discipline_code.strip().upper(),
+                Discipline.code == discipline_code,
             )
         ).scalar_one_or_none()
-        if discipline is None:
+        if discipline is None and payload.discipline_code:
             raise HTTPException(
-                status_code=422, detail=f"دیسیپلین «{payload.discipline_code}» در این پروژه تعریف نشده است."
+                status_code=422, detail=f"دیسیپلین «{discipline_code}» در این پروژه تعریف نشده است."
             )
+        if discipline is None:
+            discipline = Discipline(
+                project_id=project.id, code=discipline_code, name=discipline_name(discipline_code)
+            )
+            db.add(discipline)
+            db.flush()
         discipline_id = discipline.id
 
     unit_id = None
-    if payload.unit_code:
+    if unit_code:
         unit = db.execute(
             select(Unit).where(
-                Unit.project_id == project.id, Unit.code == payload.unit_code.strip().upper()
+                Unit.project_id == project.id, Unit.code == unit_code
             )
         ).scalar_one_or_none()
-        if unit is None:
+        if unit is None and payload.unit_code:
             raise HTTPException(
-                status_code=422, detail=f"یونیت «{payload.unit_code}» در این پروژه تعریف نشده است."
+                status_code=422, detail=f"یونیت «{unit_code}» در این پروژه تعریف نشده است."
             )
+        if unit is None:
+            unit = Unit(project_id=project.id, code=unit_code, name=unit_code)
+            db.add(unit)
+            db.flush()
         unit_id = unit.id
 
     item = MDLItem(
@@ -280,7 +327,14 @@ def create_item(
         doc_code_norm=normalize_code(doc_code),
         title=payload.title.strip(),
         title_norm=normalize_title(payload.title.strip()),
-        doc_type=payload.doc_type,
+        doc_type=doc_type,
+        phase=phase,
+        serial_no=serial_no,
+        category=payload.category,
+        doc_class=(payload.doc_class or "").strip().upper() or None,
+        basic_detail=(payload.basic_detail or "").strip().upper() or None,
+        poi=(payload.poi or "").strip().upper() or None,
+        remark=payload.remark,
         current_rev=payload.current_rev,
         rev_seq=rev_to_seq(payload.current_rev, "auto") if payload.current_rev else 0,
         status=payload.status or "Draft",
@@ -335,6 +389,31 @@ def delete_item(project: ProjectDep, item_id: uuid.UUID, db: DbSession, user: Cu
     db.delete(item)
     db.commit()
     return Response(status_code=204)
+
+
+@router.get(
+    "/code-structure",
+    summary="ساختار کدینگ مدارک پروژه (راهنمای سگمنت‌ها)",
+)
+def code_structure(project: ProjectDep, db: DbSession, user: CurrentUser) -> dict:
+    """The coding rule this project validates against, with an example.
+
+    Comes straight from the project's ``doc_code_pattern`` plus the vocabulary of
+    disciplines and document types seen in the customer's MDL, so the UI can explain
+    the code instead of only rejecting it.
+    """
+    acl.require_project(db, user, project.id)
+    cfg = merge_settings(project.settings)
+    data = structure_description()
+    data["pattern"] = cfg["doc_code_pattern"]
+    data["project_code_hint"] = project.code
+    data["known_disciplines"] = [
+        {"id": row.id, "code": row.code, "name": row.name}
+        for row in db.execute(
+            select(Discipline).where(Discipline.project_id == project.id).order_by(Discipline.code)
+        ).scalars()
+    ]
+    return data
 
 
 @router.get("/import-batches", response_model=list[MDLImportBatchOut], summary="تاریخچه ایمپورت‌ها")

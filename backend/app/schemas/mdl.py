@@ -68,6 +68,14 @@ class MDLItemOut(ORMModel):
     discipline_code: str | None = None
     unit_code: str | None = None
     revision_count: int = 0
+    # ---- segments of the six-part code (services/code_structure.py) ----
+    phase: str | None = None
+    serial_no: str | None = None
+    category: str | None = None
+    doc_class: str | None = None
+    basic_detail: str | None = None
+    poi: str | None = None
+    remark: str | None = None
 
 
 class MDLItemCreate(BaseModel):
@@ -82,6 +90,14 @@ class MDLItemCreate(BaseModel):
     unit_code: str | None = Field(default=None, max_length=32)
     weight: float = Field(default=1.0, ge=0, le=1000)
     page_count: int | None = Field(default=None, ge=0, le=10000)
+    # optional: when omitted they are read from the code itself
+    phase: str | None = Field(default=None, max_length=8)
+    serial_no: str | None = Field(default=None, max_length=8)
+    category: str | None = Field(default=None, max_length=64)
+    doc_class: str | None = Field(default=None, max_length=4)
+    basic_detail: str | None = Field(default=None, max_length=4)
+    poi: str | None = Field(default=None, max_length=8)
+    remark: str | None = Field(default=None, max_length=255)
 
 
 class MDLItemUpdate(BaseModel):
@@ -93,6 +109,13 @@ class MDLItemUpdate(BaseModel):
     discipline_code: str | None = None
     unit_code: str | None = None
     aliases: list[str] | None = None
+    phase: str | None = None
+    serial_no: str | None = None
+    category: str | None = None
+    doc_class: str | None = None
+    basic_detail: str | None = None
+    poi: str | None = None
+    remark: str | None = None
     reason: str | None = None
 
 

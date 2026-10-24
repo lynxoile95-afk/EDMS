@@ -70,6 +70,20 @@ class MDLItemOut(ORMModel):
     revision_count: int = 0
 
 
+class MDLItemCreate(BaseModel):
+    """One manually typed MDL row (the Excel import is the other way in)."""
+
+    doc_code: str = Field(min_length=2, max_length=64)
+    title: str = Field(min_length=2, max_length=500)
+    doc_type: str | None = Field(default=None, max_length=32)
+    current_rev: str | None = Field(default=None, max_length=16)
+    status: str | None = Field(default=None, max_length=32)
+    discipline_code: str | None = Field(default=None, max_length=16)
+    unit_code: str | None = Field(default=None, max_length=32)
+    weight: float = Field(default=1.0, ge=0, le=1000)
+    page_count: int | None = Field(default=None, ge=0, le=10000)
+
+
 class MDLItemUpdate(BaseModel):
     title: str | None = None
     doc_type: str | None = None

@@ -38,6 +38,97 @@ export function MDLLibrary() {
   const fileRef = useRef<File | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // manual row: the second door into the MDL, beside the Excel import
+  const [rowOpen, setRowOpen] = useState(false);
+  const [editing, setEditing] = useState<MDLItem | null>(null);
+  const [rowError, setRowError] = useState<string | null>(null);
+  const emptyRow = {
+    doc_code: "",
+    title: "",
+    discipline_code: "",
+    unit_code: "",
+    doc_type: "",
+    current_rev: "",
+    status: "Draft",
+    weight: "1",
+  };
+  const [rowForm, setRowForm] = useState(emptyRow);
+
+  const openNewRow = () => {
+    setEditing(null);
+    setRowError(null);
+    setRowForm(emptyRow);
+    setRowOpen(true);
+  };
+
+  const openEditRow = (item: MDLItem) => {
+    setEditing(item);
+    setRowError(null);
+    setRowForm({
+      doc_code: item.doc_code,
+      title: item.title,
+      discipline_code: item.discipline_code ?? "",
+      unit_code: item.unit_code ?? "",
+      doc_type: item.doc_type ?? "",
+      current_rev: item.current_rev ?? "",
+      status: item.status ?? "Draft",
+      weight: String(item.weight ?? 1),
+    });
+    setRowOpen(true);
+  };
+
+  const saveRow = async () => {
+    if (!project) return;
+    setRowError(null);
+    if (rowForm.doc_code.trim().length < 2 || rowForm.title.trim().length < 2) {
+      setRowError("کد مدرک و عنوان الزامی هستند.");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (editing) {
+        await api.patch(`/projects/${project.id}/mdl/items/${editing.id}`, {
+          title: rowForm.title.trim(),
+          doc_type: rowForm.doc_type || null,
+          current_rev: rowForm.current_rev || null,
+          status: rowForm.status || null,
+          weight: Number(rowForm.weight) || 1,
+          discipline_code: rowForm.discipline_code || null,
+          unit_code: rowForm.unit_code || null,
+          reason: "ویرایش دستی از صفحه MDL",
+        });
+      } else {
+        await api.post(`/projects/${project.id}/mdl/items`, {
+          doc_code: rowForm.doc_code.trim().toUpperCase(),
+          title: rowForm.title.trim(),
+          doc_type: rowForm.doc_type || null,
+          current_rev: rowForm.current_rev || null,
+          status: rowForm.status || null,
+          weight: Number(rowForm.weight) || 1,
+          discipline_code: rowForm.discipline_code || null,
+          unit_code: rowForm.unit_code || null,
+        });
+      }
+      setRowOpen(false);
+      await load();
+    } catch (err) {
+      setRowError(err instanceof ApiError ? err.detail : "ثبت ردیف MDL ناموفق بود.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteRow = async (item: MDLItem) => {
+    if (!project) return;
+    if (!window.confirm(`ردیف «${item.doc_code}» حذف شود؟`)) return;
+    try {
+      await api.delete(`/projects/${project.id}/mdl/items/${item.id}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "حذف ردیف MDL ناموفق بود.");
+    }
+  };
+
   const load = useCallback(async () => {
     if (!project) return;
     setLoading(true);
@@ -131,7 +222,14 @@ export function MDLLibrary() {
               <Button variant="secondary" onClick={() => api.download(`/projects/${project.id}/mdl/export`, `MDL-${project.code}.xlsx`)}>
                 خروجی اکسل
               </Button>
-              {isDcc ? <Button onClick={() => setWizardOpen(true)}>بارگذاری MDL</Button> : null}
+              {isDcc ? (
+                <>
+                  <Button variant="secondary" onClick={openNewRow}>
+                    افزودن ردیف دستی
+                  </Button>
+                  <Button onClick={() => setWizardOpen(true)}>بارگذاری MDL (اکسل)</Button>
+                </>
+              ) : null}
             </>
           }
         />
@@ -148,6 +246,12 @@ export function MDLLibrary() {
           <Button variant="ghost" onClick={() => void load()}>
             بازخوانی
           </Button>
+          {!isDcc ? (
+            <span className="text-[10px] text-[#6b5b1f]">
+              MDL فقط توسط <b>کارشناس کنترل اسناد مهندسی</b> بارگذاری و ویرایش می‌شود؛ دسترسی شما
+              فقط مشاهده است.
+            </span>
+          ) : null}
         </div>
 
         {loading ? (
@@ -175,6 +279,7 @@ export function MDLLibrary() {
                   <th>وضعیت</th>
                   <th>بازنگری‌های ثبت‌شده</th>
                   <th>موعد</th>
+                  {isDcc ? <th>عملیات</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -198,6 +303,25 @@ export function MDLLibrary() {
                       )}
                     </td>
                     <td className="text-xs text-slate-600">{item.due_date ? jalali(item.due_date) : "—"}</td>
+                    {isDcc ? (
+                      <td className="whitespace-nowrap">
+                        <button
+                          type="button"
+                          className="text-xs text-brand-600 hover:underline"
+                          onClick={() => openEditRow(item)}
+                        >
+                          ویرایش
+                        </button>
+                        <span className="mx-1 text-slate-300">|</span>
+                        <button
+                          type="button"
+                          className="text-xs text-rose-600 hover:underline"
+                          onClick={() => void deleteRow(item)}
+                        >
+                          حذف
+                        </button>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -221,6 +345,98 @@ export function MDLLibrary() {
           </div>
         ) : null}
       </Card>
+
+      {/* ---------------- manual row: add or edit one MDL line ---------------- */}
+      <Modal
+        open={rowOpen}
+        title={editing ? `ویرایش ردیف MDL — ${editing.doc_code}` : "افزودن ردیف MDL (دستی)"}
+        onClose={() => setRowOpen(false)}
+        width="max-w-3xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={() => setRowOpen(false)}>
+              انصراف
+            </Button>
+            <Button disabled={busy} onClick={() => void saveRow()}>
+              {editing ? "ذخیره تغییرات" : "افزودن ردیف"}
+            </Button>
+          </div>
+        }
+      >
+        {rowError ? <ErrorBox message={rowError} /> : null}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="کد مدرک *">
+            <Input
+              className="ltr"
+              value={rowForm.doc_code}
+              disabled={Boolean(editing)}
+              placeholder="PRJ-CIV-DR-0101"
+              onChange={(event) => setRowForm({ ...rowForm, doc_code: event.target.value })}
+            />
+          </Field>
+          <Field label="عنوان *">
+            <Input
+              value={rowForm.title}
+              placeholder="Plot Plan / پلان موقعیت"
+              onChange={(event) => setRowForm({ ...rowForm, title: event.target.value })}
+            />
+          </Field>
+          <Field label="دیسیپلین (کد)">
+            <Input
+              className="ltr"
+              value={rowForm.discipline_code}
+              placeholder="CIV"
+              onChange={(event) => setRowForm({ ...rowForm, discipline_code: event.target.value })}
+            />
+          </Field>
+          <Field label="یونیت (کد)">
+            <Input
+              className="ltr"
+              value={rowForm.unit_code}
+              placeholder="U-100"
+              onChange={(event) => setRowForm({ ...rowForm, unit_code: event.target.value })}
+            />
+          </Field>
+          <Field label="نوع مدرک">
+            <Input
+              className="ltr"
+              value={rowForm.doc_type}
+              placeholder="DWG"
+              onChange={(event) => setRowForm({ ...rowForm, doc_type: event.target.value })}
+            />
+          </Field>
+          <Field label="بازنگری جاری">
+            <Input
+              className="ltr"
+              value={rowForm.current_rev}
+              placeholder="A"
+              onChange={(event) => setRowForm({ ...rowForm, current_rev: event.target.value })}
+            />
+          </Field>
+          <Field label="وضعیت">
+            <Input
+              value={rowForm.status}
+              placeholder="Draft"
+              onChange={(event) => setRowForm({ ...rowForm, status: event.target.value })}
+            />
+          </Field>
+          <Field label="وزن (Weight)">
+            <Input
+              className="ltr"
+              type="number"
+              min={0}
+              step="0.1"
+              value={rowForm.weight}
+              onChange={(event) => setRowForm({ ...rowForm, weight: event.target.value })}
+            />
+          </Field>
+        </div>
+        <p className="mt-2 text-[10px] leading-5 text-[#5c6b78]">
+          کد مدرک باید یکتا باشد و کد دیسیپلین/یونیت ازقبل در پروژه تعریف شده باشد؛ در غیر این صورت
+          سامانه ردیف را ثبت نمی‌کند. ردیف دستی هم دقیقاً مثل ردیف‌های ایمپورت‌شده در تطبیق مدارک
+          شرکت می‌کند.
+        </p>
+      </Modal>
 
       <Modal
         open={wizardOpen}

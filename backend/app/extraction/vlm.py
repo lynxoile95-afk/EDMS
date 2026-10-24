@@ -99,12 +99,12 @@ class VLMExtractor:
     def is_available(self) -> bool:
         if not self.enabled:
             return False
-        if not self._is_local_endpoint():
+        if not self.is_local_endpoint():
             logger.warning("VLM endpoint %s is not local; refusing to send documents.", self.base_url)
             return False
         return True
 
-    def _is_local_endpoint(self) -> bool:
+    def is_local_endpoint(self) -> bool:
         host = self.base_url.split("//")[-1].split("/")[0].split(":")[0]
         return host in {"localhost", "127.0.0.1", "vlm", "ollama", "0.0.0.0"} or host.startswith(
             ("10.", "192.168.", "172.", "vlm")

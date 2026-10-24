@@ -256,6 +256,58 @@ submitter  ──صدور──▶ dcc  ────forward────▶  mana
   (`GET /projects/{id}/transmittals?mine=true`).
 * کارشناس یک دیسیپلین، برگه‌های دیسیپلین دیگر را در کارتابل خود نمی‌بیند.
 
+### ۸-۳. MDL: چه کسی می‌نویسد، چه کسی می‌خواند
+
+MDL سند رسمیِ پروژه است و فقط **کارشناس کنترل اسناد مهندسی** آن را می‌نویسد.
+`system_admin` (ابرمستخدم) استثناست، چون در مدل دسترسی ما همیشه از ACL عبور می‌کند.
+
+| عملیات | مسیر | مجاز |
+|---|---|---|
+| پیش‌نمایش اکسل و نگاشت ستون‌ها | `POST /projects/{id}/mdl/preview` | فقط `dcc` |
+| ایمپورت اکسل | `POST /projects/{id}/mdl/import` | فقط `dcc` |
+| افزودن ردیف دستی | `POST /projects/{id}/mdl/items` | فقط `dcc` |
+| ویرایش ردیف | `PATCH /projects/{id}/mdl/items/{item_id}` | فقط `dcc` |
+| حذف ردیف | `DELETE /projects/{id}/mdl/items/{item_id}` | فقط `dcc`؛ اگر ردیف بازنگری ثبت‌شده داشته باشد `409` |
+| مشاهده، جست‌وجو، خروجی اکسل | `GET …/mdl/items` · `…/mdl/export` | همهٔ اعضای پروژه |
+
+قواعدی که هر دو درِ ورود (اکسل و دستی) را می‌بندد:
+
+* کد مدرک در پروژه یکتاست؛ ردیف تکراری `409` می‌گیرد.
+* کد دیسیپلین/یونیت باید از‌قبل در پروژه تعریف شده باشد؛ در غیر این صورت `422`.
+* ردیف دستی دقیقاً مثل ردیف ایمپورت‌شده در تطبیق کد مدرک شرکت می‌کند (`doc_code_norm`).
+
+در UI، دکمه‌های «بارگذاری MDL (اکسل)»، «افزودن ردیف دستی» و ستون «عملیات» (ویرایش/حذف)
+تنها برای کاربر `dcc` دیده می‌شوند؛ بقیه پیام «دسترسی شما فقط مشاهده است» را می‌بینند.
+
+### ۸-۴. کلید هوش مصنوعی کجا وارد می‌شود؟
+
+**بارگذاری اسناد به کلید هوش مصنوعی نیاز ندارد.** خط لوله پیش‌فرض این است: لایه متن PDF →
+قواعد R01–R22 → OCR (Tesseract `fas+eng`) → در موارد مبهم، در صورت فعال بودن، VLM.
+
+اگر می‌خواهید لایه کمکی VLM را فعال کنید:
+
+1. فایل `.env` را در ریشهٔ پروژه از `.env.example` بسازید.
+2. این چهار متغیر را پر کنید:
+
+```env
+VLM_ENABLED=true
+VLM_BASE_URL=http://vlm:8000/v1     # vLLM داخلی؛ برای Ollama: http://<ip-داخلی>:11434/v1
+VLM_API_KEY=<کلید>
+VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
+```
+
+3. `docker compose up -d api worker` (یا در اجرای محلی، سرویس‌های api و worker را ری‌استارت کنید).
+4. در همان پروژه `vlm_fallback` را `true` کنید (`PUT /projects/{id}/settings`).
+
+بررسی وضعیت بدون افشای کلید:
+
+* `GET /api/v1/system/capabilities` — OCR روشن/خاموش، VLM فعال/غیرفعال، «کلید تنظیم شده؟»، آدرس مجاز.
+* `GET /api/v1/admin/ai-status` (ابرمستخدم) — همان + تست واقعی اتصال به endpoint.
+* در صفحهٔ «بارگذاری»، نوار «موتور استخراج» همین وضعیت را نشان می‌دهد و دکمهٔ
+  «کلید هوش مصنوعی کجا وارد می‌شود؟» همین چهار مرحله را باز می‌کند.
+
+آدرس VLM باید داخلی باشد؛ آدرس عمومی عمداً رد می‌شود تا نقشه‌های محرمانه از شبکه خارج نشوند.
+
 ### ۸-۲. هشت حساب لازم برای این مرحله
 
 `SEED_DEMO=true python -m app.bootstrap` این حساب‌ها را می‌سازد (رمز همه: `Demo1234!`):
@@ -423,7 +475,8 @@ python3 skills/vendor/task-observer/scripts/session-start-scan.sh
 |---|---|
 | احراز هویت | `POST /auth/login` · `POST /auth/refresh` (چرخش توکن) · `POST /auth/logout` · `GET /auth/me` · `GET /auth/transport-check` (عیب‌یابی) · `POST /auth/change-password` |
 | پروژه | `GET/POST /projects` · `GET/PATCH /projects/{id}` · `GET /projects/{id}/dashboard` |
-| MDL | `POST /projects/{id}/mdl/preview` · `POST /projects/{id}/mdl/import` · `GET /projects/{id}/mdl/items` · `GET /projects/{id}/mdl/export` |
+| MDL | `POST /projects/{id}/mdl/preview` · `POST /projects/{id}/mdl/import` · `POST /projects/{id}/mdl/items` (دستی) · `PATCH/DELETE /projects/{id}/mdl/items/{id}` · `GET /projects/{id}/mdl/items` · `GET /projects/{id}/mdl/export` — همهٔ نوشتن‌ها فقط `dcc` |
+| سیستم | `GET /system/capabilities` (وضعیت OCR/VLM بدون کلید) · `GET /admin/ai-status` (ابرمستخدم، با تست اتصال) |
 | بارگذاری | `POST /projects/{id}/upload-sessions` · `POST /upload-sessions/{id}/files` · `POST /upload-sessions/{id}/commit` |
 | بازبینی | `GET /projects/{id}/review-queue` · `GET /extraction-results/{id}` · `POST /extraction-results/{id}/review` · `POST /projects/{id}/review/bulk` |
 | مدارک | `GET /projects/{id}/documents` · `GET /revisions/{id}` · `GET /mdl-items/{id}/revisions` |

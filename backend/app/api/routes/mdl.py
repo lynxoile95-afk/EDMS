@@ -15,6 +15,7 @@ from app.api.deps import CurrentUser, DbSession, ProjectDep
 from app.models import DocumentRevision, Discipline, MDLImportBatch, MDLItem, ProjectMember, Unit
 from app.models.enums import ProjectRole, Severity
 from app.schemas.mdl import (
+    MDLItemCreate,
     MDLImportBatchOut,
     MDLImportRequest,
     MDLImportReport,
@@ -73,7 +74,7 @@ async def preview_mdl(
     file: UploadFile = File(...),
     sheet_name: str | None = Form(None),
 ) -> MDLPreviewOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC])
     if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=422, detail="فقط فایل اکسل (xlsx) پذیرفته می‌شود.")
     path = await _save_temp(file)
@@ -94,7 +95,7 @@ async def import_mdl(
     file: UploadFile = File(...),
     config: str = Form(..., description="JSON مطابق MDLImportRequest"),
 ) -> MDLImportReport:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC])
     try:
         request = MDLImportRequest(**json.loads(config))
     except (json.JSONDecodeError, ValueError) as exc:
@@ -179,7 +180,7 @@ def update_item(
     db: DbSession,
     user: CurrentUser,
 ) -> MDLItemOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC])
     item = db.get(MDLItem, item_id)
     if item is None or item.project_id != project.id:
         raise HTTPException(status_code=404, detail="ردیف MDL یافت نشد.")
@@ -218,6 +219,122 @@ def update_item(
     db.commit()
     db.refresh(item)
     return _item_out(item)
+
+
+@router.post(
+    "/items",
+    response_model=MDLItemOut,
+    status_code=201,
+    summary="افزودن دستی یک ردیف MDL (فقط کارشناس کنترل اسناد)",
+)
+def create_item(
+    project: ProjectDep,
+    payload: MDLItemCreate,
+    db: DbSession,
+    user: CurrentUser,
+) -> MDLItemOut:
+    """The manual door into the MDL, beside the Excel import.
+
+    Same rules as the import: the code must be unique inside the project and the
+    discipline/unit codes must already exist, so a hand-typed row can never point at
+    a lookup the project does not have.
+    """
+    acl.require_project(db, user, project.id, [ProjectRole.DCC])
+    doc_code = payload.doc_code.strip().upper()
+    duplicate = db.execute(
+        select(MDLItem).where(MDLItem.project_id == project.id, MDLItem.doc_code_norm == normalize_code(doc_code))
+    ).scalar_one_or_none()
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail=f"کد مدرک «{doc_code}» قبلاً در MDL ثبت شده است.")
+
+    discipline_id = None
+    if payload.discipline_code:
+        discipline = db.execute(
+            select(Discipline).where(
+                Discipline.project_id == project.id,
+                Discipline.code == payload.discipline_code.strip().upper(),
+            )
+        ).scalar_one_or_none()
+        if discipline is None:
+            raise HTTPException(
+                status_code=422, detail=f"دیسیپلین «{payload.discipline_code}» در این پروژه تعریف نشده است."
+            )
+        discipline_id = discipline.id
+
+    unit_id = None
+    if payload.unit_code:
+        unit = db.execute(
+            select(Unit).where(
+                Unit.project_id == project.id, Unit.code == payload.unit_code.strip().upper()
+            )
+        ).scalar_one_or_none()
+        if unit is None:
+            raise HTTPException(
+                status_code=422, detail=f"یونیت «{payload.unit_code}» در این پروژه تعریف نشده است."
+            )
+        unit_id = unit.id
+
+    item = MDLItem(
+        project_id=project.id,
+        doc_code=doc_code,
+        doc_code_norm=normalize_code(doc_code),
+        title=payload.title.strip(),
+        title_norm=normalize_title(payload.title.strip()),
+        doc_type=payload.doc_type,
+        current_rev=payload.current_rev,
+        rev_seq=rev_to_seq(payload.current_rev, "auto") if payload.current_rev else 0,
+        status=payload.status or "Draft",
+        weight=payload.weight,
+        page_count=payload.page_count,
+        discipline_id=discipline_id,
+        unit_id=unit_id,
+    )
+    db.add(item)
+    db.flush()
+    audit.record(
+        db,
+        action="mdl.item.create",
+        entity_type="mdl_item",
+        entity_id=item.id,
+        actor=user,
+        project_id=project.id,
+        after={"doc_code": item.doc_code, "title": item.title, "source": "manual"},
+    )
+    db.commit()
+    db.refresh(item)
+    return _item_out(item)
+
+
+@router.delete(
+    "/items/{item_id}",
+    status_code=204,
+    summary="حذف ردیف MDL (فقط کارشناس کنترل اسناد و تنها بدون بازنگری)",
+)
+def delete_item(project: ProjectDep, item_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Response:
+    acl.require_project(db, user, project.id, [ProjectRole.DCC])
+    item = db.get(MDLItem, item_id)
+    if item is None or item.project_id != project.id:
+        raise HTTPException(status_code=404, detail="ردیف MDL یافت نشد.")
+    revisions = db.execute(
+        select(func.count(DocumentRevision.id)).where(DocumentRevision.mdl_item_id == item.id)
+    ).scalar_one()
+    if revisions:
+        raise HTTPException(
+            status_code=409,
+            detail=f"این ردیف {revisions} بازنگری ثبت‌شده دارد و حذف نمی‌شود؛ ابتدا وضعیت آن را «Void» کنید.",
+        )
+    audit.record(
+        db,
+        action="mdl.item.delete",
+        entity_type="mdl_item",
+        entity_id=item.id,
+        actor=user,
+        project_id=project.id,
+        before={"doc_code": item.doc_code, "title": item.title},
+    )
+    db.delete(item)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/import-batches", response_model=list[MDLImportBatchOut], summary="تاریخچه ایمپورت‌ها")

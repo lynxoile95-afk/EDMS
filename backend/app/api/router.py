@@ -14,6 +14,7 @@ from app.api.routes import (
     notifications,
     projects,
     review,
+    system,
     transmittals,
     uploads,
 )
@@ -32,3 +33,4 @@ api_router.include_router(files.router)
 api_router.include_router(notifications.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(admin.router)
+api_router.include_router(system.router)

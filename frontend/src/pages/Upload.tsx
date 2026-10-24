@@ -1,10 +1,10 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { api, ApiError } from "@/lib/api";
 import { useProject } from "@/lib/project";
 import type { SourceFile, UploadSession } from "@/lib/types";
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Spinner } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Modal, Spinner } from "@/components/ui";
 import { FField, FieldGrid } from "@/components/window";
 import { DecisionBadge } from "@/components/DecisionBadge";
 import { PURPOSE_LABELS, STATUS_LABELS, fileSize, persianDigits } from "@/lib/format";
@@ -30,6 +30,24 @@ export function UploadPage() {
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "uploaded" | "processing" | "done">("idle");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // what this deployment can extract with, and whether an AI key is present
+  const [caps, setCaps] = useState<{
+    ocr_enabled: boolean;
+    ocr_engine: string;
+    ocr_langs: string;
+    vlm_enabled: boolean;
+    vlm_api_key_set: boolean;
+    vlm_model: string;
+    note_fa: string;
+  } | null>(null);
+  const [capsOpen, setCapsOpen] = useState(false);
+
+  useEffect(() => {
+    api
+      .get<typeof caps>("/system/capabilities")
+      .then(setCaps)
+      .catch(() => setCaps(null));
+  }, []);
 
   const addFiles = useCallback((files: FileList | File[]) => {
     const incoming = Array.from(files).filter((file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"));
@@ -96,6 +114,37 @@ export function UploadPage() {
           subtitle="فایل‌های PDF را اضافه کنید؛ سیستم کادر مشخصات را می‌خواند و با MDL تطبیق می‌دهد."
         />
         <div className="space-y-4 p-4">
+          {/* Extraction capability strip — answers "is an AI key needed here?" */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border border-[#a8a284] bg-[#f7f4e3] px-2 py-1 text-[10px] text-[#20365c]">
+            <span className="font-bold">موتور استخراج:</span>
+            <span>
+              OCR:{" "}
+              {caps
+                ? caps.ocr_enabled
+                  ? `${caps.ocr_engine} (${caps.ocr_langs})`
+                  : "خاموش"
+                : "—"}
+            </span>
+            <span className="flex items-center gap-1">
+              هوش مصنوعی (VLM):{" "}
+              {caps?.vlm_enabled ? (
+                <b className="text-[#1e6b34]">
+                  فعال — {caps.vlm_model}
+                  {caps.vlm_api_key_set ? " (کلید تنظیم شده)" : " (بدون کلید)"}
+                </b>
+              ) : (
+                <b className="text-[#8a5a10]">غیرفعال — لازم هم نیست</b>
+              )}
+            </span>
+            <button
+              type="button"
+              className="ms-auto font-bold text-[#1f4e79] underline"
+              onClick={() => setCapsOpen(true)}
+            >
+              کلید هوش مصنوعی کجا وارد می‌شود؟
+            </button>
+          </div>
+
           <div
             className={clsx(
               "flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-10 text-center transition",
@@ -252,6 +301,61 @@ export function UploadPage() {
           </Card>
         ) : null}
       </div>
+
+      {/* ---------------- where the AI key lives ---------------- */}
+      <Modal
+        open={capsOpen}
+        title="کلید هوش مصنوعی — VLM"
+        onClose={() => setCapsOpen(false)}
+        width="max-w-2xl"
+        footer={
+          <div className="flex justify-end">
+            <Button variant="ghost" onClick={() => setCapsOpen(false)}>
+              بستن
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-2 text-[11px] leading-6 text-[#33475b]">
+          <p className="border border-[#a8a284] bg-[#f7f4e3] px-2 py-1 font-bold text-[#20365c]">
+            بارگذاری اسناد به کلید هوش مصنوعی نیاز ندارد. استخراج با لایه متن PDF، قواعد
+            (R01–R22) و OCR فارسی/انگلیسی انجام می‌شود؛ کلید فقط برای لایه کمکی VLM است که در
+            موارد مبهم به کار می‌رود.
+          </p>
+          <p>
+            <b>۱.</b> در ریشهٔ پروژه فایل <span className="ltr font-mono">.env</span> را از روی{" "}
+            <span className="ltr font-mono">.env.example</span> بسازید.
+          </p>
+          <p>
+            <b>۲.</b> این چهار متغیر را پر کنید:
+          </p>
+          <pre className="ltr overflow-x-auto border border-[#a8a284] bg-[#fdfcf4] p-2 font-mono text-[10px]">{`VLM_ENABLED=true
+VLM_BASE_URL=http://vlm:8000/v1      # یا http://<ip-سرور-داخلی>:11434/v1 برای Ollama
+VLM_API_KEY=<کلید-شما>
+VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct`}</pre>
+          <p>
+            <b>۳.</b> سرویس‌ها را دوباره بالا بیاورید:{" "}
+            <span className="ltr font-mono">docker compose up -d api worker</span>
+          </p>
+          <p>
+            <b>۴.</b> در تنظیمات همان پروژه، کلید{" "}
+            <span className="ltr font-mono">vlm_fallback</span> را{" "}
+            <span className="ltr font-mono">true</span> کنید؛ بدون این، حتی با کلید هم لایه
+            کمکی اجرا نمی‌شود.
+          </p>
+          <p className="text-[#8a5a10]">
+            نکتهٔ امنیتی: آدرس VLM باید داخلی باشد (localhost، vlm، 10.x، 192.168.x، 172.x یا
+            دامنهٔ <span className="ltr">.local</span> / <span className="ltr">.internal</span>).
+            آدرس عمومی پذیرفته نمی‌شود تا نقشه‌های محرمانه از شبکهٔ سازمان خارج نشوند.
+          </p>
+          <p>
+            کلید در هیچ صفحه‌ای نمایش داده نمی‌شود؛ تنها «تنظیم شده / تنظیم نشده» بودن آن از مسیر{" "}
+            <span className="ltr font-mono">GET /api/v1/system/capabilities</span> و وضعیت
+            اتصال از <span className="ltr font-mono">GET /api/v1/admin/ai-status</span> قابل
+            بررسی است.
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }

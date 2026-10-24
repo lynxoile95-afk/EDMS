@@ -108,6 +108,52 @@ def audit_log(
     }
 
 
+@router.get("/ai-status", summary="وضعیت لایه هوش مصنوعی (VLM)")
+def ai_status(user: CurrentUser) -> dict:
+    """Is an AI key configured, is the endpoint local, and does it answer?
+
+    The key itself is never returned — only whether one is set. A remote endpoint is
+    reported as *refused* rather than *reachable*: confidential drawings may only be
+    processed on-premise, so the client would refuse to use it either way.
+    """
+    acl.assert_admin(user)
+    from app.core.config import settings
+    from app.extraction.vlm import VLMExtractor
+
+    vlm = VLMExtractor()
+    key_set = bool(settings.vlm_api_key and settings.vlm_api_key != "EMPTY")
+    allowed = vlm.is_local_endpoint()
+    reachable: bool | None = None
+    probe_error: str | None = None
+    if settings.vlm_enabled and allowed:
+        try:
+            import httpx
+
+            response = httpx.get(
+                f"{settings.vlm_base_url.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {settings.vlm_api_key}"},
+                timeout=3.0,
+            )
+            reachable = response.status_code < 500
+        except Exception as exc:  # noqa: BLE001 - the reason is the payload
+            reachable = False
+            probe_error = str(exc)[:200]
+    return {
+        "enabled": settings.vlm_enabled,
+        "key_set": key_set,
+        "model": settings.vlm_model,
+        "base_url": settings.vlm_base_url,
+        "endpoint_allowed": allowed,
+        "reachable": reachable,
+        "probe_error": probe_error,
+        "where_to_set_fa": (
+            "کلید در فایل .env ریشه پروژه در متغیرهای VLM_API_KEY / VLM_BASE_URL / VLM_MODEL "
+            "قرار می‌گیرد و پس از تغییر باید سرویس api و worker دوباره راه‌اندازی شوند. "
+            "برای فعال شدن واقعی، VLM_ENABLED=true و در تنظیمات پروژه vlm_fallback=true لازم است."
+        ),
+    }
+
+
 @router.get("/status", summary="وضعیت عملیاتی")
 def status(db: DbSession, user: CurrentUser) -> dict:
     acl.assert_admin(user)

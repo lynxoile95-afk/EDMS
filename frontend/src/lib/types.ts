@@ -109,6 +109,14 @@ export interface MDLItem {
   discipline_code: string | null;
   unit_code: string | null;
   revision_count: number;
+  // ---- segments of the six-part code (back-end services/code_structure.py) ----
+  phase: string | null;
+  serial_no: string | null;
+  category: string | null;
+  doc_class: string | null;
+  basic_detail: string | null;
+  poi: string | null;
+  remark: string | null;
 }
 
 export interface MDLImportEntry {

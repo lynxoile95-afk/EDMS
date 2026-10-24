@@ -25,6 +25,7 @@ const MENU: { title: string; items: { to: string; label: string; icon: string; b
       { to: "/mdl", label: "MDL — فهرست مدارک", icon: "☰" },
       { to: "/upload", label: "ثبت و بارگذاری مدرک", icon: "⇧" },
       { to: "/review", label: "صف بازبینی (DCC)", icon: "⚑", badge: "queue" },
+      { to: "/team", label: "کاربران و نقش‌ها", icon: "☷" },
     ],
   },
   {
@@ -41,6 +42,7 @@ const TITLES: Record<string, string> = {
   "/mdl": "فهرست مدارک پروژه (MDL)",
   "/upload": "ثبت و بارگذاری مدرک",
   "/review": "صف بازبینی کنترل مدارک",
+  "/team": "کاربران و نقش‌های گردش",
   "/transmittals": "برگه‌های ارسال",
   "/login": "ورود به سامانه",
 };

@@ -5,6 +5,29 @@ import type { MDLImportReport, MDLItem, MDLPreview } from "@/lib/types";
 import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Field, Input, Modal, Select, Spinner } from "@/components/ui";
 import { jalali, persianDigits } from "@/lib/format";
 
+
+interface CodeSegment {
+  key: string;
+  label_fa: string;
+  label_en: string;
+  regex: string;
+  example: string;
+  note_fa: string;
+}
+
+interface CodeStructure {
+  pattern_label: string;
+  example: string;
+  short_pattern_label: string;
+  short_example: string;
+  segments: CodeSegment[];
+  disciplines: { code: string; name_fa: string; name_en: string }[];
+  doc_types: { code: string; name_fa: string }[];
+  doc_classes: string[];
+  basic_detail_values: string[];
+  serial_blocks: { discipline: string; name_fa: string; from: number; to: number }[];
+  known_disciplines?: { id: string; code: string; name: string }[];
+}
 const FIELD_LABELS: Record<string, string> = {
   doc_code: "کد مدرک *",
   title: "عنوان *",
@@ -42,6 +65,9 @@ export function MDLLibrary() {
   const [rowOpen, setRowOpen] = useState(false);
   const [editing, setEditing] = useState<MDLItem | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
+  // the coding rule this project validates against
+  const [structure, setStructure] = useState<CodeStructure | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const emptyRow = {
     doc_code: "",
     title: "",
@@ -51,8 +77,26 @@ export function MDLLibrary() {
     current_rev: "",
     status: "Draft",
     weight: "1",
+    phase: "",
+    serial_no: "",
+    category: "",
+    doc_class: "",
+    basic_detail: "",
+    poi: "",
+    remark: "",
   };
   const [rowForm, setRowForm] = useState(emptyRow);
+
+  useEffect(() => {
+    if (!project) return;
+    api
+      .get<CodeStructure>(`/projects/${project.id}/mdl/code-structure`)
+      .then(setStructure)
+      .catch(() => setStructure(null));
+  }, [project]);
+
+  /** Live split of whatever is typed into the code field. */
+  const codeParts = rowForm.doc_code.split("-").filter(Boolean);
 
   const openNewRow = () => {
     setEditing(null);
@@ -73,6 +117,13 @@ export function MDLLibrary() {
       current_rev: item.current_rev ?? "",
       status: item.status ?? "Draft",
       weight: String(item.weight ?? 1),
+      phase: item.phase ?? "",
+      serial_no: item.serial_no ?? "",
+      category: item.category ?? "",
+      doc_class: item.doc_class ?? "",
+      basic_detail: item.basic_detail ?? "",
+      poi: item.poi ?? "",
+      remark: item.remark ?? "",
     });
     setRowOpen(true);
   };
@@ -95,6 +146,13 @@ export function MDLLibrary() {
           weight: Number(rowForm.weight) || 1,
           discipline_code: rowForm.discipline_code || null,
           unit_code: rowForm.unit_code || null,
+          phase: rowForm.phase || null,
+          serial_no: rowForm.serial_no || null,
+          category: rowForm.category || null,
+          doc_class: rowForm.doc_class || null,
+          basic_detail: rowForm.basic_detail || null,
+          poi: rowForm.poi || null,
+          remark: rowForm.remark || null,
           reason: "ویرایش دستی از صفحه MDL",
         });
       } else {
@@ -107,6 +165,13 @@ export function MDLLibrary() {
           weight: Number(rowForm.weight) || 1,
           discipline_code: rowForm.discipline_code || null,
           unit_code: rowForm.unit_code || null,
+          phase: rowForm.phase || null,
+          serial_no: rowForm.serial_no || null,
+          category: rowForm.category || null,
+          doc_class: rowForm.doc_class || null,
+          basic_detail: rowForm.basic_detail || null,
+          poi: rowForm.poi || null,
+          remark: rowForm.remark || null,
         });
       }
       setRowOpen(false);
@@ -222,12 +287,20 @@ export function MDLLibrary() {
               <Button variant="secondary" onClick={() => api.download(`/projects/${project.id}/mdl/export`, `MDL-${project.code}.xlsx`)}>
                 خروجی اکسل
               </Button>
+              {!isDcc ? (
+                <Button variant="secondary" onClick={() => setGuideOpen(true)}>
+                  راهنمای کدینگ
+                </Button>
+              ) : null}
               {isDcc ? (
                 <>
                   <Button variant="secondary" onClick={openNewRow}>
                     افزودن ردیف دستی
                   </Button>
                   <Button onClick={() => setWizardOpen(true)}>بارگذاری MDL (اکسل)</Button>
+                  <Button variant="secondary" onClick={() => setGuideOpen(true)}>
+                    راهنمای کدینگ
+                  </Button>
                 </>
               ) : null}
             </>
@@ -276,6 +349,9 @@ export function MDLLibrary() {
                   <th>دیسیپلین</th>
                   <th>یونیت</th>
                   <th>بازنگری</th>
+                  <th>فاز</th>
+                  <th>سریال</th>
+                  <th>P.O.I</th>
                   <th>وضعیت</th>
                   <th>بازنگری‌های ثبت‌شده</th>
                   <th>موعد</th>
@@ -294,6 +370,9 @@ export function MDLLibrary() {
                     <td>
                       <Badge className="bg-brand-50 text-brand-700">{item.current_rev ?? "—"}</Badge>
                     </td>
+                    <td className="text-center">{item.phase ?? "—"}</td>
+                    <td className="cell-center ltr">{item.serial_no ?? "—"}</td>
+                    <td className="text-center">{item.poi ?? "—"}</td>
                     <td className="text-xs text-slate-600">{item.status ?? "—"}</td>
                     <td>
                       {item.revision_count > 0 ? (
@@ -346,6 +425,121 @@ export function MDLLibrary() {
         ) : null}
       </Card>
 
+      {/* ---------------- راهنمای کدینگ مدارک ---------------- */}
+      <Modal
+        open={guideOpen}
+        title="ساختار کدینگ مدارک — Document Numbering"
+        onClose={() => setGuideOpen(false)}
+        width="max-w-4xl"
+        footer={
+          <div className="flex items-center justify-between">
+            <span className="ltr text-[10px] text-[#33475b]">{structure?.example ?? "2102-20-EB-GN-MDL-9001"}</span>
+            <Button variant="ghost" onClick={() => setGuideOpen(false)}>
+              بستن
+            </Button>
+          </div>
+        }
+      >
+        {structure ? (
+          <>
+            <table className="table-base">
+              <thead>
+                <tr>
+                  <th style={{ width: 120 }}>سگمنت</th>
+                  <th style={{ width: 150 }}>برچسب برگه</th>
+                  <th style={{ width: 130 }}>الگو</th>
+                  <th style={{ width: 90 }}>مثال</th>
+                  <th>توضیح</th>
+                </tr>
+              </thead>
+              <tbody>
+                {structure.segments.map((segment) => (
+                  <tr key={segment.key}>
+                    <td className="font-bold text-[#1f3864]">{segment.label_fa}</td>
+                    <td className="ltr text-[10px]">{segment.label_en}</td>
+                    <td className="cell-center ltr font-mono text-[10px]">{segment.regex}</td>
+                    <td className="cell-center ltr font-mono text-[10px]">{segment.example}</td>
+                    <td className="text-[10px]">{segment.note_fa}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="mt-2 flex items-center gap-2 border border-[#a8a284] bg-[#f7f4e3] px-2 py-1">
+              <span className="text-[10px] font-bold text-[#20365c]">نمونه:</span>
+              <span className="ltr font-mono text-[12px] font-bold text-[#17427a]">{structure.example}</span>
+              <span className="text-[9.5px] text-[#5c6b78]">
+                قالب کوتاه (سازگاری با پروژه‌های قدیمی): {structure.short_example}
+              </span>
+            </div>
+
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <div>
+                <p className="mb-1 text-[10px] font-bold text-[#1f3864]">دیسیپلین‌ها</p>
+                <table className="table-base">
+                  <tbody>
+                    {structure.disciplines.map((item) => (
+                      <tr key={item.code}>
+                        <td className="cell-center ltr" style={{ width: 46 }}>
+                          {item.code}
+                        </td>
+                        <td className="text-[10px]">{item.name_fa}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <p className="mb-1 text-[10px] font-bold text-[#1f3864]">
+                  انواع مدرک ({persianDigits(structure.doc_types.length)} نوع)
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {structure.doc_types.map((item) => (
+                    <span
+                      key={item.code}
+                      className="rounded-sm border border-[#a8a284] bg-white px-1 text-[9.5px]"
+                      title={item.name_fa}
+                    >
+                      <b className="ltr">{item.code}</b>
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-2 text-[9.5px] leading-5 text-[#5c6b78]">
+                  CLASS: {structure.doc_classes.join(" / ")} · BASIC/DETAIL:{" "}
+                  {structure.basic_detail_values.join(" / ")}
+                </p>
+              </div>
+            </div>
+
+            <p className="mb-1 mt-2 text-[10px] font-bold text-[#1f3864]">
+              بازه شماره سریال هر دیسیپلین — بیرون از بازه فقط هشدار است، نه خطا
+            </p>
+            <table className="table-base">
+              <thead>
+                <tr>
+                  <th style={{ width: 70 }}>دیسیپلین</th>
+                  <th>نام</th>
+                  <th style={{ width: 130 }}>بازه سریال</th>
+                </tr>
+              </thead>
+              <tbody>
+                {structure.serial_blocks.map((block) => (
+                  <tr key={block.discipline}>
+                    <td className="cell-center ltr font-bold text-[#1f3864]">{block.discipline}</td>
+                    <td className="text-[10px]">{block.name_fa}</td>
+                    <td className="cell-center ltr font-mono text-[10px]">
+                      {persianDigits(String(block.from))} – {persianDigits(String(block.to))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        ) : (
+          <Spinner />
+        )}
+      </Modal>
+
       {/* ---------------- manual row: add or edit one MDL line ---------------- */}
       <Modal
         open={rowOpen}
@@ -370,9 +564,25 @@ export function MDLLibrary() {
               className="ltr"
               value={rowForm.doc_code}
               disabled={Boolean(editing)}
-              placeholder="PRJ-CIV-DR-0101"
+              placeholder="2102-20-EB-GN-MDL-9001"
               onChange={(event) => setRowForm({ ...rowForm, doc_code: event.target.value })}
             />
+            {codeParts.length > 0 ? (
+              <span className="mt-1 flex flex-wrap gap-1">
+                {codeParts.map((part, index) => (
+                  <span
+                    key={`${part}-${index}`}
+                    className="rounded-sm border border-[#a8a284] bg-[#f7f4e3] px-1 text-[9px] text-[#20365c]"
+                    title={structure?.segments[index]?.label_fa ?? ""}
+                  >
+                    {part}
+                  </span>
+                ))}
+                <span className="text-[9px] text-[#5c6b78]">
+                  {structure?.pattern_label ?? "PROJECT-UNIT-PHASE-DISC-TYPE-SERIAL"}
+                </span>
+              </span>
+            ) : null}
           </Field>
           <Field label="عنوان *">
             <Input
@@ -409,8 +619,62 @@ export function MDLLibrary() {
             <Input
               className="ltr"
               value={rowForm.current_rev}
-              placeholder="A"
+              placeholder="A8"
               onChange={(event) => setRowForm({ ...rowForm, current_rev: event.target.value })}
+            />
+          </Field>
+          <Field label="فاز (EB/ED)">
+            <Input
+              className="ltr"
+              value={rowForm.phase}
+              placeholder="EB"
+              onChange={(event) => setRowForm({ ...rowForm, phase: event.target.value })}
+            />
+          </Field>
+          <Field label="شماره سریال">
+            <Input
+              className="ltr"
+              value={rowForm.serial_no}
+              placeholder="9001"
+              onChange={(event) => setRowForm({ ...rowForm, serial_no: event.target.value })}
+            />
+          </Field>
+          <Field label="گروه/دسته (Category)">
+            <Input
+              value={rowForm.category}
+              placeholder="GENERAL"
+              onChange={(event) => setRowForm({ ...rowForm, category: event.target.value })}
+            />
+          </Field>
+          <Field label="CLASS (A/R)">
+            <Input
+              className="ltr"
+              value={rowForm.doc_class}
+              placeholder="R"
+              onChange={(event) => setRowForm({ ...rowForm, doc_class: event.target.value })}
+            />
+          </Field>
+          <Field label="BASIC/DETAIL (B/D)">
+            <Input
+              className="ltr"
+              value={rowForm.basic_detail}
+              placeholder="B"
+              onChange={(event) => setRowForm({ ...rowForm, basic_detail: event.target.value })}
+            />
+          </Field>
+          <Field label="P.O.I">
+            <Input
+              className="ltr"
+              value={rowForm.poi}
+              placeholder="IFR"
+              onChange={(event) => setRowForm({ ...rowForm, poi: event.target.value })}
+            />
+          </Field>
+          <Field label="ملاحظات (Remark)">
+            <Input
+              value={rowForm.remark}
+              placeholder="MODIFY"
+              onChange={(event) => setRowForm({ ...rowForm, remark: event.target.value })}
             />
           </Field>
           <Field label="وضعیت">

@@ -214,14 +214,6 @@ def create_unit(project: ProjectDep, payload: LookupCreate, db: DbSession, user:
 # ---------------------------------------------------------------------------
 # Members
 # ---------------------------------------------------------------------------
-@router.get("/{project_id}/members", response_model=list[MemberOut])
-def list_members(project: ProjectDep, db: DbSession) -> list[MemberOut]:
-    rows = db.execute(
-        select(ProjectMember).where(ProjectMember.project_id == project.id)
-    ).scalars()
-    return [MemberOut.model_validate(r) for r in rows]
-
-
 @router.post("/{project_id}/members", response_model=MemberOut, status_code=201)
 def add_member(
     project: ProjectDep, payload: MemberCreate, db: DbSession, user: CurrentUser

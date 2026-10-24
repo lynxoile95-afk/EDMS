@@ -158,30 +158,27 @@ def list_transmittals(
 ) -> dict:
     stmt = select(Transmittal).where(Transmittal.project_id == project.id)
     if mine:
-        # An inbox is what is waiting on *me*: a pending referral, a recipient row
-        # of my own, or — for document control — a sheet still on its desk.
-        waiting = routing.pending_for_user(db, project.id, user.id)
-        clauses = [
-            # an open referral addressed to me
-            Transmittal.id.in_(waiting),
-            # a routed sheet nobody has acknowledged me on yet
-            Transmittal.recipients.any(
-                and_(
-                    TransmittalRecipient.user_id == user.id,
-                    TransmittalRecipient.ack_status != "acknowledged",
-                )
-            ),
-        ]
-        # document control's own desk: drafts taken over by DCC and sheets awaiting its check
+        # Each desk is defined by the route, not by "everything I can see":
+        #   contractor  → the drafts it still owns
+        #   document control → sheets on its desk (draft / dcc)
+        #   management  → sheets waiting for a referral decision
+        #   discipline  → only the referrals addressed to me
+        clauses = [Transmittal.id.in_(routing.pending_for_user(db, project.id, user.id))]
+        if acl.has_role(db, user, project.id, ProjectRole.SUBMITTER):
+            clauses.append(
+                and_(Transmittal.created_by_id == user.id, Transmittal.stage == "draft")
+            )
+        if acl.has_role(db, user, project.id, ProjectRole.DCC, ProjectRole.SYSTEM_ADMIN):
+            clauses.append(Transmittal.stage.in_(["draft", "dcc"]))
         if acl.has_role(
             db,
             user,
             project.id,
-            ProjectRole.DCC,
+            ProjectRole.ENGINEERING_MANAGER,
             ProjectRole.PROJECT_MANAGER,
             ProjectRole.SYSTEM_ADMIN,
         ):
-            clauses.append(Transmittal.stage.in_(["draft", "dcc"]))
+            clauses.append(Transmittal.stage == "management")
         stmt = stmt.where(or_(*clauses))
     if status:
         stmt = stmt.where(Transmittal.status == status)

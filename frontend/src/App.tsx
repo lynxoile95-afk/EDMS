@@ -10,6 +10,7 @@ import { MDLLibrary } from "@/pages/MDLLibrary";
 import { UploadPage } from "@/pages/Upload";
 import { ReviewQueue } from "@/pages/ReviewQueue";
 import { ReviewDetail } from "@/pages/ReviewDetail";
+import { Team } from "./pages/Team";
 import { Transmittals } from "@/pages/Transmittals";
 import { TransmittalDetail } from "@/pages/TransmittalDetail";
 import { CommentList } from "@/pages/CommentList";
@@ -61,6 +62,7 @@ export default function App() {
               <Route path="/upload" element={<UploadPage />} />
               <Route path="/review" element={<ReviewQueue />} />
               <Route path="/review/:resultId" element={<ReviewDetail />} />
+              <Route path="/team" element={<Team />} />
               <Route path="/transmittals" element={<Transmittals />} />
               <Route path="/transmittals/:transmittalId" element={<TransmittalDetail />} />
               <Route path="/documents/:revisionId/comments" element={<CommentList />} />

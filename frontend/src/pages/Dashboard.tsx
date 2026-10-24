@@ -21,9 +21,18 @@ import {
   IconSearch,
   IconView,
 } from "@/components/icons";
-import { ACTION_LABELS, PURPOSE_LABELS, RULE_LABELS, STATUS_LABELS, jalali, jalaliDateTime, percent, persianDigits } from "@/lib/format";
+import { ACTION_LABELS, PURPOSE_LABELS, RULE_LABELS, STAGE_LABELS, STATUS_LABELS, jalali, jalaliDateTime, percent, persianDigits } from "@/lib/format";
 
 /** One row of the inbox: either a received transmittal or a document awaiting review. */
+/** What *I* have to do while the sheet sits in each stage of the review route. */
+const STAGE_ACTIONS: Record<string, string> = {
+  draft: "تکمیل و صدور برگه ارسال",
+  dcc: "کنترل اسناد و ارسال به مدیریت",
+  management: "بررسی مدیریت و ارجاع به دیسیپلین",
+  discipline: "بررسی کارشناس دیسیپلین",
+  closed: "بسته‌شده",
+};
+
 interface InboxRow {
   key: string;
   kind: "transmittal" | "review";
@@ -69,7 +78,10 @@ export function Dashboard() {
     try {
       const [dashboard, list, pending, inbox] = await Promise.all([
         api.get<DashboardData>(`/projects/${project.id}/dashboard`),
-        api.get<{ items: Transmittal[] }>(`/projects/${project.id}/transmittals?size=25`),
+        // The inbox is per-person (reference «کارتابل وظایف سازمانی»): the API decides
+        // what is waiting on *me* — an open referral, an un-acknowledged sheet, or the
+        // management/DCC step when I hold that role.
+        api.get<{ items: Transmittal[] }>(`/projects/${project.id}/transmittals?mine=true&size=25`),
         api.get<{ items: ExtractionResult[] }>(`/projects/${project.id}/review-queue?review_status=pending&size=25`),
         api.get<{ items: Notification[]; unread: number }>("/notifications?limit=60"),
       ]);
@@ -116,8 +128,8 @@ export function Dashboard() {
       key: `trn-${item.id}`,
       kind: "transmittal",
       title: item.number ?? "پیش‌نویس",
-      subject: `${PURPOSE_LABELS[item.purpose] ?? item.purpose} — ${persianDigits(item.line_count)} مدرک`,
-      action: item.acknowledged_count >= item.recipient_count ? "For Information" : "For Follow Up",
+      subject: `${PURPOSE_LABELS[item.purpose] ?? item.purpose} — ${persianDigits(item.line_count)} مدرک · ${STAGE_LABELS[item.stage ?? "draft"] ?? ""}`,
+      action: STAGE_ACTIONS[item.stage ?? "draft"] ?? "For Follow Up",
       sender: item.from_org ?? "—",
       doc_type: item.type === "external" ? "Transmittal (External)" : "Transmittal",
       received: item.issued_at,

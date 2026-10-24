@@ -11,20 +11,36 @@ export interface TabDef {
 }
 
 /** Classic tab strip, in the order given (RTL reading order). */
-export function Tabs({ tabs, initial }: { tabs: TabDef[]; initial?: string }) {
-  const [active, setActive] = useState(initial ?? tabs[0]?.key);
+export function Tabs({
+  tabs,
+  initial,
+  active: controlled,
+  onActiveChange,
+}: {
+  tabs: TabDef[];
+  initial?: string;
+  /** Controlled mode — lets a ribbon button switch tabs. */
+  active?: string;
+  onActiveChange?: (key: string) => void;
+}) {
+  const [internal, setInternal] = useState(initial ?? tabs[0]?.key);
+  const active = controlled ?? internal;
+  const setActive = (key: string) => {
+    setInternal(key);
+    onActiveChange?.(key);
+  };
   const current = tabs.find((tab) => tab.key === active) ?? tabs[0];
   if (!current) return null;
 
   return (
     <div>
-      <div className="tab-strip" role="tablist">
+      <div className="tabstrip" role="tablist">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             role="tab"
             aria-selected={tab.key === current.key}
-            className={clsx("tab-btn", tab.key === current.key && "is-active")}
+            className={clsx("tab", tab.key === current.key && "is-active")}
             onClick={() => setActive(tab.key)}
           >
             {tab.label}

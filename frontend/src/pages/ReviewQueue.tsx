@@ -48,7 +48,7 @@ export function ReviewQueue() {
   if (!project) return <EmptyState title="پروژه‌ای انتخاب نشده است" />;
 
   return (
-    <Card>
+    <Card className="is-main">
       <CardHeader
         title="صف بازبینی کنترل مدارک (DCC)"
         subtitle="تصمیم هوش مصنوعی پیشنهاد است؛ تأیید نهایی با کارشناس کنترل مدارک است."

@@ -50,7 +50,7 @@ export function Transmittals() {
   if (!project) return <EmptyState title="پروژه‌ای انتخاب نشده است" />;
 
   return (
-    <Card>
+    <Card className="is-main">
       <CardHeader
         title="برگه‌های ارسال (Transmittals)"
         subtitle={`${persianDigits(total)} برگه ثبت شده`}

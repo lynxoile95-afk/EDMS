@@ -3,19 +3,27 @@ import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { CommentList as CommentListType, TransmittalDetail as Detail, TransmittalLine } from "@/lib/types";
-import { Badge, Button, Card, EmptyState, ErrorBox, Field, Spinner, SectionBar } from "@/components/ui";
+import { Button, EmptyState, ErrorBox, Spinner } from "@/components/ui";
+import { FieldGrid, FField, IconButton, Ribbon, StatusLamp, Window } from "@/components/window";
+import {
+  IconAdd,
+  IconArchive,
+  IconArrow,
+  IconChain,
+  IconClock,
+  IconComment,
+  IconDelete,
+  IconDoc,
+  IconEdit,
+  IconFlow,
+  IconMail,
+  IconPaperclip,
+  IconPrint,
+  IconRefresh,
+  IconView,
+} from "@/components/icons";
 import { Tabs } from "@/components/Tabs";
-import { ACTION_LABELS, PURPOSE_LABELS, STATUS_LABELS, jalali, jalaliDateTime, persianDigits } from "@/lib/format";
-
-const STATUS_DOT: Record<string, string> = {
-  draft: "#c9c9c9",
-  pending_approval: "#e3b341",
-  issued: "#3f8f45",
-  partially_acknowledged: "#4f83c8",
-  acknowledged: "#2f7d3a",
-  closed: "#7a8794",
-  cancelled: "#b3403a",
-};
+import { ACTION_LABELS, DISPOSITION_LABELS, PURPOSE_LABELS, STATUS_LABELS, jalali, jalaliDateTime, persianDigits } from "@/lib/format";
 
 export function TransmittalDetail() {
   const { transmittalId } = useParams<{ transmittalId: string }>();
@@ -28,6 +36,7 @@ export function TransmittalDetail() {
   const [remarks, setRemarks] = useState("");
   const [comments, setComments] = useState<Record<string, CommentListType[]>>({});
   const [records, setRecords] = useState<Record<string, TransmittalLine[]>>({});
+  const [activeTab, setActiveTab] = useState("letters");
 
   const load = useCallback(async () => {
     if (!transmittalId) return;
@@ -86,141 +95,262 @@ export function TransmittalDetail() {
   const canManage = hasRole("dcc") || hasRole("project_manager") || hasRole("system_admin");
   const issued = ["issued", "partially_acknowledged", "acknowledged", "closed"].includes(data.status);
   const allComments = Object.values(comments).flat().flatMap((list) => list.comments);
+  const meta = data.meta as Record<string, string | undefined>;
+  const commentsRows = data.lines.flatMap((line) =>
+    (comments[line.revision_id] ?? []).flatMap((list) =>
+      list.comments.map((comment) => ({
+        ...comment,
+        doc_code: line.doc_code,
+        doc_title: line.title,
+        rev: line.rev,
+        discipline: line.discipline_code,
+      })),
+    ),
+  );
   const revisionIds = Array.from(new Set(data.lines.map((line) => line.revision_id)));
 
   return (
     <div>
-      {/* ---------- workspace header ---------- */}
-      <Card>
-        <div className="card-header">
-          <h2 className="flex flex-wrap items-center gap-1.5">
-            <span className="ltr">{data.number ?? "پیش‌نویس"}</span>
-            <Badge className="bg-[#e7eef6] text-[#1f3864]">{STATUS_LABELS[data.status] ?? data.status}</Badge>
-            <Badge className="bg-[#eef2f6]">{PURPOSE_LABELS[data.purpose] ?? data.purpose}</Badge>
-            <Badge className="bg-[#eef2f6]">{data.type === "external" ? "خارجی" : "داخلی"}</Badge>
-            {!data.number && data.preview_number ? (
-              <span className="text-[9.5px] font-normal text-[#7a8794]">شماره پیشنهادی: {data.preview_number}</span>
-            ) : null}
-          </h2>
-          <div className="flex items-center gap-1">
-            <Button className="btn-sm" onClick={() => api.download(`/transmittals/${data.id}/pdf`, `${data.number ?? "transmittal"}.pdf`)}>
-              دریافت PDF
-            </Button>
-            <Link className="btn btn-sm" to="/transmittals">
-              فهرست برگه‌ها
-            </Link>
+      {/* ---------- Transmittal Workspace window ---------- */}
+      <Window
+        title={
+          <span className="ltr">
+            Transmittal Workspace — {data.number ?? data.preview_number ?? "Draft"}
+          </span>
+        }
+        onClose={() => window.history.back()}
+        actions={
+          <Link className="wt-btn" to="/transmittals" title="فهرست برگه‌های ارسال">
+            ▤
+          </Link>
+        }
+      >
+        {/* identity strip: the reference prints these five values at the window's top */}
+        <div className="mb-1 flex items-stretch border border-[#a8a284] bg-white">
+          <div className="flex flex-1 flex-col items-center justify-center gap-1 px-3 py-1">
+            <span className="text-[13px] font-bold tracking-tight text-[#1f3864]">Transmittal Workspace</span>
+            <span className="flex items-center gap-1.5">
+              <StatusLamp tone={issued ? "green" : "yellow"} />
+              <span className="text-[10px] text-[#33475b]">
+                {STATUS_LABELS[data.status] ?? data.status} ·{" "}
+                {data.type === "external" ? "Engineering — [OT]" : "Site — [OS]"}
+              </span>
+            </span>
+          </div>
+          <div className="w-[250px] border-inline-start border-[#a8a284] text-[10px]">
+            {[
+              ["Transmittal Identity:", data.id.slice(0, 8).toUpperCase()],
+              ["Transmittal No.:", data.number ?? data.preview_number ?? "—"],
+              ["Date:", meta.issued_at_jalali ?? (data.issued_at ? jalali(data.issued_at) : "—")],
+              ["Registration Time:", data.issued_at ? jalaliDateTime(data.issued_at) : "—"],
+              ["Revision Time:", data.due_date ? jalali(data.due_date) : "—"],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="flex items-center justify-between gap-2 border-b border-[#e6e1c8] px-2 py-[2px] last:border-b-0"
+              >
+                <span className="font-bold text-[#20365c]">{label}</span>
+                <span className="ltr truncate text-[#11202c]">{value}</span>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="p-1.5">
-          <div className="flex items-center justify-between border border-[#9aa8b4] bg-gradient-to-b from-[#fbfcfd] to-[#e8eef4] px-2 py-1">
-            <span className="flex items-center gap-1.5 text-[11px] font-bold text-[#17427a]">
-              <span className="status-dot" style={{ background: STATUS_DOT[data.status] ?? "#999" }} />
-              Transmittal Workspace — Engineering Document Management
-            </span>
-            <span className="text-[9.5px] text-[#5c6b78]">
-              ثبت: {data.issued_at ? jalaliDateTime(data.issued_at) : "—"} · مهلت: {data.due_date ? jalali(data.due_date) : "—"}
-            </span>
-          </div>
+        <div className="section-bar">Transmittal Information — اطلاعات برگه ارسال</div>
+        <FieldGrid>
+          <FField label="Transmittal Subject:" full>
+            <span className="truncate">{data.lines[0]?.title ?? data.remarks ?? "—"}</span>
+          </FField>
+          <FField label="Project:">{meta.project_name ?? "—"}</FField>
+          <FField label="Contract:" muted>
+            —
+          </FField>
+          <FField label="Received Letter No.:" muted>
+            —
+          </FField>
+          <FField label="Contractor Transmittal No.:" muted>
+            —
+          </FField>
+          <FField label="Issued by:">{meta.issued_by ?? "—"}</FField>
+          <FField label="From:">{data.from_org ?? meta.issued_by ?? "—"}</FField>
+          <FField label="Coordinator/Originator:">{meta.ddm_rule ?? "—"}</FField>
+          <FField label="Status:">{STATUS_LABELS[data.status] ?? data.status}</FField>
+          <FField label="P.O.I:">{PURPOSE_LABELS[data.purpose] ?? data.purpose}</FField>
+          <FField label="Due Date:">{data.due_date ? jalali(data.due_date) : "در اسرع وقت"}</FField>
+          <FField label="Recipients:">
+            {persianDigits(data.acknowledged_count)} از {persianDigits(data.recipient_count)} تأیید شده
+          </FField>
+          <FField label="Remarks:" full muted={!data.remarks}>
+            {data.remarks || undefined}
+          </FField>
+        </FieldGrid>
 
-          <SectionBar>Transmittal Information — اطلاعات برگه ارسال</SectionBar>
-          <table className="kv-table">
+        {/* attachment row of the reference workspace */}
+        <div className="mt-1 flex flex-wrap items-center gap-3 border border-[#a8a284] bg-white px-2 py-1">
+          <span className="flex items-center gap-1 text-[10px] text-[#1f3864]">
+            <IconPaperclip className="h-4 w-4" /> Add Attachment From Parzin
+            <span className="text-[9px] text-[#8a97a3]">(فاز ۲)</span>
+          </span>
+          <span className="flex items-center gap-1 text-[10px] text-[#1f3864]">
+            <IconDoc className="h-4 w-4" /> Attachment List ({persianDigits(data.line_count)})
+          </span>
+          <span className="flex items-center gap-1 text-[10px] text-[#1f3864]">
+            <IconArchive className="h-4 w-4" /> Native Files Access
+          </span>
+          <span className="flex items-center gap-1 text-[10px] text-[#1f3864]">
+            <IconEdit className="h-4 w-4" /> Manage Doc. Attachments
+          </span>
+        </div>
+
+        {/* documents grid — the columns printed by the reference system */}
+        <div className="mt-1 max-h-[38vh] overflow-auto border border-[#a8a284]">
+          <table className="table-base">
+            <thead>
+              <tr>
+                <th style={{ width: 30 }}>Row</th>
+                <th style={{ width: 130 }}>Doc. No.</th>
+                <th>Doc. Title</th>
+                <th style={{ width: 62 }}>Discipline</th>
+                <th style={{ width: 46 }}>Version</th>
+                <th style={{ width: 48 }}>P.O.I</th>
+                <th style={{ width: 88 }}>Doc. Status</th>
+                <th style={{ width: 56 }}>Doc. %</th>
+                <th style={{ width: 78 }}>MDL Status</th>
+                <th style={{ width: 84 }}>Confidentiality</th>
+                <th style={{ width: 74 }} className="cell-center">Related Forms</th>
+                <th style={{ width: 46 }} className="cell-center">Chain</th>
+                <th style={{ width: 74 }} className="cell-center">Assign To</th>
+                <th style={{ width: 62 }} className="cell-center">Flow History</th>
+                <th style={{ width: 48 }} className="cell-center">View</th>
+              </tr>
+            </thead>
             <tbody>
-              <tr>
-                <th>شماره برگه</th>
-                <td className="ltr font-bold">{data.number ?? "—"}</td>
-                <th>وضعیت</th>
-                <td>{STATUS_LABELS[data.status] ?? data.status}</td>
-                <th>هدف</th>
-                <td>{PURPOSE_LABELS[data.purpose] ?? data.purpose}</td>
-              </tr>
-              <tr>
-                <th>فرستنده</th>
-                <td>{data.from_org ?? "—"}</td>
-                <th>گیرنده</th>
-                <td>{data.to_org ?? "—"}</td>
-                <th>تعداد مدارک</th>
-                <td>{persianDigits(data.line_count)}</td>
-              </tr>
-              <tr>
-                <th>تأییدیه‌ها</th>
-                <td>
-                  {persianDigits(data.acknowledged_count)} از {persianDigits(data.recipient_count)}
-                </td>
-                <th>تاریخ صدور</th>
-                <td>{data.issued_at ? jalaliDateTime(data.issued_at) : "—"}</td>
-                <th>مهلت پاسخ</th>
-                <td>{data.due_date ? jalali(data.due_date) : "—"}</td>
-              </tr>
+              {data.lines.map((line) => (
+                <tr key={line.id}>
+                  <td className="cell-center">{persianDigits(line.line_no)}</td>
+                  <td className="whitespace-nowrap">
+                    <span className="flex items-center gap-1">
+                      <StatusLamp tone={line.status === "issued" ? "green" : "yellow"} />
+                      <span className="ltr font-bold text-[#17427a]">{line.doc_code ?? "—"}</span>
+                    </span>
+                  </td>
+                  <td>{line.title ?? "—"}</td>
+                  <td className="text-center">{line.discipline_code ?? "—"}</td>
+                  <td className="cell-center">{line.rev ?? "—"}</td>
+                  <td className="cell-center">{data.purpose}</td>
+                  <td className="text-center">{STATUS_LABELS[line.status] ?? line.status}</td>
+                  <td className="cell-center">—</td>
+                  <td className="text-center">{line.status === "issued" ? "Approved" : "In Review"}</td>
+                  <td className="text-center">Normal</td>
+                  <td className="cell-center">
+                    <Link to={`/documents/${line.revision_id}/comments`} aria-label="Comment List">
+                      <IconButton icon={<IconComment />} label="Comment List" />
+                    </Link>
+                  </td>
+                  <td className="cell-center">
+                    <IconButton icon={<IconChain />} label="زنجیره مدارک" disabled />
+                  </td>
+                  <td className="cell-center">
+                    <IconButton icon={<IconArrow />} label="ارجاع" disabled />
+                  </td>
+                  <td className="cell-center">
+                    <IconButton icon={<IconFlow />} label="گردش مدرک" />
+                  </td>
+                  <td className="cell-center">
+                    <IconButton
+                      icon={<IconView />}
+                      label="مشاهده مدرک"
+                      onClick={() =>
+                        api.download(
+                          `/files/revisions/${line.revision_id}`,
+                          `${line.doc_code ?? "document"}-Rev${line.rev ?? ""}.pdf`,
+                        )
+                      }
+                    />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
+        </div>
 
-          {actionError ? (
-            <div className="mt-1">
-              <ErrorBox message={actionError} />
-            </div>
-          ) : null}
-
-          <div className="toolbar mt-1.5 justify-between">
-            <div className="flex flex-wrap items-center gap-1">
-              {!issued ? (
-                <>
-                  <input
-                    className="input w-64"
-                    placeholder="توضیحات برگه ارسال"
-                    value={remarks}
-                    onChange={(event) => setRemarks(event.target.value)}
-                  />
-                  <Button
-                    variant="primary"
-                    className="btn-sm"
-                    disabled={busy}
-                    onClick={() =>
-                      act(
+        {/* the window's ribbon: only actions that really exist are enabled */}
+        <Ribbon
+          items={[
+            { label: "بازخوانی", icon: <IconRefresh />, onClick: () => void load(), disabled: busy },
+            {
+              label: "وضعیت گردش کارها",
+              icon: <IconFlow />,
+              onClick: () => setActiveTab("comments"),
+            },
+            { label: "WorkSpace", icon: <IconDoc />, onClick: () => setActiveTab("letters") },
+            { label: "گردش مدارک", icon: <IconChain />, groupStart: true, disabled: true, title: "فاز ۲" },
+            { label: "لیست پاراف", icon: <IconEdit />, disabled: true, title: "فاز ۲" },
+            {
+              label: "یادآوری",
+              icon: <IconClock />,
+              groupStart: true,
+              disabled: busy || !issued,
+              onClick: () => void act(`/transmittals/${data.id}/remind`, {}),
+            },
+            {
+              label: "مشاهده مدرک",
+              icon: <IconPrint />,
+              onClick: () => api.download(`/transmittals/${data.id}/pdf`, `${data.number ?? "transmittal"}.pdf`),
+            },
+            {
+              label: "تأییدیه دریافت",
+              icon: <IconMail />,
+              disabled: busy || !issued,
+              onClick: () => void act(`/transmittals/${data.id}/acknowledge`, { note: null }),
+            },
+            ...(issued
+              ? []
+              : [
+                  {
+                    label: "صدور نهایی",
+                    icon: <IconAdd />,
+                    groupStart: true,
+                    disabled: busy,
+                    onClick: () =>
+                      void act(
                         `/transmittals/${data.id}/issue`,
                         { remarks: remarks || null, notify: true },
                         "پس از صدور، شماره نهایی تخصیص می‌یابد و محتوای برگه قابل ویرایش نیست. ادامه می‌دهید؟",
-                      )
-                    }
-                  >
-                    صدور نهایی و ارسال
-                  </Button>
-                  <Button
-                    variant="danger"
-                    className="btn-sm"
-                    disabled={busy}
-                    onClick={() => {
-                      const reason = window.prompt("دلیل ابطال را وارد کنید:");
-                      if (reason) void act(`/transmittals/${data.id}/cancel`, { reason });
-                    }}
-                  >
-                    ابطال
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button className="btn-sm" disabled={busy} onClick={() => act(`/transmittals/${data.id}/remind`, {})}>
-                    ارسال یادآور
-                  </Button>
-                  <Button className="btn-sm" disabled={busy} onClick={() => act(`/transmittals/${data.id}/acknowledge`, { note: null })}>
-                    ثبت تأییدیه دریافت
-                  </Button>
-                  <Button className="btn-sm" onClick={() => api.download(`/transmittals/${data.id}/pdf`, `${data.number}.pdf`)}>
-                    چاپ برگه ارسال
-                  </Button>
-                </>
-              )}
-            </div>
-            <span className="text-[9.5px] text-[#5c6b78]">
-              {canManage ? "دسترسی مدیریت: فعال" : "فقط مشاهده"}
-            </span>
-          </div>
-        </div>
-      </Card>
+                      ),
+                  },
+                ]),
+            {
+              label: "ابطال",
+              icon: <IconDelete />,
+              danger: true,
+              disabled: busy,
+              onClick: () => {
+                const reason = window.prompt("دلیل ابطال را وارد کنید:");
+                if (reason) void act(`/transmittals/${data.id}/cancel`, { reason });
+              },
+            },
+          ]}
+        />
 
-      {/* ---------- tabbed workspace ---------- */}
-      <Card>
-        <Tabs
+        {actionError ? <ErrorBox message={actionError} /> : null}
+
+        {!issued ? (
+          <div className="mt-1 flex items-center gap-2 border border-[#a8a284] bg-white px-2 py-1">
+            <span className="text-[10px] font-bold text-[#20365c]">توضیحات صدور (Remarks):</span>
+            <input
+              className="input flex-1"
+              placeholder="پیش از صدور می‌توانید توضیحات برگه را وارد کنید"
+              value={remarks}
+              onChange={(event) => setRemarks(event.target.value)}
+            />
+            <span className="text-[9px] text-[#5c6b78]">{canManage ? "دسترسی مدیریت: فعال" : "فقط مشاهده"}</span>
+          </div>
+        ) : null}
+
+        {/* ---------- tabbed workspace ---------- */}
+        <div className="mt-1 border border-[#a8a284] bg-white">
+          <Tabs
           tabs={[
             {
               key: "letters",
@@ -272,7 +402,27 @@ export function TransmittalDetail() {
               label: "Comment List",
               count: allComments.length,
               content: (
-                <div className="max-h-[46vh] overflow-auto">
+                <div>
+                  {/* reference toolbar above the comment grid */}
+                  <div className="flex flex-wrap items-center gap-3 border-b border-[#a8a284] bg-[#fbfaf2] px-2 py-1">
+                    <Link
+                      className="flex items-center gap-1 text-[10px] font-bold text-[#1f4e79] hover:underline"
+                      to={data.lines[0] ? `/documents/${data.lines[0].revision_id}/comments` : "/review"}
+                    >
+                      <IconAdd className="h-3.5 w-3.5" /> Add New Comment
+                    </Link>
+                    <span className="flex items-center gap-1 text-[10px] text-[#33475b]">
+                      <IconComment className="h-3.5 w-3.5" /> Show All Comment
+                    </span>
+                    <span className="flex items-center gap-1 text-[10px] text-[#8a97a3]">
+                      <IconFlow className="h-3.5 w-3.5" /> Show All Flow History
+                    </span>
+                    <span className="flex-1" />
+                    <span className="text-[9.5px] text-[#5c6b78]">
+                      Comment List: {persianDigits(allComments.length)} مورد
+                    </span>
+                  </div>
+                  <div className="max-h-[46vh] overflow-auto">
                   {allComments.length === 0 ? (
                     <EmptyState title="No items have been registered…" description="برای این بازنگری‌ها نظری ثبت نشده است." />
                   ) : (
@@ -322,6 +472,7 @@ export function TransmittalDetail() {
                       </tbody>
                     </table>
                   )}
+                  </div>
                 </div>
               ),
             },
@@ -463,59 +614,112 @@ export function TransmittalDetail() {
               label: "Reply Sheet",
               count: data.recipient_count,
               content: (
-                <div>
-                  <table className="kv-table mb-1.5">
-                    <tbody>
-                      <tr>
-                        <th>شماره پاسخ</th>
-                        <td className="ltr">{data.number ? `${data.number}-R` : "—"}</td>
-                        <th>وضعیت</th>
-                        <td>{STATUS_LABELS[data.status] ?? data.status}</td>
-                      </tr>
-                      <tr>
-                        <th>تأییدشده</th>
-                        <td>
-                          {persianDigits(data.acknowledged_count)} از {persianDigits(data.recipient_count)}
-                        </td>
-                        <th>تاریخ</th>
-                        <td>{data.issued_at ? jalaliDateTime(data.issued_at) : "—"}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <table className="table-base">
-                    <thead>
-                      <tr>
-                        <th style={{ width: 30 }}>Row</th>
-                        <th>گیرنده</th>
-                        <th style={{ width: 120 }}>اقدام</th>
-                        <th style={{ width: 90 }}>وضعیت</th>
-                        <th style={{ width: 130 }}>تاریخ تأییدیه</th>
-                        <th className="cell-center" style={{ width: 90 }}>Judgment</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.recipients.map((recipient, index) => (
-                        <tr key={recipient.id}>
-                          <td className="cell-center">{persianDigits(index + 1)}</td>
-                          <td>
-                            {recipient.full_name ?? "—"}
-                            <span className="ltr mr-1 text-[9.5px] text-[#5c6b78]">{recipient.email ?? ""}</span>
-                          </td>
-                          <td className="text-[10px]">{ACTION_LABELS[recipient.action] ?? recipient.action}</td>
-                          <td className="text-center">
-                            <span
-                              className="status-dot"
-                              style={{ background: recipient.ack_status === "acknowledged" ? "#3f8f45" : "#d9d9d9" }}
-                            />
-                          </td>
-                          <td className="whitespace-nowrap text-[10px]">
-                            {recipient.acknowledged_at ? jalaliDateTime(recipient.acknowledged_at) : "—"}
-                          </td>
-                          <td className="cell-center">{recipient.ack_status === "acknowledged" ? "OK" : "—"}</td>
+                <div className="p-[3px]">
+                  <div className="mb-1 flex items-center justify-between border border-[#a8a284] bg-white px-2 py-1">
+                    <span className="text-[11px] font-bold text-[#1f3864]">Reply Sheet — برگه پاسخ</span>
+                    <span className="ltr text-[10px] text-[#33475b]">
+                      Reply Sheet No.: {data.number ? `${data.number}-R` : "—"}
+                    </span>
+                  </div>
+                  <FieldGrid>
+                    <FField label="Subject:" full>
+                      {data.lines[0]?.title ?? "—"}
+                    </FField>
+                    <FField label="Transmittal:">
+                      {data.number ? (
+                        <span className="ltr font-bold text-[#17427a]">{data.number}</span>
+                      ) : (
+                        "—"
+                      )}
+                    </FField>
+                    <FField label="Replied by:">{meta.issued_by ?? "—"}</FField>
+                    <FField label="Description:" muted>
+                      —
+                    </FField>
+                    <FField label="Status:">{STATUS_LABELS[data.status] ?? data.status}</FField>
+                    <FField label="Related Letter:" muted>
+                      —
+                    </FField>
+                    <FField label="Parzin Number:" muted>
+                      —
+                    </FField>
+                    <FField label="Acknowledgements:">
+                      {persianDigits(data.acknowledged_count)} از {persianDigits(data.recipient_count)}
+                    </FField>
+                    <FField label="Issued:" full>
+                      {data.issued_at ? jalaliDateTime(data.issued_at) : "—"}
+                    </FField>
+                  </FieldGrid>
+
+                  <div className="mt-1 max-h-[30vh] overflow-auto border border-[#a8a284]">
+                    <table className="table-base">
+                      <thead>
+                        <tr>
+                          <th style={{ width: 30 }}>Row</th>
+                          <th style={{ width: 24 }} className="cell-center">✓</th>
+                          <th style={{ width: 120 }}>Doc. No.</th>
+                          <th>Doc. Title</th>
+                          <th style={{ width: 44 }}>Ver.</th>
+                          <th style={{ width: 70 }}>Discipline</th>
+                          <th style={{ width: 80 }}>Comment Date</th>
+                          <th style={{ width: 100 }}>Create By</th>
+                          <th style={{ width: 78 }}>Status</th>
+                          <th style={{ width: 62 }} className="cell-center">Judgment</th>
+                          <th style={{ width: 110 }}>Owner's Comments</th>
+                          <th style={{ width: 110 }}>Provider Clarification / Reply</th>
+                          <th style={{ width: 62 }} className="cell-center">Chain</th>
+                          <th style={{ width: 52 }} className="cell-center">View</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {commentsRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={14} className="cell-center text-[10px] text-[#5c6b78]">
+                              No items have been registered…
+                            </td>
+                          </tr>
+                        ) : (
+                          commentsRows.map((row, index) => (
+                            <tr key={row.id}>
+                              <td className="cell-center">{persianDigits(index + 1)}</td>
+                              <td className="cell-center">
+                                <input type="checkbox" defaultChecked={row.status === "closed"} aria-label="انتخاب" />
+                              </td>
+                              <td className="ltr whitespace-nowrap font-bold text-[#17427a]">{row.doc_code ?? "—"}</td>
+                              <td className="truncate">{row.doc_title ?? "—"}</td>
+                              <td className="cell-center">{row.rev ?? "—"}</td>
+                              <td className="text-center">{row.discipline ?? "—"}</td>
+                              <td className="whitespace-nowrap text-center text-[10px]">{jalali(row.created_at)}</td>
+                              <td className="text-[10px]">{row.author_name ?? "—"}</td>
+                              <td className="text-center text-[10px]">
+                                {row.disposition ? (DISPOSITION_LABELS[row.disposition] ?? row.disposition) : row.status}
+                              </td>
+                              <td className="cell-center text-[10px]">{row.status === "closed" ? "OK" : "—"}</td>
+                              <td className="max-w-[9rem] truncate text-[10px]">{row.text}</td>
+                              <td className="max-w-[9rem] truncate text-[10px]">{row.response_text ?? "—"}</td>
+                              <td className="cell-center">
+                                <IconButton icon={<IconChain />} label="زنجیره مدارک" disabled />
+                              </td>
+                              <td className="cell-center">
+                                <Link to={`/documents/${row.revision_id}/comments`} aria-label="مشاهده فهرست نظرها">
+                                  <IconButton icon={<IconView />} label="مشاهده" />
+                                </Link>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* The four creation rules printed under the reference Reply Sheet. */}
+                  <div className="mt-1 border border-[#a8a284] bg-[#fffdf3] px-3 py-2 text-[10px] leading-5 text-[#3b4b57]">
+                    <p className="mb-1 font-bold text-[#1f3864]">قوانین ایجاد فریند:</p>
+                    <p>۱. براساس پروژه، ایجاد اولین فرایند در صورت وجود حداقل یک کامنت به ازای هر سند موجود در ارسال، امکان‌پذیر می‌باشد.</p>
+                    <p>۲. براساس پروژه، ایجاد فرایند در صورتی امکان‌پذیر است که در فرایند قبلی تمام کامنت‌ها تعیین تکلیف شده باشند و هیچ سندی از اسناد ارسال شده وضعیت «Under Review» به‌لحاظ تأیید یا Return نداشته باشد.</p>
+                    <p>۳. براساس پروژه، ایجاد فرایند در صورتی امکان‌پذیر است که تمام کامنت‌ها از یک نوع باشند (Accept یا Ignore).</p>
+                    <p>۴. در صورتی که نظر Coordinator برای یک کامنت انتخاب شده باشد، کامنت مذکور در فرایند جاری به‌صورت اتوماتیک حذف می‌شود.</p>
+                  </div>
                 </div>
               ),
             },
@@ -555,24 +759,14 @@ export function TransmittalDetail() {
                 </div>
               ),
             },
-          ]}
-        />
-      </Card>
+            ]}
+            active={activeTab}
+            onActiveChange={setActiveTab}
+          />
+        </div>
+      </Window>
 
-      {data.remarks ? (
-        <Card>
-          <div className="card-header">
-            <h2>توضیحات برگه</h2>
-          </div>
-          <div className="p-2">
-            <Field label="Remarks">
-              <p className="text-[10.5px] leading-6 text-[#23303a]">{data.remarks}</p>
-            </Field>
-          </div>
-        </Card>
-      ) : null}
 
-      <div className="strip-green mb-2" />
       <p className="text-center text-[9.5px] text-[#5c6b78]">
         {revisionIds.length} بازنگری در این برگه · {persianDigits(allComments.length)} نظر ثبت‌شده
       </p>

@@ -122,7 +122,7 @@ export function MDLLibrary() {
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card className="is-main">
         <CardHeader
           title="فهرست مدارک پروژه (MDL)"
           subtitle={`${persianDigits(total)} ردیف — مرجع رسمی تطبیق مدارک`}

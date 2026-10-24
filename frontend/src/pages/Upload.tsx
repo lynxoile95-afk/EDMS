@@ -4,7 +4,8 @@ import clsx from "clsx";
 import { api, ApiError } from "@/lib/api";
 import { useProject } from "@/lib/project";
 import type { SourceFile, UploadSession } from "@/lib/types";
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Field, Select, Spinner } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Spinner } from "@/components/ui";
+import { FField, FieldGrid } from "@/components/window";
 import { DecisionBadge } from "@/components/DecisionBadge";
 import { PURPOSE_LABELS, STATUS_LABELS, fileSize, persianDigits } from "@/lib/format";
 
@@ -179,39 +180,42 @@ export function UploadPage() {
       </Card>
 
       <div className="space-y-4">
-        <Card>
+        <Card className="is-main">
           <CardHeader title="تنظیمات ارسال" />
-          <div className="space-y-3 p-4">
-            <Field label="هدف ارسال">
-              <Select value={purpose} onChange={(event) => setPurpose(event.target.value)}>
-                {Object.entries(PURPOSE_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="نوع ارسال">
-              <Select value={mode} onChange={(event) => setMode(event.target.value)}>
-                <option value="new_document">سند جدید</option>
-                <option value="revision">بازنگری سند موجود</option>
-                <option value="response_to_comment">پاسخ به نظرات</option>
-              </Select>
-            </Field>
-            <Field label="نوع برگه ارسال">
-              <Select value={type} onChange={(event) => setType(event.target.value)}>
-                <option value="internal">داخلی</option>
-                <option value="external">خارجی (نیازمند تأیید مدیر پروژه)</option>
-              </Select>
-            </Field>
-            <Field label="توضیحات (اختیاری)">
-              <textarea
-                className="input min-h-[70px]"
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="مثلاً: ارسال مدارک بازنگری‌شده دیسیپلین عمران"
-              />
-            </Field>
+          <div className="p-[3px]">
+            <FieldGrid>
+              <FField label="هدف ارسال (P.O.I):">
+                <select className="input" value={purpose} onChange={(event) => setPurpose(event.target.value)}>
+                  {Object.entries(PURPOSE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </FField>
+              <FField label="نوع ارسال:">
+                <select className="input" value={mode} onChange={(event) => setMode(event.target.value)}>
+                  <option value="new_document">سند جدید</option>
+                  <option value="revision">بازنگری سند موجود</option>
+                  <option value="response_to_comment">پاسخ به نظرات</option>
+                </select>
+              </FField>
+              <FField label="نوع برگه ارسال:">
+                <select className="input" value={type} onChange={(event) => setType(event.target.value)}>
+                  <option value="internal">داخلی — Internal</option>
+                  <option value="external">خارجی — External (نیازمند تأیید مدیر پروژه)</option>
+                </select>
+              </FField>
+              <FField label="توضیحات (Remarks):">
+                <textarea
+                  className="input min-h-[20px] w-full"
+                  rows={2}
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  placeholder="اختیاری"
+                />
+              </FField>
+            </FieldGrid>
           </div>
         </Card>
 

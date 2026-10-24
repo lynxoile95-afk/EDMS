@@ -233,24 +233,40 @@
 
   /* ---------- panels ---------- */
   .card {
-    border: 1px solid var(--panel-border);
-    background: #fff;
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
     margin-bottom: 8px;
+    background: #fff;
+    border: 1px solid #6d7b87;
+    box-shadow: 2px 3px 8px rgba(0, 0, 0, 0.22);
   }
+  /* A card that carries a header is a window: same title bar as .window-title. */
   .card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    padding: 4px 8px;
-    background: linear-gradient(180deg, #eef2f6, #d7dfe7);
-    border-bottom: 1px solid var(--panel-border);
+    gap: 6px;
+    height: 23px;
+    padding: 0 4px;
+    background: linear-gradient(180deg, #f5f7f9, #d8dee5);
+    border-bottom: 1px solid #a9b2bb;
   }
   .card-header h2 {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
     font-size: 11.5px;
     font-weight: 700;
-    color: #22455f;
+    color: #1f3864;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Main windows of a page end with the reference system's green strip. */
+  .card.is-main::after {
+    content: "";
+    display: block;
+    height: 13px;
+    background: linear-gradient(180deg, #5aa34a, #2c6a24);
+    border-top: 1px solid #1e4d18;
   }
   .section-bar {
     padding: 3px 8px;
@@ -258,8 +274,8 @@
     font-size: 11px;
     font-weight: 700;
     text-align: center;
-    background: linear-gradient(180deg, var(--section-bar-1), var(--section-bar-2));
-    border: 1px solid #16405f;
+    background: linear-gradient(180deg, #2f5d86, #1d3f60);
+    border: 1px solid #16324c;
     border-bottom: none;
   }
 
@@ -333,9 +349,9 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 4px;
-    padding: 4px;
-    background: linear-gradient(180deg, #f7f9fb, #e6ebf1);
-    border: 1px solid var(--panel-border);
+    padding: 4px 3px;
+    background: linear-gradient(180deg, #fdfdfd, #e9edf2);
+    border: 1px solid #a9b2bb;
     border-top: none;
   }
 
@@ -348,7 +364,7 @@
     font-size: 11px;
     color: #101c26;
     background: #fff;
-    border: 1px solid var(--xp-border);
+    border: 1px solid #7d8b98;
     border-radius: 0;
     box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.06);
   }
@@ -401,8 +417,8 @@
     font-weight: 700;
     text-align: right;
     white-space: nowrap;
-    background: linear-gradient(180deg, var(--head-1), var(--head-2));
-    border: 1px solid #25333d;
+    background: linear-gradient(180deg, #2f4d63, #1d3446);
+    border: 1px solid #16283a;
   }
   .table-base td {
     padding: 2px 5px;
@@ -430,106 +446,273 @@
     justify-content: center;
   }
 
-  /* ---------- tabs ---------- */
-  .tab-strip {
+  /* ==========================================================================
+     Windows, ribbons and field grids — the reference system's own language.
+     Plain CSS so it renders identically without webfonts.
+     ========================================================================== */
+
+  /* ---------- window chrome ---------- */
+  .window {
+    margin-bottom: 8px;
+    background: #f0eee1;
+    border: 1px solid #6d7b87;
+    box-shadow: 2px 3px 8px rgba(0, 0, 0, 0.22);
+  }
+  .window.is-dialog {
+    max-width: 1120px;
+    margin: 0 auto;
+  }
+  .window-title {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 23px;
+    padding: 0 3px;
+    background: linear-gradient(180deg, #f5f7f9, #d8dee5);
+    border-bottom: 1px solid #a9b2bb;
+  }
+  .window-title .wt-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #1f3864;
+  }
+  .wt-btn {
+    display: grid;
+    place-items: center;
+    width: 17px;
+    height: 15px;
+    font-size: 9px;
+    font-weight: 700;
+    color: #33475b;
+    background: linear-gradient(180deg, #fdfefe, #cfd6de);
+    border: 1px solid #9099a3;
+    cursor: pointer;
+  }
+  .wt-btn:hover {
+    background: linear-gradient(180deg, #ffffff, #dfe7ef);
+  }
+  .wt-btn.is-close {
+    color: #8c2e29;
+  }
+  .window-body {
+    padding: 3px;
+    background: #f0eee1;
+  }
+  .window-strip {
+    height: 13px;
+    margin-top: 3px;
+    background: linear-gradient(180deg, #5aa34a, #2c6a24);
+    border: 1px solid #1e4d18;
+  }
+  .window-footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 4px;
+    background: linear-gradient(180deg, #f3f5f8, #dfe4ea);
+    border: 1px solid #a9b2bb;
+    border-top: none;
+  }
+
+  /* ---------- ribbon (icon toolbar with Persian captions) ---------- */
+  .ribbon {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 1px;
+    padding: 4px 3px;
+    background: linear-gradient(180deg, #fdfdfd, #e9edf2);
+    border: 1px solid #a9b2bb;
+    border-top: none;
+  }
+  .ribbon-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    min-width: 60px;
+    padding: 2px 3px;
+    font-family: inherit;
+    font-size: 8.5px;
+    line-height: 1.2;
+    color: #1f3864;
+    text-align: center;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  .ribbon-btn:hover:not(:disabled) {
+    background: linear-gradient(180deg, #ffffff, #dbe7f3);
+    border-color: #8aa8c4;
+  }
+  .ribbon-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+  .ribbon-btn svg {
+    width: 21px;
+    height: 21px;
+  }
+  .ribbon-btn.is-danger {
+    color: #a8342d;
+  }
+  .ribbon-sep {
+    width: 1px;
+    align-self: stretch;
+    margin: 0 3px;
+    background: #c3ccd6;
+  }
+
+  /* ---------- small square icon button (inside grids) ---------- */
+  .icon-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    color: #1f3864;
+    background: linear-gradient(180deg, #ffffff, #e1e6ed);
+    border: 1px solid #9aa8b4;
+    cursor: pointer;
+  }
+  .icon-btn:hover {
+    background: linear-gradient(180deg, #fffdf0, #ffe9a8);
+    border-color: #c9a227;
+  }
+  .icon-btn svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  /* ---------- field grid (khaki labels, white values) ---------- */
+  .field-grid {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr) 104px minmax(0, 1fr);
+    background: #fff;
+    border-top: 1px solid #a8a284;
+    border-inline-start: 1px solid #a8a284;
+  }
+  .field-grid.is-3col {
+    grid-template-columns: 96px minmax(0, 1fr) 96px minmax(0, 1fr) 96px minmax(0, 1fr);
+  }
+  .fg-label {
+    display: flex;
+    align-items: center;
+    padding: 2px 5px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #20365c;
+    white-space: nowrap;
+    background: linear-gradient(180deg, #e8e4ca, #d7d1ad);
+    border-inline-end: 1px solid #a8a284;
+    border-bottom: 1px solid #a8a284;
+  }
+  .fg-value {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    min-height: 20px;
+    padding: 1px 5px;
+    font-size: 10.5px;
+    color: #11202c;
+    background: #fff;
+    border-inline-end: 1px solid #a8a284;
+    border-bottom: 1px solid #a8a284;
+    overflow: hidden;
+  }
+  .fg-value.span-full {
+    grid-column: 2 / -1;
+  }
+  .fg-value.is-muted {
+    color: #6b7784;
+  }
+  .fg-value .input {
+    min-height: 18px;
+    padding: 0 3px;
+    font-size: 10.5px;
+    background: #fff;
+    border: 1px solid #c0c7cf;
+  }
+
+  /* ---------- navy tabs (reference tab strip) ---------- */
+  .tabstrip {
     display: flex;
     flex-wrap: wrap;
     gap: 2px;
-    padding: 3px 4px 0;
-    background: linear-gradient(180deg, #eef2f6, #d7dfe7);
-    border-bottom: 1px solid var(--panel-border);
+    padding: 3px 3px 0;
+    background: linear-gradient(180deg, #3c5666, #263c48);
+    border: 1px solid #1d2f38;
+    border-bottom: none;
   }
-  .tab-btn {
-    padding: 3px 11px;
+  .tab {
+    min-height: 20px;
+    padding: 2px 13px;
     font-family: inherit;
     font-size: 10.5px;
-    color: #1f3c55;
-    background: linear-gradient(180deg, #f9fbfd, #dce3ea);
-    border: 1px solid #aab6c1;
+    color: #eaf1f5;
+    background: linear-gradient(180deg, #4a6773, #33474f);
+    border: 1px solid #22343c;
     border-bottom: none;
     cursor: pointer;
-    border-radius: 3px 3px 0 0;
   }
-  .tab-btn:hover {
-    background: linear-gradient(180deg, #ffffff, #cfe0ef);
+  .tab:hover {
+    background: linear-gradient(180deg, #5b7d8b, #3d5763);
   }
-  .tab-btn.is-active {
-    color: #0f2e47;
+  .tab.is-active {
+    color: #12324a;
     font-weight: 700;
-    background: #fff;
-    border-color: #4d7ba6;
-    box-shadow: inset 0 2px 0 #2f6ea5;
+    background: linear-gradient(180deg, #f4f8fb, #dde7ef);
   }
 
-  /* ---------- dialog windows ---------- */
-  .win-window {
-    width: 100%;
-    background: #fff;
-    border: 1px solid #4a5a67;
-    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.35);
-  }
-  .win-titlebar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 3px 6px;
-    color: #fff;
-    font-size: 11px;
-    font-weight: 700;
-    background: linear-gradient(180deg, #5b86ab, #2c5478);
-    border-bottom: 1px solid #21415c;
-  }
-  .win-titlebar button {
-    width: 16px;
-    height: 14px;
-    display: grid;
-    place-items: center;
+  /* ---------- grouped band inside a grid ---------- */
+  .group-band {
+    padding: 2px 6px;
     font-size: 10px;
+    font-weight: 700;
     color: #fff;
-    background: linear-gradient(180deg, #d05a51, #97342d);
-    border: 1px solid #742720;
-    cursor: pointer;
-  }
-  .win-body {
-    padding: 8px;
-    background: #f2f5f8;
-  }
-  .win-footer {
-    display: flex;
-    justify-content: center;
-    gap: 6px;
-    padding: 6px;
-    background: linear-gradient(180deg, #edf1f5, #d9e0e7);
-    border-top: 1px solid #b3bcc6;
+    text-align: center;
+    background: linear-gradient(180deg, #2f5d86, #1d3f60);
+    border: 1px solid #16324c;
   }
 
-  /* ---------- helpers ---------- */
+  /* ---------- helpers ---------- */  /* ---------- helpers ---------- */
   .ltr {
     direction: ltr;
     text-align: left;
     unicode-bidi: isolate;
   }
+  /* Key/value table — same khaki label + white value as the field grid, so a
+     form built either way looks identical (the screenshots draw both the same). */
   .kv-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 10.5px;
+    background: #fff;
   }
   .kv-table th {
-    width: 130px;
-    padding: 2px 6px;
+    width: 118px;
+    padding: 2px 5px;
     text-align: right;
     font-weight: 700;
-    color: #1f3c55;
-    background: #edf2f7;
-    border: 1px solid var(--grid-line);
+    color: #20365c;
+    background: linear-gradient(180deg, #e8e4ca, #d7d1ad);
+    border: 1px solid #a8a284;
     white-space: nowrap;
   }
   .kv-table td {
-    padding: 2px 6px;
-    border: 1px solid var(--grid-line);
+    padding: 2px 5px;
+    border: 1px solid #a8a284;
     background: #fff;
-    color: #14212b;
+    color: #11202c;
+  }
+  .kv-table .colspan-fill {
+    background: #fff;
   }
   .status-dot {
     display: inline-block;

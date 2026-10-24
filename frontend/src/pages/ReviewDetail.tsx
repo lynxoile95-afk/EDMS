@@ -7,6 +7,7 @@ import type { ExtractionResultDetail, MatchCandidate, ReviewAction, ReviewOutcom
 import { Badge, Button, Card, CardHeader, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
 import { ConfidenceBadge, DecisionBadge } from "@/components/DecisionBadge";
 import { PdfViewer } from "@/components/PdfViewer";
+import { FField, FieldGrid } from "@/components/window";
 import { PURPOSE_LABELS, RULE_LABELS, jalaliDateTime, percent } from "@/lib/format";
 
 const FIELD_ROWS: { key: keyof ExtractionResultDetail; label: string; ltr?: boolean }[] = [
@@ -119,7 +120,7 @@ export function ReviewDetail() {
 
   return (
     <div className="space-y-3">
-      <Card>
+      <Card className="is-main">
         <CardHeader
           title={
             <span className="flex items-center gap-2">
@@ -173,23 +174,20 @@ export function ReviewDetail() {
         <div className="space-y-3 xl:col-span-2">
           <Card>
             <CardHeader title="فیلدهای استخراج‌شده" subtitle="هر فیلد همراه با درصد اطمینان و روش استخراج" />
-            <div className="divide-y divide-slate-100">
-              {FIELD_ROWS.map((row) => {
-                const value = result[row.key] as string | null;
-                const confidence = result.field_confidence?.[row.key as string] ?? 0;
-                const source = result.field_sources?.[row.key as string];
-                return (
-                  <div key={row.key as string} className="flex items-center justify-between gap-2 px-4 py-2">
-                    <span className="text-xs text-slate-500">{row.label}</span>
-                    <span className="flex items-center gap-2">
-                      <span className={clsx("text-xs font-medium text-slate-800", row.ltr && "ltr font-mono")}>
-                        {value || "—"}
-                      </span>
+            <div className="p-[3px]">
+              <FieldGrid>
+                {FIELD_ROWS.map((row) => {
+                  const value = result[row.key] as string | null;
+                  const confidence = result.field_confidence?.[row.key as string] ?? 0;
+                  const source = result.field_sources?.[row.key as string];
+                  return (
+                    <FField key={row.key as string} label={row.label}>
+                      <span className={clsx("flex-1 truncate", row.ltr && "ltr font-mono")}>{value || "—"}</span>
                       <ConfidenceBadge value={confidence} source={source} />
-                    </span>
-                  </div>
-                );
-              })}
+                    </FField>
+                  );
+                })}
+              </FieldGrid>
             </div>
           </Card>
 

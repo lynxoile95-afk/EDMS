@@ -53,12 +53,13 @@ export function Login() {
       </div>
 
       <div className="flex flex-1 items-center justify-center p-4">
-        <form className="win-window max-w-[620px]" onSubmit={submit}>
-          <div className="win-titlebar">
-            <span>ورود به سامانه — User Login</span>
-            <span className="text-[10px] font-normal">✕</span>
+        <form className="window is-dialog max-w-[620px]" onSubmit={submit}>
+          <div className="window-title">
+            <span className="wt-btn is-close" aria-hidden>✕</span>
+            <span className="wt-btn" aria-hidden>▣</span>
+            <span className="wt-text">ورود به سامانه — User Login</span>
           </div>
-          <div className="win-body">
+          <div className="window-body">
             <div className="section-bar mb-2">Authentication Information — اطلاعات احراز هویت</div>
             <table className="kv-table">
               <tbody>
@@ -134,7 +135,7 @@ export function Login() {
               </Field>
             </div>
           </div>
-          <div className="win-footer">
+          <div className="window-footer">
             <Button type="submit" variant="primary" disabled={busy} className="min-w-[120px]">
               {busy ? "در حال ورود…" : "ورود"}
             </Button>
@@ -145,7 +146,6 @@ export function Login() {
         </form>
       </div>
 
-      <div className="strip-green mx-4 mb-2" />
       <footer className="pb-2 text-center text-[9.5px] text-[#5c6b78]">
         سامانه مدیریت اسناد مهندسی · تقویم شمسی · Asia/Tehran · Data stays on-premise
       </footer>

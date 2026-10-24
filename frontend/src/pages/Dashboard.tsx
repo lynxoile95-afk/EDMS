@@ -6,6 +6,21 @@ import { useProject } from "@/lib/project";
 import type { Dashboard as DashboardData, ExtractionResult, Notification, Transmittal, TransmittalDetail } from "@/lib/types";
 import { Badge, Button, Card, EmptyState, ErrorBox, Modal, ProgressBar, Spinner, Stat } from "@/components/ui";
 import { DecisionBadge, ConfidenceBadge } from "@/components/DecisionBadge";
+import { Ribbon } from "@/components/window";
+import {
+  IconArrow,
+  IconChain,
+  IconClock,
+  IconComment,
+  IconDoc,
+  IconEdit,
+  IconFlow,
+  IconMail,
+  IconPrint,
+  IconRefresh,
+  IconSearch,
+  IconView,
+} from "@/components/icons";
 import { ACTION_LABELS, PURPOSE_LABELS, RULE_LABELS, STATUS_LABELS, jalali, jalaliDateTime, percent, persianDigits } from "@/lib/format";
 
 /** One row of the inbox: either a received transmittal or a document awaiting review. */
@@ -186,7 +201,7 @@ export function Dashboard() {
       </div>
 
       {/* ---------- inbox ---------- */}
-      <Card>
+      <Card className="is-main">
         <div className="card-header">
           <h2>
             کارتابل وظایف سازمانی —{" "}
@@ -392,28 +407,85 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* ---------- action bar (classic) ---------- */}
-        <div className="toolbar justify-between">
-          <div className="flex flex-wrap items-center gap-1">
-            <Button className="btn-sm" disabled={!current} onClick={() => current && navigate(current.href)}>
-              مشاهده مدرک
-            </Button>
-            <Button className="btn-sm" disabled={!current?.transmittalId} onClick={() => void acknowledge()}>
-              تأییدیه دریافت
-            </Button>
-            <Button className="btn-sm" disabled={!current?.transmittalId || flowBusy} onClick={() => void openFlow()}>
-              گردش مدرک
-            </Button>
-            <Button className="btn-sm" disabled={!current?.transmittalId} onClick={() => current?.transmittalId &&
-              api.download(`/transmittals/${current.transmittalId}/pdf`, `${current.title}.pdf`)}>
-              دریافت PDF
-            </Button>
-            <Button className="btn-sm" onClick={() => void load()}>
-              بازخوانی کارتابل
-            </Button>
-          </div>
-          <span className="text-[9.5px] text-[#5c6b78]">
-            {current ? `انتخاب‌شده: ${current.title}` : "یک ردیف را انتخاب کنید"}
+        {/* ---------- action ribbon (reference bottom bar) ---------- */}
+        <Ribbon
+          items={[
+            {
+              label: "مشاهده مدرک",
+              icon: <IconView />,
+              disabled: !current,
+              onClick: () => current && navigate(current.href),
+            },
+            {
+              label: "تأییدیه دریافت",
+              icon: <IconMail />,
+              disabled: !current?.transmittalId,
+              onClick: () => void acknowledge(),
+            },
+            {
+              label: "گردش مدرک",
+              icon: <IconFlow />,
+              disabled: !current?.transmittalId || flowBusy,
+              onClick: () => void openFlow(),
+            },
+            {
+              label: "دریافت PDF",
+              icon: <IconPrint />,
+              disabled: !current?.transmittalId,
+              onClick: () =>
+                current?.transmittalId &&
+                api.download(`/transmittals/${current.transmittalId}/pdf`, `${current.title}.pdf`),
+            },
+            {
+              label: "زنجیره مدارک",
+              icon: <IconChain />,
+              groupStart: true,
+              disabled: true,
+              title: "فاز ۲ — مدل زنجیره مدارک",
+            },
+            {
+              label: "افزودن پاراف",
+              icon: <IconEdit />,
+              disabled: true,
+              title: "فاز ۲ — پاراف",
+            },
+            {
+              label: "مشاهده پاراف‌ها",
+              icon: <IconDoc />,
+              disabled: true,
+              title: "فاز ۲ — پاراف",
+            },
+            {
+              label: "پاسخ مدرک",
+              icon: <IconComment />,
+              groupStart: true,
+              disabled: !current,
+              onClick: () => current && navigate(current.href),
+            },
+            {
+              label: "ارجاع به",
+              icon: <IconArrow />,
+              disabled: !current?.transmittalId,
+              onClick: () => void openFlow(),
+            },
+            {
+              label: "بازخوانی",
+              icon: <IconRefresh />,
+              disabled: loading,
+              onClick: () => void load(),
+            },
+            {
+              label: "جستجو",
+              icon: <IconSearch />,
+              disabled: true,
+              title: "از نوار فیلتر بالای جدول استفاده کنید",
+            },
+          ]}
+        />
+        <div className="flex items-center justify-between px-2 py-1 text-[9.5px] text-[#5c6b78]">
+          <span>{current ? `انتخاب‌شده: ${current.title}` : "یک ردیف را انتخاب کنید"}</span>
+          <span className="flex items-center gap-1">
+            <IconClock className="h-3 w-3" /> {jalali(new Date())}
           </span>
         </div>
         {notice ? <div className="px-2 pb-1.5 text-[10px] text-[#1f4e79]">{notice}</div> : null}

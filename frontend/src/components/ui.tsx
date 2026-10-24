@@ -39,7 +39,7 @@ export function CardHeader({
 }) {
   return (
     <div className="card-header">
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1 text-center">
         <h2 className="truncate">{title}</h2>
         {subtitle ? <p className="mt-0.5 text-[10px] font-normal text-[#5c6b78]">{subtitle}</p> : null}
       </div>
@@ -162,15 +162,18 @@ export function Modal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0b1a26]/45 p-4 pt-10">
-      <div className={clsx("win-window", width)} role="dialog" aria-modal="true" aria-label={title}>
-        <div className="win-titlebar">
-          <span className="truncate">{title}</span>
-          <button onClick={onClose} aria-label="بستن">
+      <div className={clsx("window is-dialog", width)} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined}>
+        <div className="window-title">
+          <button type="button" className="wt-btn is-close" onClick={onClose} aria-label="بستن">
             ✕
           </button>
+          <button type="button" className="wt-btn" aria-hidden disabled>
+            ▣
+          </button>
+          <span className="wt-text">{title}</span>
         </div>
-        <div className="win-body max-h-[74vh] overflow-y-auto">{children}</div>
-        {footer ? <div className="win-footer">{footer}</div> : null}
+        <div className="window-body max-h-[74vh] overflow-y-auto">{children}</div>
+        {footer ? <div className="window-footer">{footer}</div> : null}
       </div>
     </div>
   );

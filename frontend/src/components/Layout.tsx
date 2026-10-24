@@ -266,6 +266,10 @@ export function Layout() {
         </aside>
 
         <main className="shell-main">
+          {/* The reference stamps every inner page with this label, top-right. */}
+          <div className="mb-[3px] flex items-center justify-end gap-1 text-[9.5px] text-[#5c6b78]">
+            <span className="border border-[#c3ccd6] bg-[#f7f9fb] px-1.5 py-[1px]">EDMS Result Page</span>
+          </div>
           {project ? (
             <Outlet />
           ) : (

@@ -272,3 +272,92 @@ def test_structure_description_lists_one_serial_block_per_discipline() -> None:
     # aliases must not double the table: one row per canonical discipline
     assert "CIV" not in blocks and "MEC" not in blocks
     assert len(data["segments"]) == 6
+
+
+# --------------------------------------------------------------- the manual form
+def test_parse_code_endpoint_reads_the_form_fields_from_the_code(
+    client: TestClient, project, users
+):
+    """The manual dialog asks for the code; everything else comes back from here."""
+    dcc = auth_headers(client, "dcc@edms-test.com")
+    response = client.get(
+        f"/api/v1/projects/{project.id}/mdl/parse-code",
+        params={"code": "2102-20-ED-ME-DWG-4501"},
+        headers=dcc,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["ok"] is True
+    assert data["fields"]["unit_code"] == "20"
+    assert data["fields"]["doc_type"] == "DWG"
+    assert data["fields"]["phase"] == "ED"
+    assert data["fields"]["serial_no"] == "4501"
+    assert data["labels"]["doc_type"] == "نقشه"
+    assert data["labels"]["phase"].startswith("Detail")
+    assert data["duplicate"] is False
+    assert data["warnings"] == []
+
+
+def test_parse_code_reports_a_bad_code_instead_of_guessing(client: TestClient, project, users):
+    dcc = auth_headers(client, "dcc@edms-test.com")
+    data = client.get(
+        f"/api/v1/projects/{project.id}/mdl/parse-code",
+        params={"code": "2102-20-ED-ME-DWG"},
+        headers=dcc,
+    ).json()
+    assert data["ok"] is False
+    assert data["fields"] == {}
+    assert "سازگار نیست" in data["error"]
+
+
+def test_parse_code_warns_about_the_serial_block_and_a_duplicate(
+    client: TestClient, project, users
+):
+    dcc = auth_headers(client, "dcc@edms-test.com")
+    created = client.post(
+        f"/api/v1/projects/{project.id}/mdl/items",
+        headers=dcc,
+        json={"doc_code": "2102-20-ED-ME-DWG-4101", "title": "Tank Layout"},
+    )
+    assert created.status_code == 201, created.text
+
+    again = client.get(
+        f"/api/v1/projects/{project.id}/mdl/parse-code",
+        params={"code": "2102-20-ED-ME-DWG-4101"},
+        headers=dcc,
+    ).json()
+    assert again["ok"] is True
+    assert again["duplicate"] is True
+
+    # 1005 sits in the civil block, not the mechanical one: warn, never block
+    outlier = client.get(
+        f"/api/v1/projects/{project.id}/mdl/parse-code",
+        params={"code": "2102-20-ED-ME-DWG-1005"},
+        headers=dcc,
+    ).json()
+    assert outlier["ok"] is True
+    assert outlier["duplicate"] is False
+    assert any("بیرون از بازه" in warning for warning in outlier["warnings"])
+
+
+def test_a_manual_row_needs_only_code_title_poi_and_weight(client: TestClient, project, users):
+    """The four fields the operator types are enough; the rest is derived."""
+    dcc = auth_headers(client, "dcc@edms-test.com")
+    created = client.post(
+        f"/api/v1/projects/{project.id}/mdl/items",
+        headers=dcc,
+        json={
+            "doc_code": "2102-20-ED-CV-DWG-1007",
+            "title": "Foundation Layout",
+            "poi": "IFR",
+            "weight": 2,
+        },
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["poi"] == "IFR"
+    assert body["weight"] == 2
+    assert body["unit_code"] == "20"
+    assert body["doc_type"] == "DWG"
+    assert body["discipline_code"] in {"CV", "CIV"}
+    assert body["status"] == "Draft"  # defaulted, not asked for

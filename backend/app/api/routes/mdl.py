@@ -25,6 +25,7 @@ from app.schemas.mdl import (
 )
 from app.services import acl, audit, mdl_import
 from app.services.code_structure import (
+    describe_code,
     describe_mismatch,
     discipline_name,
     parse_code,
@@ -414,6 +415,57 @@ def code_structure(project: ProjectDep, db: DbSession, user: CurrentUser) -> dic
             select(Discipline).where(Discipline.project_id == project.id).order_by(Discipline.code)
         ).scalars()
     ]
+    return data
+
+
+@router.get(
+    "/parse-code",
+    summary="خواندن سگمنت‌های یک کد مدرک از خود کد",
+)
+def parse_document_code(
+    project: ProjectDep, db: DbSession, user: CurrentUser, code: str = ""
+) -> dict:
+    """Derive the row's fields from the code the operator typed.
+
+    The manual form only asks for the code, the title, the P.O.I and the weight; unit,
+    document type, discipline, phase and serial come from here, using the same parser
+    the create endpoint validates with, so the preview cannot drift from the save.
+    """
+    acl.require_project(db, user, project.id)
+    cfg = merge_settings(project.settings)
+    data = describe_code(code, cfg["doc_code_pattern"])
+    fields = data["fields"] if data["ok"] else {}
+
+    # existence flags against this project's own lookups
+    discipline_codes = {
+        row.code.strip().upper()
+        for row in db.execute(select(Discipline).where(Discipline.project_id == project.id)).scalars()
+    }
+    unit_codes = {
+        row.code.strip().upper()
+        for row in db.execute(select(Unit).where(Unit.project_id == project.id)).scalars()
+    }
+    raw_discipline = fields.get("discipline_code")
+    resolved = resolve_discipline_code(raw_discipline, discipline_codes) if raw_discipline else None
+    data["resolved"] = {
+        "discipline_code": resolved,
+        "discipline_exists": bool(resolved and resolved in discipline_codes),
+        "discipline_is_new": bool(resolved and resolved not in discipline_codes),
+        "unit_exists": bool(fields.get("unit_code") and fields["unit_code"].upper() in unit_codes),
+    }
+    if resolved:
+        data["fields"]["discipline_code"] = resolved
+        data["labels"]["discipline"] = discipline_name(resolved)
+
+    duplicate = None
+    if data["ok"]:
+        duplicate = db.execute(
+            select(MDLItem.id).where(
+                MDLItem.project_id == project.id,
+                MDLItem.doc_code_norm == normalize_code(data["code"]),
+            )
+        ).scalar_one_or_none()
+    data["duplicate"] = duplicate is not None
     return data
 
 

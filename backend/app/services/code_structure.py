@@ -125,6 +125,12 @@ DOC_TYPE_VOCAB: dict[str, str] = {
     "KPL": "کاپل",
 }
 
+#: Phase segment: the sample uses EB (basic engineering) and ED (detail engineering).
+PHASE_VOCAB: dict[str, str] = {
+    "EB": "Basic / پایه",
+    "ED": "Detail / تفصیلی",
+}
+
 #: `CLASS` column values in the sample (A/R) and `BASIC/DETAIL` (B/D).
 DOC_CLASS_VALUES: tuple[str, ...] = ("A", "R")
 BASIC_DETAIL_VALUES: tuple[str, ...] = ("B", "D")
@@ -256,6 +262,62 @@ def describe_mismatch(code: str) -> str:
         f"قالب مورد انتظار: {CODE_PATTERN_LABEL} — نمونه: {CODE_PATTERN_EXAMPLE} "
         f"(یا قالب کوتاه {CODE_PATTERN_LABEL_SHORT} مانند {CODE_PATTERN_EXAMPLE_SHORT})."
     )
+
+
+def describe_code(code: str, pattern: str | None = None) -> dict:
+    """Read a code back into the fields the manual MDL form shows.
+
+    This is the "the software can work it out from the code itself" half of the
+    coding rule: the operator types one code and everything except the title, the
+    P.O.I and the weight falls out of it. The route adds the project-specific
+    existence flags on top; nothing here touches the database.
+    """
+    text = (code or "").strip().upper()
+    parsed = parse_code(text, pattern)
+    if not parsed:
+        return {
+            "code": text,
+            "ok": False,
+            "error": describe_mismatch(text) if text else None,
+            "segments": {},
+            "fields": {},
+            "labels": {},
+            "warnings": [],
+        }
+
+    discipline = parsed.get("discipline")
+    doc_type = parsed.get("type")
+    phase = parsed.get("phase")
+    serial = parsed.get("serial")
+    warnings: list[str] = []
+    block = serial_outside_block(discipline, serial) if discipline and serial else None
+    if block is not None:
+        warnings.append(
+            f"شماره سریال «{serial}» بیرون از بازه دیسیپلین {discipline} "
+            f"({block[0]}–{block[1]}) است."
+        )
+    if doc_type and doc_type not in DOC_TYPE_VOCAB:
+        warnings.append(f"نوع مدرک «{doc_type}» در واژگان نمونه نیست؛ ثبت می‌شود ولی بررسی شود.")
+
+    return {
+        "code": text,
+        "ok": True,
+        "error": None,
+        "segments": parsed,
+        "fields": {
+            "unit_code": parsed.get("unit"),
+            "doc_type": doc_type,
+            "discipline_code": discipline,
+            "phase": phase,
+            "serial_no": serial,
+        },
+        "labels": {
+            "discipline": discipline_name(discipline) if discipline else None,
+            "doc_type": doc_type_name(doc_type) if doc_type else None,
+            "phase": PHASE_VOCAB.get(phase or "", phase),
+        },
+        "warnings": warnings,
+    }
 
 
 #: Our own demo/legacy codes vs the customer's two-letter codes. Both resolve to the

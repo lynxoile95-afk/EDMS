@@ -88,6 +88,28 @@ Row | Discipline | Category | Serial No. | Document No. | Document Title
 
 ---
 
+### ۳-۱. فرم «افزودن ردیف MDL (دستی)»
+
+فرم دستی به همان چیزی محدود شد که کاربر واقعاً می‌داند؛ بقیه از خود کد خوانده می‌شود:
+
+| فیلد | ورودی کاربر | توضیح |
+|---|---|---|
+| کد مدرک | **بله** | تنها جای اصلی تایپ؛ ساختار با همان الگوی پروژه بررسی می‌شود |
+| عنوان | **بله** | — |
+| P.O.I | **بله** | پیش‌فرض `IFR` |
+| وزن (Weight) | **بله** | پیش‌فرض ۱ |
+| یونیت (واحد) | خودکار، قابل اصلاح | از سگمنت `UNIT` کد |
+| نوع مدرک | خودکار، قابل اصلاح | از سگمنت `TYPE` کد |
+| دیسیپلین، فاز، شماره سریال | فقط نمایش | از کد خوانده و نشان داده می‌شوند |
+| بازنگری، وضعیت، Category، CLASS، BASIC/DETAIL، Remark | حذف شد | وضعیت `Draft` و بقیه پیش‌فرض/خالی می‌مانند |
+
+منبع این قرائت، سرویس جدید `GET /projects/{id}/mdl/parse-code` است که با همان
+پارسرِ ذخیره‌سازی کار می‌کند؛ بنابراین پیش‌نمایش فرم هرگز از اعتبارسنجی نهایی جدا نمی‌شود.
+پاسخ شامل سگمنت‌ها، برچسب فارسی (دیسیپلین/نوع/فاز)، هشدار بازهٔ سریال، وضعیت
+«یونیت/دیسیپلین تازه ساخته می‌شود» و تشخیص کد تکراری است.
+
+---
+
 ## ۴. آنچه هنوز پیاده نشده (پیشنهاد فاز بعد)
 
 1. **ایمپورت مستقیم PDF این برگه.** سامانه فعلاً MDL را از اکسل می‌خواند؛ این نمونه PDF است.
@@ -106,9 +128,9 @@ Row | Discipline | Category | Serial No. | Document No. | Document Title
 ## ۵. اعتبارسنجی این تغییر
 
 ```
-pytest tests/test_code_structure.py   →  14 passed
+pytest tests/test_code_structure.py   →  18 passed
 pytest tests/test_mdl_manual.py       →   6 passed
-pytest (کل پروژه)                      → 183 passed
+pytest (کل پروژه)                      → 187 passed
 ```
 
 تست‌های شاخص:
@@ -118,4 +140,6 @@ pytest (کل پروژه)                      → 183 passed
 * `test_import_reads_the_sample_layout` — ایمپورت دقیقاً با سرستون‌های همین نمونه
 * `test_manual_row_takes_its_segments_from_the_code` — ثبت دستی با پر شدن خودکار سگمنت‌ها
 * `test_import_warns_but_does_not_reject_an_outlier_serial` — هشدار سریال `501`
+* `test_a_manual_row_needs_only_code_title_poi_and_weight` — ثبت با همان چهار فیلد فرم
+* `test_parse_code_warns_about_the_serial_block_and_a_duplicate` — هشدار و کد تکراری در پیش‌نمایش
 * `test_structure_description_lists_one_serial_block_per_discipline` — جدول بازه‌ها که در دیالوگ راهنما نمایش داده می‌شود

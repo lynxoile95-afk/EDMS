@@ -15,6 +15,29 @@ interface CodeSegment {
   note_fa: string;
 }
 
+interface CodeParse {
+  code: string;
+  ok: boolean;
+  error: string | null;
+  segments: Record<string, string>;
+  fields: {
+    unit_code?: string | null;
+    doc_type?: string | null;
+    discipline_code?: string | null;
+    phase?: string | null;
+    serial_no?: string | null;
+  };
+  labels: { discipline?: string | null; doc_type?: string | null; phase?: string | null };
+  warnings: string[];
+  resolved: {
+    discipline_code: string | null;
+    discipline_exists: boolean;
+    discipline_is_new: boolean;
+    unit_exists: boolean;
+  };
+  duplicate: boolean;
+}
+
 interface CodeStructure {
   pattern_label: string;
   example: string;
@@ -68,24 +91,16 @@ export function MDLLibrary() {
   // the coding rule this project validates against
   const [structure, setStructure] = useState<CodeStructure | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
-  const emptyRow = {
-    doc_code: "",
-    title: "",
-    discipline_code: "",
-    unit_code: "",
-    doc_type: "",
-    current_rev: "",
-    status: "Draft",
-    weight: "1",
-    phase: "",
-    serial_no: "",
-    category: "",
-    doc_class: "",
-    basic_detail: "",
-    poi: "",
-    remark: "",
-  };
+  // The manual row asks only for what the operator actually knows: the code, the
+  // title, the P.O.I and the weight. Unit, document type, discipline, phase and
+  // serial are read back out of the code itself by GET .../mdl/parse-code, using
+  // the same parser the create endpoint validates with.
+  const emptyRow = { doc_code: "", title: "", poi: "IFR", weight: "1", unit_code: "", doc_type: "" };
   const [rowForm, setRowForm] = useState(emptyRow);
+  const [parsed, setParsed] = useState<CodeParse | null>(null);
+  // a value the operator typed by hand wins over the one read from the code
+  const unitTouched = useRef(false);
+  const typeTouched = useRef(false);
 
   useEffect(() => {
     if (!project) return;
@@ -95,12 +110,45 @@ export function MDLLibrary() {
       .catch(() => setStructure(null));
   }, [project]);
 
-  /** Live split of whatever is typed into the code field. */
-  const codeParts = rowForm.doc_code.split("-").filter(Boolean);
+  useEffect(() => {
+    if (!rowOpen || !project) return;
+    const code = rowForm.doc_code.trim();
+    if (code.length < 5) {
+      setParsed(null);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      api
+        .get<CodeParse>(`/projects/${project.id}/mdl/parse-code?code=${encodeURIComponent(code)}`)
+        .then((data) => {
+          if (!alive) return;
+          setParsed(data);
+          if (!data.ok) return;
+          setRowForm((prev) => ({
+            ...prev,
+            unit_code: unitTouched.current ? prev.unit_code : data.fields.unit_code ?? "",
+            doc_type: typeTouched.current ? prev.doc_type : data.fields.doc_type ?? "",
+          }));
+        })
+        .catch(() => {
+          if (alive) setParsed(null);
+        });
+    }, 250);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+    // `rowForm.doc_code` is the only trigger: the setRowForm above must not re-run this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowForm.doc_code, rowOpen, project]);
 
   const openNewRow = () => {
     setEditing(null);
     setRowError(null);
+    setParsed(null);
+    unitTouched.current = false;
+    typeTouched.current = false;
     setRowForm(emptyRow);
     setRowOpen(true);
   };
@@ -108,22 +156,17 @@ export function MDLLibrary() {
   const openEditRow = (item: MDLItem) => {
     setEditing(item);
     setRowError(null);
+    setParsed(null);
+    // an existing row keeps exactly the values it was saved with
+    unitTouched.current = true;
+    typeTouched.current = true;
     setRowForm({
       doc_code: item.doc_code,
       title: item.title,
-      discipline_code: item.discipline_code ?? "",
+      poi: item.poi ?? "",
+      weight: String(item.weight ?? 1),
       unit_code: item.unit_code ?? "",
       doc_type: item.doc_type ?? "",
-      current_rev: item.current_rev ?? "",
-      status: item.status ?? "Draft",
-      weight: String(item.weight ?? 1),
-      phase: item.phase ?? "",
-      serial_no: item.serial_no ?? "",
-      category: item.category ?? "",
-      doc_class: item.doc_class ?? "",
-      basic_detail: item.basic_detail ?? "",
-      poi: item.poi ?? "",
-      remark: item.remark ?? "",
     });
     setRowOpen(true);
   };
@@ -135,43 +178,29 @@ export function MDLLibrary() {
       setRowError("کد مدرک و عنوان الزامی هستند.");
       return;
     }
+    if (parsed && !parsed.ok) {
+      setRowError(parsed.error ?? "کد مدرک با ساختار شماره‌گذاری پروژه سازگار نیست.");
+      return;
+    }
     setBusy(true);
     try {
+      // null means "read it from the code" on create, and "leave it as it is" on edit.
+      const body = {
+        title: rowForm.title.trim(),
+        poi: rowForm.poi.trim().toUpperCase() || null,
+        weight: Number(rowForm.weight) || 1,
+        unit_code: rowForm.unit_code.trim().toUpperCase() || null,
+        doc_type: rowForm.doc_type.trim().toUpperCase() || null,
+      };
       if (editing) {
         await api.patch(`/projects/${project.id}/mdl/items/${editing.id}`, {
-          title: rowForm.title.trim(),
-          doc_type: rowForm.doc_type || null,
-          current_rev: rowForm.current_rev || null,
-          status: rowForm.status || null,
-          weight: Number(rowForm.weight) || 1,
-          discipline_code: rowForm.discipline_code || null,
-          unit_code: rowForm.unit_code || null,
-          phase: rowForm.phase || null,
-          serial_no: rowForm.serial_no || null,
-          category: rowForm.category || null,
-          doc_class: rowForm.doc_class || null,
-          basic_detail: rowForm.basic_detail || null,
-          poi: rowForm.poi || null,
-          remark: rowForm.remark || null,
+          ...body,
           reason: "ویرایش دستی از صفحه MDL",
         });
       } else {
         await api.post(`/projects/${project.id}/mdl/items`, {
+          ...body,
           doc_code: rowForm.doc_code.trim().toUpperCase(),
-          title: rowForm.title.trim(),
-          doc_type: rowForm.doc_type || null,
-          current_rev: rowForm.current_rev || null,
-          status: rowForm.status || null,
-          weight: Number(rowForm.weight) || 1,
-          discipline_code: rowForm.discipline_code || null,
-          unit_code: rowForm.unit_code || null,
-          phase: rowForm.phase || null,
-          serial_no: rowForm.serial_no || null,
-          category: rowForm.category || null,
-          doc_class: rowForm.doc_class || null,
-          basic_detail: rowForm.basic_detail || null,
-          poi: rowForm.poi || null,
-          remark: rowForm.remark || null,
         });
       }
       setRowOpen(false);
@@ -567,22 +596,6 @@ export function MDLLibrary() {
               placeholder="2102-20-EB-GN-MDL-9001"
               onChange={(event) => setRowForm({ ...rowForm, doc_code: event.target.value })}
             />
-            {codeParts.length > 0 ? (
-              <span className="mt-1 flex flex-wrap gap-1">
-                {codeParts.map((part, index) => (
-                  <span
-                    key={`${part}-${index}`}
-                    className="rounded-sm border border-[#a8a284] bg-[#f7f4e3] px-1 text-[9px] text-[#20365c]"
-                    title={structure?.segments[index]?.label_fa ?? ""}
-                  >
-                    {part}
-                  </span>
-                ))}
-                <span className="text-[9px] text-[#5c6b78]">
-                  {structure?.pattern_label ?? "PROJECT-UNIT-PHASE-DISC-TYPE-SERIAL"}
-                </span>
-              </span>
-            ) : null}
           </Field>
           <Field label="عنوان *">
             <Input
@@ -591,75 +604,26 @@ export function MDLLibrary() {
               onChange={(event) => setRowForm({ ...rowForm, title: event.target.value })}
             />
           </Field>
-          <Field label="دیسیپلین (کد)">
-            <Input
-              className="ltr"
-              value={rowForm.discipline_code}
-              placeholder="CIV"
-              onChange={(event) => setRowForm({ ...rowForm, discipline_code: event.target.value })}
-            />
-          </Field>
-          <Field label="یونیت (کد)">
+          <Field label="یونیت (واحد)" hint="از کد خوانده می‌شود">
             <Input
               className="ltr"
               value={rowForm.unit_code}
-              placeholder="U-100"
-              onChange={(event) => setRowForm({ ...rowForm, unit_code: event.target.value })}
+              placeholder="20"
+              onChange={(event) => {
+                unitTouched.current = true;
+                setRowForm({ ...rowForm, unit_code: event.target.value });
+              }}
             />
           </Field>
-          <Field label="نوع مدرک">
+          <Field label="نوع مدرک" hint="از کد خوانده می‌شود">
             <Input
               className="ltr"
               value={rowForm.doc_type}
               placeholder="DWG"
-              onChange={(event) => setRowForm({ ...rowForm, doc_type: event.target.value })}
-            />
-          </Field>
-          <Field label="بازنگری جاری">
-            <Input
-              className="ltr"
-              value={rowForm.current_rev}
-              placeholder="A8"
-              onChange={(event) => setRowForm({ ...rowForm, current_rev: event.target.value })}
-            />
-          </Field>
-          <Field label="فاز (EB/ED)">
-            <Input
-              className="ltr"
-              value={rowForm.phase}
-              placeholder="EB"
-              onChange={(event) => setRowForm({ ...rowForm, phase: event.target.value })}
-            />
-          </Field>
-          <Field label="شماره سریال">
-            <Input
-              className="ltr"
-              value={rowForm.serial_no}
-              placeholder="9001"
-              onChange={(event) => setRowForm({ ...rowForm, serial_no: event.target.value })}
-            />
-          </Field>
-          <Field label="گروه/دسته (Category)">
-            <Input
-              value={rowForm.category}
-              placeholder="GENERAL"
-              onChange={(event) => setRowForm({ ...rowForm, category: event.target.value })}
-            />
-          </Field>
-          <Field label="CLASS (A/R)">
-            <Input
-              className="ltr"
-              value={rowForm.doc_class}
-              placeholder="R"
-              onChange={(event) => setRowForm({ ...rowForm, doc_class: event.target.value })}
-            />
-          </Field>
-          <Field label="BASIC/DETAIL (B/D)">
-            <Input
-              className="ltr"
-              value={rowForm.basic_detail}
-              placeholder="B"
-              onChange={(event) => setRowForm({ ...rowForm, basic_detail: event.target.value })}
+              onChange={(event) => {
+                typeTouched.current = true;
+                setRowForm({ ...rowForm, doc_type: event.target.value });
+              }}
             />
           </Field>
           <Field label="P.O.I">
@@ -668,20 +632,6 @@ export function MDLLibrary() {
               value={rowForm.poi}
               placeholder="IFR"
               onChange={(event) => setRowForm({ ...rowForm, poi: event.target.value })}
-            />
-          </Field>
-          <Field label="ملاحظات (Remark)">
-            <Input
-              value={rowForm.remark}
-              placeholder="MODIFY"
-              onChange={(event) => setRowForm({ ...rowForm, remark: event.target.value })}
-            />
-          </Field>
-          <Field label="وضعیت">
-            <Input
-              value={rowForm.status}
-              placeholder="Draft"
-              onChange={(event) => setRowForm({ ...rowForm, status: event.target.value })}
             />
           </Field>
           <Field label="وزن (Weight)">
@@ -695,10 +645,62 @@ export function MDLLibrary() {
             />
           </Field>
         </div>
+
+        {parsed ? (
+          parsed.ok ? (
+            <div className="mt-3 border border-[#a8a284] bg-[#f7f4e3] px-2 py-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-bold text-[#20365c]">از خود کد خوانده شد:</span>
+                {structure?.segments.map((segment) => {
+                  const value = parsed.segments[segment.key];
+                  if (!value) return null;
+                  return (
+                    <span
+                      key={segment.key}
+                      className="rounded-sm border border-[#a8a284] bg-white px-1 text-[9.5px]"
+                      title={segment.note_fa}
+                    >
+                      <span className="text-[#5c6b78]">{segment.label_fa}: </span>
+                      <b className="ltr">{value}</b>
+                    </span>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-[9.5px] leading-5 text-[#33475b]">
+                دیسیپلین: {parsed.labels.discipline ?? "—"}
+                {parsed.resolved.discipline_is_new
+                  ? " (در این پروژه تعریف نشده است و هنگام ثبت ایجاد می‌شود)"
+                  : ""}
+                {" · "}
+                فاز: {parsed.labels.phase ?? "—"}
+                {" · "}
+                نوع مدرک: {parsed.labels.doc_type ?? "—"}
+                {parsed.fields.unit_code && !parsed.resolved.unit_exists
+                  ? " · یونیت جدید در این پروژه"
+                  : ""}
+              </p>
+              {parsed.duplicate ? (
+                <p className="mt-1 text-[9.5px] font-bold text-[#a02020]">
+                  این کد قبلاً در MDL همین پروژه ثبت شده است.
+                </p>
+              ) : null}
+              {parsed.warnings.map((warning) => (
+                <p key={warning} className="mt-1 text-[9.5px] leading-5 text-[#8a5a00]">
+                  ⚠ {warning}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 border border-[#c9a2a2] bg-[#fbeeee] px-2 py-1.5 text-[9.5px] leading-5 text-[#a02020]">
+              {parsed.error}
+            </p>
+          )
+        ) : null}
+
         <p className="mt-2 text-[10px] leading-5 text-[#5c6b78]">
-          کد مدرک باید یکتا باشد و کد دیسیپلین/یونیت ازقبل در پروژه تعریف شده باشد؛ در غیر این صورت
-          سامانه ردیف را ثبت نمی‌کند. ردیف دستی هم دقیقاً مثل ردیف‌های ایمپورت‌شده در تطبیق مدارک
-          شرکت می‌کند.
+          کد مدرک باید یکتا باشد. یونیت، نوع مدرک، دیسیپلین، فاز و شماره سریال از خود کد خوانده
+          می‌شوند و لازم نیست دستی وارد شوند؛ ردیف دستی هم دقیقاً مثل ردیف‌های ایمپورت‌شده در تطبیق
+          مدارک شرکت می‌کند.
         </p>
       </Modal>
 

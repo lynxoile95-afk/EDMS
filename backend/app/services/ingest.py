@@ -123,9 +123,20 @@ def store_file(
             .order_by(SourceFile.created_at, SourceFile.id)
             .limit(1)
         ).scalars().first()
-        if existing is not None and existing.session_id == session.id:
-            # a double click on the same session must not add the file twice
-            return StoredFile(source_file=existing, duplicate=True)
+
+        # This session may *already* own a row for these bytes even when the project's
+        # oldest copy belongs to somebody else (the same drawing re-uploaded into a
+        # second sheet). Checking only `existing.session_id` missed that case and the
+        # insert below then broke UNIQUE(session_id, sha256) with a 500.
+        in_session = db.execute(
+            select(SourceFile)
+            .where(SourceFile.session_id == session.id, SourceFile.sha256 == sha)
+            .order_by(SourceFile.created_at, SourceFile.id)
+            .limit(1)
+        ).scalars().first()
+        if in_session is not None:
+            # a double click, or the same file dropped twice on the same sheet
+            return StoredFile(source_file=in_session, duplicate=True)
         if existing is not None:
             if existing.av_status is AVStatus.INFECTED:
                 raise UploadRejected(

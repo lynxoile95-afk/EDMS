@@ -404,3 +404,67 @@ export interface DDMRule {
   is_active: boolean;
   recipients: TransmittalRecipient[];
 }
+
+/* ------------------------------------------------------------------ registration */
+
+export interface RegistrationSettings {
+  doc_number_regex: string;
+  revision_regex: string;
+  confidence_threshold: number;
+  discipline_labels: Record<string, string>;
+}
+
+export type RegistrationValidationState = "new" | "supersede" | "duplicate" | "blocked";
+
+/**
+ * One uploaded PDF on the «ثبت و بارگذاری مدرک» sheet.
+ *
+ * The first ten editable values are the transmittal columns; `confidence`,
+ * `conflicts`, `warnings` and `validation_*` are the audit trail that decides
+ * whether the row may be saved without the operator looking at it.
+ */
+export interface RegistrationRow {
+  id: string;
+  row_no: number;
+  filename: string;
+  source_file_id: string | null;
+  page_count: number | null;
+  doc_no: string | null;
+  title: string | null;
+  discipline_code: string | null;
+  discipline_label: string | null;
+  version: string | null;
+  poi: string | null;
+  doc_status: string | null;
+  doc_percent: number;
+  mdl_status: string | null;
+  confidentiality: string;
+  extraction_status: "ok" | "failed" | "manual" | string;
+  extraction_error: string | null;
+  extraction_model: string | null;
+  extraction_attempts: number | null;
+  extracted_pages: number[];
+  confidence: Record<string, number>;
+  conflicts: string[];
+  warnings: string[];
+  needs_review: boolean;
+  review_confirmed: boolean;
+  validation_state: RegistrationValidationState;
+  validation_messages: string[];
+  saved: boolean;
+  revision_id: string | null;
+  file_url: string | null;
+  sha256: string | null;
+  page_count_source?: number | null;
+}
+
+export interface Registration {
+  id: string;
+  project_id: string;
+  purpose: string;
+  status: string;
+  stage: string | null;
+  number: string | null;
+  settings: RegistrationSettings;
+  rows: RegistrationRow[];
+}

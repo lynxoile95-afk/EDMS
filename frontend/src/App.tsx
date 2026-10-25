@@ -8,6 +8,7 @@ import { Login } from "@/pages/Login";
 import { Dashboard } from "@/pages/Dashboard";
 import { MDLLibrary } from "@/pages/MDLLibrary";
 import { UploadPage } from "@/pages/Upload";
+import { RegistrationPage } from "@/pages/Registration";
 import { ReviewQueue } from "@/pages/ReviewQueue";
 import { ReviewDetail } from "@/pages/ReviewDetail";
 import { Team } from "./pages/Team";
@@ -60,6 +61,7 @@ export default function App() {
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/mdl" element={<MDLLibrary />} />
               <Route path="/upload" element={<UploadPage />} />
+              <Route path="/registration" element={<RegistrationPage />} />
               <Route path="/review" element={<ReviewQueue />} />
               <Route path="/review/:resultId" element={<ReviewDetail />} />
               <Route path="/team" element={<Team />} />

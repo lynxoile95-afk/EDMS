@@ -50,6 +50,31 @@ DEFAULT_PROJECT_SETTINGS: dict[str, Any] = {
     "vlm_max_calls_per_document": 2,
     "page_split_enabled": True,
     "title_block_required": True,
+    # ---- transmittal registration screen ----
+    "registration": {
+        # validated in code, never by the model
+        "doc_number_regex": r"^\d{4}-\d{2}-[A-Z]{2}-[A-Z]{2}-[A-Z]{3}-\d{4}$",
+        "revision_regex": r"^[A-Z]\d{1,2}$",
+        # any field below this, or a non-empty `conflicts`, marks the cell yellow
+        "confidence_threshold": 0.8,
+        # the editable lookup table behind the «Discipline» column
+        "discipline_labels": {
+            "ME": "ME-Mechanical",
+            "CV": "CV-Civil",
+            "EL": "EL-Electrical",
+            "PI": "PI-Piping",
+            "IN": "IN-Instrument",
+            "PR": "PR-Process",
+            "GN": "GN-General",
+            "QC": "QC-Quality Control",
+            "HS": "HS-HSE",
+            "IS": "IS-Insulation",
+        },
+        "default_confidentiality": "Normal",
+        # page 1 first; if it carries no title block, page 2 is tried before giving up
+        "extraction_pages": [1, 2],
+        "extraction_retries": 2,
+    },
     # ---- display ----
     "calendar": "jalali",
     "timezone": "Asia/Tehran",

@@ -13,6 +13,7 @@ from app.api.routes import (
     mdl,
     notifications,
     projects,
+    registration,
     review,
     system,
     transmittals,
@@ -27,6 +28,7 @@ api_router.include_router(uploads.router)
 api_router.include_router(review.router)
 api_router.include_router(documents.router)
 api_router.include_router(transmittals.router)
+api_router.include_router(registration.router)
 api_router.include_router(ddm.router)
 api_router.include_router(comments.router)
 api_router.include_router(files.router)

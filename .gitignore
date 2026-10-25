@@ -27,3 +27,4 @@ storage/
 *.log
 celerybeat-schedule*
 .DS_Store
+*.tsbuildinfo

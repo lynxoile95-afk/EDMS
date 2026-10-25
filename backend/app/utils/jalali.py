@@ -10,6 +10,7 @@ Algorithm: the well-known Khayyam/Birashk-style arithmetic conversion
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 from app.services.normalization import to_ascii_digits
@@ -48,43 +49,90 @@ def _jdn_to_gregorian(jdn: int) -> tuple[int, int, int]:
     return year, month, day
 
 
+#: The 33-year leap "breaks" table from the official algorithm (jalaali-js /
+#: Borkowski). Each entry is the Jalali year in which the leap pattern restarts.
+_BREAKS = (
+    -61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181, 1210,
+    1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178,
+)
+
+
+def _mod(a: int, b: int) -> int:
+    return a - b * (a // b)
+
+
+@dataclass(frozen=True, slots=True)
+class _YearInfo:
+    leap: int
+    gy: int
+    march: int
+
+
+def _jal_cal(jy: int) -> _YearInfo:
+    """Leap flag and the Gregorian day-of-March on which this Jalali year starts."""
+    if not (1178 <= jy < 1633):
+        raise ValueError(f"سال جلالی {jy} بیرون از بازهٔ پشتیبانی‌شده (۱۱۷۸–۱۶۳۳) است.")
+    gy = jy + 621
+    leap_j = -14
+    jp = _BREAKS[0]
+    jump = 0
+    for index in range(1, len(_BREAKS)):
+        jm = _BREAKS[index]
+        jump = jm - jp
+        if jy < jm:
+            break
+        leap_j += _div(jump, 33) * 8 + _div(_mod(jump, 33), 4)
+        jp = jm
+    n = jy - jp
+    leap_j += _div(n, 33) * 8 + _div(_mod(n, 33) + 3, 4)
+    if _mod(jump, 33) == 4 and jump - n == 4:
+        leap_j += 1
+    leap_g = _div(gy, 4) - _div((_div(gy, 100) + 1) * 3, 4) - 150
+    march = 20 + leap_j - leap_g
+    if jump - n < 6:
+        n = n - jump + _div(jump + 4, 33) * 33
+    leap = _mod(_mod(n + 1, 33) - 1, 4)
+    if leap == -1:
+        leap = 4
+    return _YearInfo(leap=leap, gy=gy, march=march)
+
+
+def _jalali_jdn(jy: int, jm: int, jd: int) -> int:
+    info = _jal_cal(jy)
+    return _gregorian_jdn(info.gy, 3, info.march) + (jm - 1) * 31 - _div(jm, 7) * (jm - 7) + jd - 1
+
+
 def jalali_to_gregorian(jy: int, jm: int, jd: int) -> date:
-    """Convert a Jalali date to a Gregorian :class:`datetime.date`."""
-    jy += 1595
-    days = -355668 + (365 * jy) + (_div(jy, 33) * 8) + _div((jy % 33) + 3, 4) + jd
-    days += (jm - 1) * 31 if jm < 7 else ((jm - 7) * 30 + 186)
-    year, month, day = _jdn_to_gregorian(days)
+    """Convert a Jalali date to a Gregorian :class:`datetime.date`.
+
+    The previous implementation mixed an epoch-day formula with a Julian-day
+    converter and returned dates centuries off (``1402-09-06`` -> year -2689), so
+    nothing could convert Jalali to Gregorian at all. This one is the standard
+    breaks-based algorithm, pinned by the tests in ``tests/test_jalali.py``.
+    """
+    if not (1 <= jm <= 12 and 1 <= jd <= 31):
+        raise ValueError(f"تاریخ جلالی نامعتبر: {jy}-{jm}-{jd}")
+    year, month, day = _jdn_to_gregorian(_jalali_jdn(jy, jm, jd))
     return date(year, month, day)
 
 
 def gregorian_to_jalali(gy: int, gm: int, gd: int) -> tuple[int, int, int]:
     """Convert a Gregorian date to ``(jyear, jmonth, jday)``."""
     jdn = _gregorian_jdn(gy, gm, gd)
-    gy2 = gy - 1600
-    gm2 = gm - 1
-    gd2 = gd - 1
-    g_day_no = 365 * gy2 + _div(gy2 + 3, 4) - _div(gy2 + 99, 100) + _div(gy2 + 399, 400)
-    g_day_no += gd2
-    for i in range(gm2):
-        g_day_no += 31 if i in (0, 2, 4, 6, 7, 9, 11) else (29 if i == 1 else 30)
-    j_day_no = g_day_no - 79
-    j_np = _div(j_day_no, 12053)
-    j_day_no %= 12053
-    jy = 979 + 33 * j_np + 4 * _div(j_day_no, 1461)
-    j_day_no %= 1461
-    if j_day_no >= 366:
-        jy += _div(j_day_no - 1, 365)
-        j_day_no = (j_day_no - 1) % 365
-    jm = 1
-    if j_day_no < 186:
-        jm += _div(j_day_no, 31)
-        jd = 1 + (j_day_no % 31)
+    jy = gy - 621
+    info = _jal_cal(jy)
+    jdn_first = _gregorian_jdn(gy, 3, info.march)
+    k = jdn - jdn_first
+    if k >= 0:
+        if k <= 185:
+            return jy, 1 + _div(k, 31), _mod(k, 31) + 1
+        k -= 186
     else:
-        j_day_no -= 186
-        jm = 7 + _div(j_day_no, 30)
-        jd = 1 + (j_day_no % 30)
-    del jdn  # kept for readability of the algorithm above
-    return jy, jm, jd
+        jy -= 1
+        k += 179
+        if info.leap == 1:
+            k += 1
+    return jy, 7 + _div(k, 30), _mod(k, 30) + 1
 
 
 def is_jalali_year(year: int) -> bool:

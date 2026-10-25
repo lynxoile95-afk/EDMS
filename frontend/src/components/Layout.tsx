@@ -13,6 +13,7 @@ const TOP_LINKS = [
   { to: "/mdl", label: "MDL", icon: "☰" },
   { to: "/review", label: "وظایف من", icon: "⚑" },
   { to: "/upload", label: "بارگذاری", icon: "⇧" },
+  { to: "/registration", label: "ثبت برگه", icon: "▦" },
 ];
 
 const MENU: { title: string; items: { to: string; label: string; icon: string; badge?: "queue" | "unread" }[] }[] = [
@@ -24,6 +25,7 @@ const MENU: { title: string; items: { to: string; label: string; icon: string; b
       { to: "/transmittals?mine=1", label: "کارتابل ارجاع من", icon: "⇄" },
       { to: "/mdl", label: "MDL — فهرست مدارک", icon: "☰" },
       { to: "/upload", label: "ثبت و بارگذاری مدرک", icon: "⇧" },
+      { to: "/registration", label: "ثبت برگهٔ ارسال (Registration)", icon: "▦" },
       { to: "/review", label: "صف بازبینی (DCC)", icon: "⚑", badge: "queue" },
       { to: "/team", label: "کاربران و نقش‌ها", icon: "☷" },
     ],
@@ -41,6 +43,7 @@ const TITLES: Record<string, string> = {
   "/dashboard": "کارتابل من",
   "/mdl": "فهرست مدارک پروژه (MDL)",
   "/upload": "ثبت و بارگذاری مدرک",
+  "/registration": "ثبت و بارگذاری مدرک — برگهٔ ارسال",
   "/review": "صف بازبینی کنترل مدارک",
   "/team": "کاربران و نقش‌های گردش",
   "/transmittals": "برگه‌های ارسال",

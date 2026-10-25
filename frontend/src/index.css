@@ -735,3 +735,110 @@
   height: auto !important;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
+
+/* ============================================================================
+   Transmittal registration screen — drop area, editable grid, side preview
+   ========================================================================== */
+.reg-drop {
+  border: 2px dashed #8ea4b6;
+  background: repeating-linear-gradient(45deg, #f7fafc, #f7fafc 8px, #eef4f9 8px, #eef4f9 16px);
+  padding: 12px 10px;
+  text-align: center;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.reg-drop:hover,
+.reg-drop.is-over {
+  border-color: #1f4e79;
+  background: #e8f1fa;
+}
+
+.reg-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #c3ccd6;
+  background: #fff;
+  padding: 2px 5px;
+}
+.reg-progress-track {
+  flex: 1 1 auto;
+  height: 9px;
+  background: #dde5ee;
+  border: 1px solid #b9c3cd;
+  overflow: hidden;
+}
+.reg-progress-bar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(180deg, #4b8fd1, #1f5c96);
+  transition: width 240ms ease;
+}
+.reg-progress-bar.is-done {
+  background: linear-gradient(180deg, #64af5c, #2f7c34);
+}
+.reg-progress-bar.is-failed {
+  background: linear-gradient(180deg, #d97a72, #a63b30);
+}
+
+.reg-table td {
+  padding: 1px 3px;
+}
+.reg-table td.reg-cell.is-review {
+  background: #fdf3cd !important;
+  box-shadow: inset 0 0 0 1px #e6c15b;
+}
+.reg-table td.reg-cell.is-reviewed {
+  background: #eef2f6 !important;
+}
+
+.reg-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0 3px;
+  font-size: 10.5px;
+  line-height: 17px;
+  color: #14232e;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+  font-family: inherit;
+}
+.reg-input:hover:not(:disabled) {
+  border-color: #b9c9d8;
+  background: #fff;
+}
+.reg-input:focus {
+  outline: none;
+  border-color: #1f4e79;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(31, 78, 121, 0.25);
+}
+.reg-input:disabled {
+  color: #33454f;
+  cursor: not-allowed;
+}
+.reg-input.font-mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.reg-conf {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+/* the drawing preview keeps the first page readable without eating the grid */
+.reg-preview {
+  max-height: 520px;
+  overflow: auto;
+  border: 1px solid #b9c3cd;
+  background: #fff;
+}
+.reg-preview .pdf-page canvas {
+  max-width: 100%;
+}

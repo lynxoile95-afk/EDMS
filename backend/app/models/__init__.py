@@ -20,6 +20,7 @@ from app.models.documents import (
     UploadSession,
     ValidationIssue,
 )
+from app.models.registration import RegistrationRow
 from app.models.transmittal import (
     AuditLog,
     Comment,
@@ -35,6 +36,7 @@ from app.models.transmittal import (
 )
 
 __all__ = [
+    "RegistrationRow",
     "Discipline",
     "Project",
     "ProjectMember",

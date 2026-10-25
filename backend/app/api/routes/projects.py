@@ -249,7 +249,7 @@ def add_member(
     return MemberOut.model_validate(member)
 
 
-@router.delete("/{project_id}/members/{member_id}", status_code=204)
+@router.delete("/{project_id}/members/{member_id}", status_code=204, response_model=None)
 def remove_member(
     project: ProjectDep, member_id: uuid.UUID, db: DbSession, user: CurrentUser
 ) -> None:

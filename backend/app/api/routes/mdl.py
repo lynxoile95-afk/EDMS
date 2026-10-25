@@ -362,6 +362,7 @@ def create_item(
 @router.delete(
     "/items/{item_id}",
     status_code=204,
+    response_model=None,
     summary="حذف ردیف MDL (فقط کارشناس کنترل اسناد و تنها بدون بازنگری)",
 )
 def delete_item(project: ProjectDep, item_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Response:

@@ -152,7 +152,12 @@ def commit_session(session_id: uuid.UUID, db: DbSession, user: CurrentUser) -> C
     )
 
 
-@router.post("/upload-sessions/{session_id}/cancel", status_code=204, summary="لغو جلسه")
+@router.post(
+    "/upload-sessions/{session_id}/cancel",
+    status_code=204,
+    response_model=None,
+    summary="لغو جلسه",
+)
 def cancel_session(session_id: uuid.UUID, db: DbSession, user: CurrentUser) -> None:
     session = db.get(UploadSession, session_id)
     if session is None:

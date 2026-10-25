@@ -45,7 +45,12 @@ def inbox(
     }
 
 
-@router.post("/{notification_id}/read", status_code=204, summary="علامت‌گذاری به‌عنوان خوانده‌شده")
+@router.post(
+    "/{notification_id}/read",
+    status_code=204,
+    response_model=None,
+    summary="علامت‌گذاری به‌عنوان خوانده‌شده",
+)
 def mark_read(notification_id: uuid.UUID, db: DbSession, user: CurrentUser) -> None:
     row = db.get(NotificationLog, notification_id)
     if row is None or row.user_id != user.id:

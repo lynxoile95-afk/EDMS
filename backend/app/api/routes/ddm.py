@@ -110,7 +110,7 @@ def update_rule(
     return _out(db, rule)
 
 
-@router.delete("/rules/{rule_id}", status_code=204, summary="حذف قاعده DDM")
+@router.delete("/rules/{rule_id}", status_code=204, response_model=None, summary="حذف قاعده DDM")
 def delete_rule(project: ProjectDep, rule_id: uuid.UUID, db: DbSession, user: CurrentUser) -> None:
     acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
     rule = db.get(DDMRule, rule_id)

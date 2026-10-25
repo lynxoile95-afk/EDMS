@@ -87,6 +87,7 @@ def _set_auth_cookies(response: Response, pair: TokenPair) -> None:
 @router.post(
     "/logout",
     status_code=204,
+    response_model=None,
     summary="خروج و پاک‌سازی نشست",
     description="کوکی‌های نشست را پاک می‌کند؛ توکن‌های ارسالی در بدنه هم بی‌اثر می‌شوند.",
 )
@@ -162,7 +163,7 @@ def me(user: CurrentUser) -> UserOut:
     return UserOut.model_validate(user)
 
 
-@router.post("/change-password", status_code=204, summary="تغییر رمز عبور")
+@router.post("/change-password", status_code=204, response_model=None, summary="تغییر رمز عبور")
 def change_password(payload: PasswordChange, user: CurrentUser, db: DbSession) -> None:
     if not user.hashed_password or not verify_password(payload.current_password, user.hashed_password):
         raise HTTPException(status_code=400, detail="رمز عبور فعلی نادرست است.")

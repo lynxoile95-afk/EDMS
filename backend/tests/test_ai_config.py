@@ -254,3 +254,14 @@ def test_the_probe_explains_why_it_failed(client: TestClient, users, vlm_setting
     assert probe["ok"] is False
     assert probe["error"]
     assert "whatever" not in json.dumps(probe)
+
+
+def test_an_empty_key_clears_it(client: TestClient, users, vlm_settings):
+    """A key entered for a test must be removable without restarting the service."""
+    admin = auth_headers(client, "admin@edms-test.com")
+    saved = client.put("/api/v1/admin/ai-config", headers=admin, json={"api_key": "temporary-key"}).json()
+    assert saved["key_set"] is True
+
+    cleared = client.put("/api/v1/admin/ai-config", headers=admin, json={"api_key": ""}).json()
+    assert cleared["key_set"] is False
+    assert cleared["enabled"] is False

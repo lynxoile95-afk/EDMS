@@ -500,3 +500,81 @@ def test_draft_transmittal_shows_temporary_number(client: TestClient, db, projec
     assert detail["number"] is None
     assert detail["preview_number"].startswith("TM-")
     assert "Temp" in detail["preview_number"]
+
+
+def test_reuploading_the_same_pdf_in_a_new_session_is_processable(client: TestClient, project, users):
+    """The retry path: upload once, then upload the identical file again.
+
+    This used to hand back the row from the *first* session, leaving the second
+    session empty, so committing it failed with «هیچ فایلی برای پردازش وجود ندارد»
+    even though both uploads reported success.
+    """
+    headers = auth_headers(client, "dcc@edms-test.com")
+
+    first = client.post(
+        f"/api/v1/projects/{project.id}/upload-sessions",
+        headers=headers,
+        json={"purpose": "IFR", "mode": "revision", "transmittal_type": "internal"},
+    ).json()["id"]
+    first_file = client.post(
+        f"/api/v1/upload-sessions/{first}/files",
+        headers=headers,
+        files={"files": ("TST-CIV-DR-001.pdf", FAKE_PDF, "application/pdf")},
+    )
+    assert first_file.status_code == 200, first_file.text
+
+    second = client.post(
+        f"/api/v1/projects/{project.id}/upload-sessions",
+        headers=headers,
+        json={"purpose": "IFR", "mode": "revision", "transmittal_type": "internal"},
+    ).json()["id"]
+    second_file = client.post(
+        f"/api/v1/upload-sessions/{second}/files",
+        headers=headers,
+        files={"files": ("TST-CIV-DR-001.pdf", FAKE_PDF, "application/pdf")},
+    )
+    assert second_file.status_code == 200, second_file.text
+    # a new row for the new session, sharing the stored bytes of the first
+    assert second_file.json()[0]["id"] != first_file.json()[0]["id"]
+    assert second_file.json()[0]["sha256"] == first_file.json()[0]["sha256"]
+
+    detail = client.get(f"/api/v1/upload-sessions/{second}", headers=headers).json()
+    assert len(detail["files"]) == 1
+
+    committed = client.post(f"/api/v1/upload-sessions/{second}/commit", headers=headers)
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["queued_files"] == 1
+
+
+def test_uploading_the_same_file_twice_into_one_session_is_idempotent(client: TestClient, project, users):
+    headers = auth_headers(client, "dcc@edms-test.com")
+    session_id = client.post(
+        f"/api/v1/projects/{project.id}/upload-sessions",
+        headers=headers,
+        json={"purpose": "IFR", "mode": "revision", "transmittal_type": "internal"},
+    ).json()["id"]
+    files = {"files": ("TST-ELE-DR-002.pdf", FAKE_PDF, "application/pdf")}
+    assert client.post(f"/api/v1/upload-sessions/{session_id}/files", headers=headers, files=files).status_code == 200
+    assert client.post(f"/api/v1/upload-sessions/{session_id}/files", headers=headers, files=files).status_code == 200
+
+    detail = client.get(f"/api/v1/upload-sessions/{session_id}", headers=headers).json()
+    assert len(detail["files"]) == 1  # one row, not two
+
+
+def test_a_file_can_be_linked_by_more_than_two_sessions(client: TestClient, project, users):
+    """Three sessions, one file: the lookup must not blow up on multiple rows."""
+    headers = auth_headers(client, "dcc@edms-test.com")
+    for _ in range(3):
+        session_id = client.post(
+            f"/api/v1/projects/{project.id}/upload-sessions",
+            headers=headers,
+            json={"purpose": "IFR", "mode": "revision", "transmittal_type": "internal"},
+        ).json()["id"]
+        uploaded = client.post(
+            f"/api/v1/upload-sessions/{session_id}/files",
+            headers=headers,
+            files={"files": ("TST-MEC-DR-003.pdf", FAKE_PDF, "application/pdf")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        committed = client.post(f"/api/v1/upload-sessions/{session_id}/commit", headers=headers)
+        assert committed.status_code == 200, committed.text

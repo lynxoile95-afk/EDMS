@@ -107,6 +107,21 @@ export function UploadPage() {
     }
   };
 
+  const clearAiKey = async () => {
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const data = await api.put<AIConfig>("/admin/ai-config", { api_key: "" });
+      setAiConfig(data);
+      setAiProbe(null);
+      setAiForm((prev) => ({ ...prev, api_key: "", confirm_remote_acknowledged: false }));
+    } catch (err) {
+      setAiError(err instanceof ApiError ? err.detail : "پاک کردن کلید ناموفق بود.");
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   const testAiConfig = async () => {
     setAiBusy(true);
     setAiError(null);
@@ -515,6 +530,16 @@ export function UploadPage() {
                 <Button variant="secondary" disabled={aiBusy} onClick={() => void testAiConfig()}>
                   آزمایش اتصال
                 </Button>
+                {aiConfig?.key_set ? (
+                  <Button
+                    variant="ghost"
+                    disabled={aiBusy}
+                    onClick={() => void clearAiKey()}
+                    title="کلید را از حافظهٔ سرویس پاک می‌کند"
+                  >
+                    پاک کردن کلید
+                  </Button>
+                ) : null}
                 {aiConfig ? (
                   <span className="text-[9.5px] text-[#5c6b78]">
                     وضعیت: {aiConfig.enabled ? "فعال" : "غیرفعال"} · کلید:{" "}

@@ -335,13 +335,18 @@ def _process_sheet(
         extraction_failed=bool(pipeline_result.error),
     )
 
+    # The same bytes may be linked by several sessions now, so pick the original
+    # deterministically instead of assuming there is exactly one other row.
     duplicate_file = db.execute(
-        select(SourceFile).where(
+        select(SourceFile)
+        .where(
             SourceFile.project_id == project.id,
             SourceFile.sha256 == source_file.sha256,
             SourceFile.id != source_file.id,
         )
-    ).scalar_one_or_none()
+        .order_by(SourceFile.created_at, SourceFile.id)
+        .limit(1)
+    ).scalars().first()
 
     outcome = decide(
         facts,

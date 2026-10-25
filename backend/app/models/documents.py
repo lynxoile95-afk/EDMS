@@ -129,7 +129,11 @@ class UploadSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class SourceFile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "source_files"
     __table_args__ = (
-        UniqueConstraint("project_id", "sha256", name="uq_sourcefile_hash"),
+        # Deduplication is about bytes, not about sessions: the same PDF uploaded again
+        # in a new session gets its own row that points at the *same* stored object, so
+        # the session can be committed while storage still holds one copy. A hash then
+        # stays unique per session, which is what makes a double-click idempotent.
+        UniqueConstraint("session_id", "sha256", name="uq_sourcefile_session_hash"),
         Index("ix_sourcefile_session", "session_id"),
     )
 

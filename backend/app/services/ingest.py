@@ -110,12 +110,55 @@ def store_file(
             raise UploadRejected("فایل خالی است.", "empty_file")
         sha = digest.hexdigest()
 
-        # duplicate check (same physical file in this project)
+        # Same bytes already in this project? Storage keeps one copy; this session gets
+        # its own row pointing at that object. Returning the *old* row instead (as this
+        # used to) left the new session empty, and committing it failed with
+        # «هیچ فایلی برای پردازش وجود ندارد» even though the upload reported success.
+        # Order by creation so the *original* row (the one that owns the stored bytes and
+        # the extracted pages) is the one we copy from; several sessions may now point at
+        # the same hash, so this must never be a scalar_one_or_none().
         existing = db.execute(
-            select(SourceFile).where(SourceFile.project_id == session.project_id, SourceFile.sha256 == sha)
-        ).scalar_one_or_none()
-        if existing is not None:
+            select(SourceFile)
+            .where(SourceFile.project_id == session.project_id, SourceFile.sha256 == sha)
+            .order_by(SourceFile.created_at, SourceFile.id)
+            .limit(1)
+        ).scalars().first()
+        if existing is not None and existing.session_id == session.id:
+            # a double click on the same session must not add the file twice
             return StoredFile(source_file=existing, duplicate=True)
+        if existing is not None:
+            if existing.av_status is AVStatus.INFECTED:
+                raise UploadRejected(
+                    f"فایل آلوده به بدافزار شناسایی شد ({existing.error_message or 'signature'}).",
+                    "malware_detected",
+                )
+            linked = SourceFile(
+                session_id=session.id,
+                project_id=session.project_id,
+                original_filename=filename,
+                storage_key=existing.storage_key,  # same object: no second copy of the bytes
+                mime_type=existing.mime_type,
+                size_bytes=existing.size_bytes,
+                sha256=existing.sha256,
+                page_count=existing.page_count,
+                is_encrypted=existing.is_encrypted,
+                is_scanned=existing.is_scanned,
+                av_status=existing.av_status,
+                status=FileStatus.UPLOADED,
+                uploaded_by_id=user.id,
+            )
+            db.add(linked)
+            db.flush()
+            stats = dict(session.stats or {})
+            stats["files"] = int(stats.get("files", 0)) + 1
+            session.stats = stats
+            session.status = UploadStatus.UPLOADING
+            audit.record(
+                db, action="upload.file.link", entity_type="source_file", entity_id=linked.id,
+                actor=user, project_id=session.project_id,
+                after={"filename": filename, "sha256": sha, "reused_file_id": str(existing.id)},
+            )
+            return StoredFile(source_file=linked, duplicate=True)
 
         scan = scan_bytes(open(tmp_path, "rb").read())
         if scan.status is AVStatus.INFECTED:

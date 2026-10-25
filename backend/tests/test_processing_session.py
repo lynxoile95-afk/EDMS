@@ -190,3 +190,53 @@ def test_local_download_route_serves_stored_file(client, db: Session, project, u
     client.cookies.clear()
     anonymous = client.get(f"/api/v1/files/download/{key}")
     assert anonymous.status_code == 401
+
+
+def test_process_session_handles_a_file_linked_by_two_sessions(db: Session, project, users) -> None:
+    """A re-uploaded file has several rows sharing one hash; processing must not assume one.
+
+    The lookup for `duplicate_of_file_id` used scalar_one_or_none() and blew up with
+    'Multiple rows were found when one or none was required', failing the whole session.
+    """
+    pdf = build_text_pdf(PAGE_LINES)
+    key = f"{project.code}/incoming/retry.pdf"
+    get_storage().put_bytes(key, pdf, "application/pdf")
+    digest = "b" * 64
+
+    sessions = []
+    for _ in range(2):
+        session = UploadSession(
+            project_id=project.id,
+            created_by_id=users["submitter"].id,
+            purpose="IFR",
+            mode="revision",
+            transmittal_type="internal",
+            status=UploadStatus.COMMITTED,
+            stats={},
+        )
+        db.add(session)
+        db.flush()
+        db.add(
+            SourceFile(
+                session_id=session.id,
+                project_id=project.id,
+                original_filename="TST-CIV-DR-001-RevB.pdf",
+                storage_key=key,  # one stored object, two rows
+                size_bytes=len(pdf),
+                sha256=digest,
+                status=FileStatus.UPLOADED,
+                uploaded_by_id=users["submitter"].id,
+            )
+        )
+        sessions.append(session)
+    db.commit()
+
+    for session in sessions:
+        summary = process_session(db, session.id)
+        db.commit()
+        assert summary["sheets"] == 1
+
+    results = db.query(ExtractionResult).all()
+    assert len(results) >= 2
+    # the second session's result points at the file it duplicates
+    assert any(result.duplicate_of_file_id is not None for result in results)

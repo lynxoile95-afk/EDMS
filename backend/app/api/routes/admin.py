@@ -237,11 +237,16 @@ def put_ai_config(payload: AIConfigUpdate, db: DbSession, user: CurrentUser) -> 
     settings.vlm_base_url = base_url
     settings.vlm_model = model
     settings.vlm_allow_remote = allow_remote
-    if payload.api_key is not None and payload.api_key.strip():
-        settings.vlm_api_key = payload.api_key.strip()
+    if payload.api_key is not None:
+        # An empty string means "forget the key" — the only other way to remove a key
+        # entered for a test was restarting the service.
+        key = payload.api_key.strip()
+        settings.vlm_api_key = key or "EMPTY"
+        if not key:
+            settings.vlm_enabled = False
     if payload.enabled is not None:
         settings.vlm_enabled = payload.enabled
-    elif payload.api_key:
+    elif payload.api_key and payload.api_key.strip():
         settings.vlm_enabled = True
 
     after = {
@@ -252,6 +257,7 @@ def put_ai_config(payload: AIConfigUpdate, db: DbSession, user: CurrentUser) -> 
         "allow_remote": allow_remote,
         # never the key itself, only the fact that it changed
         "key_updated": bool(payload.api_key and payload.api_key.strip()),
+        "key_cleared": payload.api_key is not None and not payload.api_key.strip(),
     }
     audit.record(
         db, action="admin.ai_config.update", entity_type="settings", entity_id=None,

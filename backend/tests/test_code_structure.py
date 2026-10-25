@@ -361,3 +361,12 @@ def test_a_manual_row_needs_only_code_title_poi_and_weight(client: TestClient, p
     assert body["doc_type"] == "DWG"
     assert body["discipline_code"] in {"CV", "CIV"}
     assert body["status"] == "Draft"  # defaulted, not asked for
+
+
+def test_discipline_spellings_collapse_to_one_code():
+    """The title block says MECHANICAL, the MDL says MEC — not a mismatch."""
+    for spelling in ("MECHANICAL", "Mechanical / مکانیک", "MEC", "mec", "ME"):
+        assert code_structure.canonical_discipline(spelling) == "ME"
+    assert code_structure.canonical_discipline("CIVIL & STRUCTURE") == "CV"
+    assert code_structure.canonical_discipline("ELECTRICAL") == "EL"
+    assert code_structure.canonical_discipline("") == ""

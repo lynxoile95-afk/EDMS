@@ -77,11 +77,18 @@ class Settings(BaseSettings):
 
     # ---------------- VLM fallback ----------------
     vlm_enabled: bool = False
+    #: "openai" = OpenAI-compatible server (vLLM / Ollama / LM Studio),
+    #: "gemini" = Google Generative Language API.
+    vlm_provider: Literal["openai", "gemini"] = "openai"
     vlm_base_url: str = "http://localhost:8000/v1"
     vlm_api_key: str = "EMPTY"
     vlm_model: str = "Qwen/Qwen2.5-VL-7B-Instruct"
     vlm_timeout_seconds: int = 90
     vlm_max_calls_per_document: int = 2
+    #: Confidential drawings leave the network unless this is explicitly confirmed.
+    #: An admin must acknowledge it through PUT /admin/ai-config; nothing sets it
+    #: automatically, not even a .env file alone (see validate_runtime).
+    vlm_allow_remote: bool = False
 
     # ---------------- email / sms ----------------
     smtp_host: str = "localhost"
@@ -115,7 +122,14 @@ class Settings(BaseSettings):
             warnings.append("SECRET_KEY is still the development default.")
         if self.is_production and self.debug:
             warnings.append("DEBUG=true in production.")
-        if self.vlm_enabled and "localhost" not in self.vlm_base_url and not self.vlm_base_url.startswith("http://vlm"):
+        if self.vlm_enabled and self.vlm_allow_remote:
+            warnings.append(
+                "VLM_ALLOW_REMOTE=true: the AI fallback will send drawing crops to a public "
+                "endpoint. Confidential documents leave the organisation's network."
+            )
+        elif self.vlm_enabled and "localhost" not in self.vlm_base_url and not self.vlm_base_url.startswith(
+            "http://vlm"
+        ):
             warnings.append(
                 "VLM endpoint is not local. Confidential drawings must be processed on-premise."
             )

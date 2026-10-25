@@ -32,9 +32,11 @@ def capabilities(user: CurrentUser, db: DbSession) -> dict:
         "ocr_langs": settings.ocr_langs,
         "ai_required_for_upload": False,
         "vlm_enabled": settings.vlm_enabled,
+        "vlm_provider": settings.vlm_provider,
         "vlm_api_key_set": bool(settings.vlm_api_key and settings.vlm_api_key != "EMPTY"),
         "vlm_model": settings.vlm_model,
         "vlm_base_url": settings.vlm_base_url,
-        "vlm_endpoint_allowed": vlm.is_local_endpoint(),
+        "vlm_endpoint_allowed": vlm.endpoint_trusted(),
+        "vlm_remote_allowed": settings.vlm_allow_remote,
         "note_fa": EXTRACTION_NOTE_FA,
     }

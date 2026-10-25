@@ -3,11 +3,40 @@ import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { api, ApiError } from "@/lib/api";
 import { useProject } from "@/lib/project";
+import { useAuth } from "@/lib/auth";
 import type { SourceFile, UploadSession } from "@/lib/types";
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Modal, Spinner } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Input, Modal, Select, Spinner } from "@/components/ui";
 import { FField, FieldGrid } from "@/components/window";
 import { DecisionBadge } from "@/components/DecisionBadge";
 import { PURPOSE_LABELS, STATUS_LABELS, fileSize, persianDigits } from "@/lib/format";
+
+interface AIConfig {
+  provider: string;
+  base_url: string;
+  model: string;
+  enabled: boolean;
+  allow_remote: boolean;
+  key_set: boolean;
+  endpoint_local: boolean;
+  endpoint_trusted: boolean;
+  applies_until: string;
+  note_fa: string;
+}
+
+interface AIProbe {
+  provider: string;
+  base_url: string;
+  model: string;
+  key_set: boolean;
+  enabled: boolean;
+  endpoint_local: boolean;
+  remote_allowed: boolean;
+  ok: boolean;
+  status_code: number | null;
+  latency_ms: number | null;
+  error: string | null;
+  models_seen: string[] | null;
+}
 
 interface StagedFile {
   file: File;
@@ -41,6 +70,77 @@ export function UploadPage() {
     note_fa: string;
   } | null>(null);
   const [capsOpen, setCapsOpen] = useState(false);
+  const { user } = useAuth();
+  const isAdmin = user?.is_superuser === true;
+  // the AI panel: a key entered here lives in the API process only, and is never
+  // displayed back — no endpoint returns it.
+  const [aiConfig, setAiConfig] = useState<AIConfig | null>(null);
+  const [aiForm, setAiForm] = useState({
+    provider: "gemini",
+    base_url: "https://generativelanguage.googleapis.com/v1beta",
+    model: "gemini-2.0-flash",
+    api_key: "",
+    allow_remote: true,
+    confirm_remote_acknowledged: false,
+  });
+  const [aiProbe, setAiProbe] = useState<AIProbe | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const openAiPanel = async () => {
+    setCapsOpen(true);
+    setAiProbe(null);
+    setAiError(null);
+    try {
+      const data = await api.get<AIConfig>("/admin/ai-config");
+      setAiConfig(data);
+      setAiForm((prev) => ({
+        ...prev,
+        provider: data.provider,
+        base_url: data.base_url,
+        model: data.model,
+        allow_remote: data.allow_remote,
+        api_key: "",
+      }));
+    } catch {
+      setAiConfig(null); // not an admin: the panel stays informational
+    }
+  };
+
+  const testAiConfig = async () => {
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      setAiProbe(await api.post<AIProbe>("/admin/ai-config/test"));
+    } catch (err) {
+      setAiError(err instanceof ApiError ? err.detail : "آزمایش اتصال ناموفق بود.");
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const saveAiConfig = async () => {
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const data = await api.put<AIConfig>("/admin/ai-config", {
+        provider: aiForm.provider,
+        base_url: aiForm.base_url.trim(),
+        model: aiForm.model.trim(),
+        ...(aiForm.api_key.trim() ? { api_key: aiForm.api_key.trim() } : {}),
+        enabled: true,
+        allow_remote: aiForm.allow_remote,
+        confirm_remote_acknowledged: aiForm.confirm_remote_acknowledged,
+      });
+      setAiConfig(data);
+      setAiForm((prev) => ({ ...prev, api_key: "" })); // never keep the key in the form
+      await testAiConfig();
+    } catch (err) {
+      setAiError(err instanceof ApiError ? err.detail : "ذخیره تنظیمات هوش مصنوعی ناموفق بود.");
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   useEffect(() => {
     api
@@ -139,7 +239,7 @@ export function UploadPage() {
             <button
               type="button"
               className="ms-auto font-bold text-[#1f4e79] underline"
-              onClick={() => setCapsOpen(true)}
+              onClick={() => void openAiPanel()}
             >
               کلید هوش مصنوعی کجا وارد می‌شود؟
             </button>
@@ -322,37 +422,170 @@ export function UploadPage() {
             (R01–R22) و OCR فارسی/انگلیسی انجام می‌شود؛ کلید فقط برای لایه کمکی VLM است که در
             موارد مبهم به کار می‌رود.
           </p>
+
+          {isAdmin ? (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold text-[#1f3864]">سرویس‌دهنده</span>
+                  <Select
+                    value={aiForm.provider}
+                    onChange={(event) => {
+                      const provider = event.target.value;
+                      setAiForm({
+                        ...aiForm,
+                        provider,
+                        base_url:
+                          provider === "gemini"
+                            ? "https://generativelanguage.googleapis.com/v1beta"
+                            : "http://localhost:8000/v1",
+                        model:
+                          provider === "gemini" ? "gemini-2.0-flash" : "Qwen/Qwen2.5-VL-7B-Instruct",
+                      });
+                    }}
+                  >
+                    <option value="gemini">Google Gemini</option>
+                    <option value="openai">OpenAI-compatible (vLLM / Ollama / LM Studio)</option>
+                  </Select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold text-[#1f3864]">نام مدل</span>
+                  <Input
+                    className="ltr"
+                    value={aiForm.model}
+                    onChange={(event) => setAiForm({ ...aiForm, model: event.target.value })}
+                  />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="mb-1 block text-[10px] font-bold text-[#1f3864]">
+                    آدرس سرویس (base URL)
+                  </span>
+                  <Input
+                    className="ltr"
+                    value={aiForm.base_url}
+                    onChange={(event) => setAiForm({ ...aiForm, base_url: event.target.value })}
+                  />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="mb-1 block text-[10px] font-bold text-[#1f3864]">
+                    کلید API{" "}
+                    {aiConfig?.key_set ? "(کلید فعلی تنظیم است؛ برای تغییر، کلید تازه را وارد کنید)" : ""}
+                  </span>
+                  <Input
+                    className="ltr"
+                    type="password"
+                    autoComplete="off"
+                    placeholder="••••••••••••"
+                    value={aiForm.api_key}
+                    onChange={(event) => setAiForm({ ...aiForm, api_key: event.target.value })}
+                  />
+                  <span className="mt-0.5 block text-[9px] text-[#5c6b78]">
+                    کلید فقط در حافظهٔ همین سرویس نگه داشته می‌شود، جایی نوشته نمی‌شود و در هیچ
+                    پاسخی برنمی‌گردد. برای دائمی شدن، همان مقدار را در فایل{" "}
+                    <span className="ltr font-mono">.env</span> بگذارید.
+                  </span>
+                </label>
+              </div>
+
+              <label className="flex items-start gap-2 border border-[#c9a2a2] bg-[#fbeeee] px-2 py-1">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={aiForm.confirm_remote_acknowledged}
+                  onChange={(event) =>
+                    setAiForm({
+                      ...aiForm,
+                      confirm_remote_acknowledged: event.target.checked,
+                      allow_remote: event.target.checked,
+                    })
+                  }
+                />
+                <span className="text-[10px] leading-5 text-[#8a2020]">
+                  تأیید ارسال به سرور عمومی: با فعال کردن این گزینه، برش کادر مشخصات نقشه‌ها به
+                  سرویس بیرونی ارسال می‌شود. برای داده‌های محرمانه فقط سرور داخلی مجاز است.
+                </span>
+              </label>
+
+              {aiError ? <ErrorBox message={aiError} /> : null}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button disabled={aiBusy} onClick={() => void saveAiConfig()}>
+                  {aiBusy ? "در حال ذخیره…" : "ذخیره و آزمایش اتصال"}
+                </Button>
+                <Button variant="secondary" disabled={aiBusy} onClick={() => void testAiConfig()}>
+                  آزمایش اتصال
+                </Button>
+                {aiConfig ? (
+                  <span className="text-[9.5px] text-[#5c6b78]">
+                    وضعیت: {aiConfig.enabled ? "فعال" : "غیرفعال"} · کلید:{" "}
+                    {aiConfig.key_set ? "تنظیم شده" : "تنظیم نشده"} · آدرس:{" "}
+                    {aiConfig.endpoint_trusted ? "مجاز" : "مسدود (تأیید نشده)"}
+                  </span>
+                ) : null}
+              </div>
+
+              {aiProbe ? (
+                <div
+                  className={
+                    aiProbe.ok
+                      ? "border border-[#9fb48a] bg-[#f0f6e8] px-2 py-1"
+                      : "border border-[#c9a2a2] bg-[#fbeeee] px-2 py-1"
+                  }
+                >
+                  <p className="text-[10px] font-bold">
+                    {aiProbe.ok ? "اتصال برقرار شد" : "اتصال برقرار نشد"}
+                    {aiProbe.latency_ms !== null
+                      ? ` — ${persianDigits(String(aiProbe.latency_ms))} میلی‌ثانیه`
+                      : ""}
+                    {aiProbe.status_code
+                      ? ` (HTTP ${persianDigits(String(aiProbe.status_code))})`
+                      : ""}
+                  </p>
+                  {aiProbe.error ? (
+                    <p className="mt-0.5 text-[9.5px] leading-5">{aiProbe.error}</p>
+                  ) : null}
+                  {aiProbe.models_seen && aiProbe.models_seen.length > 0 ? (
+                    <p className="mt-0.5 ltr font-mono text-[9px] text-[#33475b]">
+                      {aiProbe.models_seen.slice(0, 4).join(" · ")}
+                    </p>
+                  ) : null}
+                  <p className="mt-0.5 text-[9px] text-[#5c6b78]">
+                    سرویس: {aiProbe.provider} · مدل:{" "}
+                    <span className="ltr font-mono">{aiProbe.model}</span>
+                  </p>
+                </div>
+              ) : null}
+
+              <p className="text-[10px] leading-5">
+                <b>برای اجرای واقعی روی مدارک</b> دو چیز لازم است: همین کلید (که با «ذخیره» فعال
+                می‌شود) و کلید <span className="ltr font-mono">vlm_fallback</span> در تنظیمات همان
+                پروژه. بدون دومی، حتی با کلید هم لایه کمکی اجرا نمی‌شود.
+              </p>
+            </>
+          ) : (
+            <p className="text-[10px] leading-5">
+              تنظیم کلید و آدرس هوش مصنوعی فقط با حساب مدیر امکان‌پذیر است. کلید در هیچ صفحه‌ای
+              نمایش داده نمی‌شود؛ تنها «تنظیم شده / تنظیم نشده» بودن آن از مسیر{" "}
+              <span className="ltr font-mono">GET /api/v1/system/capabilities</span> قابل بررسی
+              است.
+            </p>
+          )}
+
           <p>
-            <b>۱.</b> در ریشهٔ پروژه فایل <span className="ltr font-mono">.env</span> را از روی{" "}
-            <span className="ltr font-mono">.env.example</span> بسازید.
-          </p>
-          <p>
-            <b>۲.</b> این چهار متغیر را پر کنید:
+            <b>راه دائمی:</b> در ریشهٔ پروژه فایل <span className="ltr font-mono">.env</span> را از
+            روی <span className="ltr font-mono">.env.example</span> بسازید و این‌ها را پر کنید،
+            سپس <span className="ltr font-mono">docker compose up -d api worker</span>:
           </p>
           <pre className="ltr overflow-x-auto border border-[#a8a284] bg-[#fdfcf4] p-2 font-mono text-[10px]">{`VLM_ENABLED=true
-VLM_BASE_URL=http://vlm:8000/v1      # یا http://<ip-سرور-داخلی>:11434/v1 برای Ollama
+VLM_PROVIDER=gemini
+VLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 VLM_API_KEY=<کلید-شما>
-VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct`}</pre>
-          <p>
-            <b>۳.</b> سرویس‌ها را دوباره بالا بیاورید:{" "}
-            <span className="ltr font-mono">docker compose up -d api worker</span>
-          </p>
-          <p>
-            <b>۴.</b> در تنظیمات همان پروژه، کلید{" "}
-            <span className="ltr font-mono">vlm_fallback</span> را{" "}
-            <span className="ltr font-mono">true</span> کنید؛ بدون این، حتی با کلید هم لایه
-            کمکی اجرا نمی‌شود.
-          </p>
+VLM_MODEL=gemini-2.0-flash
+VLM_ALLOW_REMOTE=true   # فقط با تأیید صریح ارسال به بیرون`}</pre>
           <p className="text-[#8a5a10]">
-            نکتهٔ امنیتی: آدرس VLM باید داخلی باشد (localhost، vlm، 10.x، 192.168.x، 172.x یا
-            دامنهٔ <span className="ltr">.local</span> / <span className="ltr">.internal</span>).
-            آدرس عمومی پذیرفته نمی‌شود تا نقشه‌های محرمانه از شبکهٔ سازمان خارج نشوند.
-          </p>
-          <p>
-            کلید در هیچ صفحه‌ای نمایش داده نمی‌شود؛ تنها «تنظیم شده / تنظیم نشده» بودن آن از مسیر{" "}
-            <span className="ltr font-mono">GET /api/v1/system/capabilities</span> و وضعیت
-            اتصال از <span className="ltr font-mono">GET /api/v1/admin/ai-status</span> قابل
-            بررسی است.
+            نکتهٔ امنیتی: آدرس داخلی (localhost، vlm، 10.x، 192.168.x، 172.x،{" "}
+            <span className="ltr">.local</span> / <span className="ltr">.internal</span>) بدون
+            تأیید پذیرفته می‌شود؛ آدرس عمومی فقط با تیک «تأیید ارسال به سرور عمومی».
           </p>
         </div>
       </Modal>

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from app.models.enums import Decision, IssueStatus, Severity
 from app.services.code_matching import MatchCandidate
+from app.services.code_structure import canonical_discipline
 from app.services.normalization import is_valid_code, normalize_code, normalize_rev
 from app.services.project_settings import merge_settings
 from app.services.revisions import (
@@ -246,7 +247,11 @@ def decide(
 
     # ---------------------------------------------------------- discipline
     if facts.discipline_code and mdl_discipline_code:
-        if normalize_code(facts.discipline_code) != normalize_code(mdl_discipline_code):
+        # The title block says "MECHANICAL", the MDL says "MEC": compare codes, not
+        # spellings. Same mapping the importer uses for the sheet's group names.
+        found_code = canonical_discipline(facts.discipline_code)
+        expected_code = canonical_discipline(mdl_discipline_code)
+        if found_code != expected_code:
             severity = Severity.ERROR if cfg["discipline_mismatch_severity"] == "error" else Severity.WARNING
             issues.append(
                 Issue("R10", severity, "Discipline mismatch",

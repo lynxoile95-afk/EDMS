@@ -355,6 +355,23 @@ def resolve_discipline_code(code: str | None, known: set[str]) -> str | None:
     return upper
 
 
+def canonical_discipline(value: str | None) -> str:
+    """One comparable code for a discipline, however it was written.
+
+    ``"MECHANICAL"``, ``"Mechanical / مکانیک"``, ``"ME"`` and ``"MEC"`` all mean the same
+    thing. The title block spells it out, the MDL uses the code, and a mismatch between
+    two spellings of one discipline must not be reported as a mismatch.
+    """
+    text = (value or "").strip()
+    if not text:
+        return ""
+    upper = text.upper()
+    mapping = group_to_discipline(upper)
+    if mapping:
+        return mapping
+    return DISCIPLINE_ALIASES.get(upper, upper)
+
+
 def discipline_name(code: str) -> str:
     return DISCIPLINE_VOCAB.get(code.upper(), (code.upper(), code.upper()))[0]
 

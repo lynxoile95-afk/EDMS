@@ -295,6 +295,11 @@ export interface Transmittal {
   line_count: number;
   recipient_count: number;
   acknowledged_count: number;
+  /** Compact first-line projection used by the personal inbox. */
+  document_code?: string | null;
+  document_title?: string | null;
+  document_type?: string | null;
+  line_action?: string | null;
 }
 
 export interface TransmittalLine {

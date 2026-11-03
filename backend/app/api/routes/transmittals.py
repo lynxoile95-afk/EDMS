@@ -45,6 +45,9 @@ def _out(transmittal: Transmittal) -> TransmittalOut:
     acknowledged = sum(
         1 for r in transmittal.recipients if str(r.ack_status) == "acknowledged"
     )
+    first_line = transmittal.lines[0] if transmittal.lines else None
+    first_revision = first_line.revision if first_line is not None else None
+    first_mdl_item = first_revision.mdl_item if first_revision is not None else None
     return TransmittalOut(
         id=transmittal.id,
         project_id=transmittal.project_id,
@@ -67,6 +70,10 @@ def _out(transmittal: Transmittal) -> TransmittalOut:
         line_count=len(transmittal.lines),
         recipient_count=len(transmittal.recipients),
         acknowledged_count=acknowledged,
+        document_code=first_mdl_item.doc_code if first_mdl_item is not None else None,
+        document_title=first_mdl_item.title if first_mdl_item is not None else None,
+        document_type=first_mdl_item.doc_type if first_mdl_item is not None else None,
+        line_action=str(first_line.action) if first_line is not None else None,
     )
 
 

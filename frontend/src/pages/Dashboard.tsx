@@ -4,8 +4,7 @@ import clsx from "clsx";
 import { api, ApiError } from "@/lib/api";
 import { useProject } from "@/lib/project";
 import type { Dashboard as DashboardData, ExtractionResult, Notification, Transmittal, TransmittalDetail } from "@/lib/types";
-import { Badge, Button, Card, EmptyState, ErrorBox, Modal, ProgressBar, Spinner, Stat } from "@/components/ui";
-import { DecisionBadge, ConfidenceBadge } from "@/components/DecisionBadge";
+import { Button, Card, EmptyState, ErrorBox, Modal, ProgressBar, Spinner, Stat } from "@/components/ui";
 import { Ribbon } from "@/components/window";
 import {
   IconArrow,
@@ -24,18 +23,30 @@ import {
 import { ACTION_LABELS, PURPOSE_LABELS, RULE_LABELS, STAGE_LABELS, STATUS_LABELS, jalali, jalaliDateTime, percent, persianDigits } from "@/lib/format";
 
 /** One row of the inbox: either a received transmittal or a document awaiting review. */
-/** What *I* have to do while the sheet sits in each stage of the review route. */
-const STAGE_ACTIONS: Record<string, string> = {
-  draft: "تکمیل و صدور برگه ارسال",
-  dcc: "کنترل اسناد و ارسال به مدیریت",
-  management: "بررسی مدیریت و ارجاع به دیسیپلین",
-  discipline: "بررسی کارشناس دیسیپلین",
-  closed: "بسته‌شده",
+const REFERRAL_ACTION_BY_PURPOSE: Record<string, string> = {
+  IFC: "For Construction",
+  IFI: "For Information",
 };
+
+const REFERRAL_ACTION_LABELS: Record<string, string> = {
+  review: "For Follow Up",
+  approve: "For Follow Up",
+  info: "For Information",
+  for_construction: "For Construction",
+};
+
+type InboxOperation = "for_construction" | "info" | "review";
+
+const INBOX_OPERATIONS: { value: InboxOperation; label: string }[] = [
+  { value: "for_construction", label: "جهت اجرا" },
+  { value: "info", label: "جهت اطلاع" },
+  { value: "review", label: "جهت بررسی و اظهار نظر" },
+];
 
 interface InboxRow {
   key: string;
   kind: "transmittal" | "review";
+  code: string | null;
   title: string;
   subject: string;
   action: string;
@@ -43,14 +54,11 @@ interface InboxRow {
   doc_type: string;
   received: string | null;
   due: string | null;
-  reply: string;
   status: string;
   href: string;
   fresh: boolean;
   entityId?: string;
   transmittalId?: string;
-  decision?: string;
-  confidence?: number;
 }
 
 export function Dashboard() {
@@ -62,6 +70,7 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
+  const [checkedRows, setCheckedRows] = useState<Set<string>>(new Set());
   const [flow, setFlow] = useState<TransmittalDetail | null>(null);
   const [flowBusy, setFlowBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -108,36 +117,34 @@ export function Dashboard() {
     const reviewRows: InboxRow[] = queue.map((item) => ({
       key: `review-${item.id}`,
       kind: "review",
-      title: item.doc_code ?? "بدون کد",
-      subject: item.title ?? "—",
-      action: "For Review and Action",
+      code: item.doc_code,
+      title: item.title ?? item.doc_code ?? "بدون عنوان",
+      subject: "در انتظار اقدام کارشناس کنترل مدارک",
+      action: REFERRAL_ACTION_LABELS.review,
       sender: "بارگذاری پیمانکار",
       doc_type: "Drawing / مدرک",
       received: item.created_at,
       due: null,
-      reply: item.review_status === "pending" ? "No Comment" : item.review_status,
       status: item.decision,
       href: `/review/${item.id}`,
       fresh: false,
       entityId: item.id,
-      decision: item.decision,
-      confidence: item.overall_confidence,
     }));
 
     const transmittalRows: InboxRow[] = transmittals.map((item) => ({
       key: `trn-${item.id}`,
       kind: "transmittal",
-      title: item.number ?? "پیش‌نویس",
+      code: item.document_code ?? item.number,
+      title: item.document_title ?? item.number ?? "پیش‌نویس",
       subject: `${PURPOSE_LABELS[item.purpose] ?? item.purpose} — ${persianDigits(item.line_count)} مدرک · ${STAGE_LABELS[item.stage ?? "draft"] ?? ""}`,
-      action: STAGE_ACTIONS[item.stage ?? "draft"] ?? "For Follow Up",
+      action:
+        (item.line_action && REFERRAL_ACTION_LABELS[item.line_action]) ||
+        REFERRAL_ACTION_BY_PURPOSE[item.purpose] ||
+        "For Follow Up",
       sender: item.from_org ?? "—",
-      doc_type: item.type === "external" ? "Transmittal (External)" : "Transmittal",
-      received: item.issued_at,
+      doc_type: item.document_type || (item.type === "external" ? "Transmittal (External)" : "Transmittal"),
+      received: item.issued_at ?? item.created_at,
       due: item.due_date,
-      reply:
-        item.acknowledged_count > 0
-          ? `${persianDigits(item.acknowledged_count)} تأییدیه`
-          : "بدون پاسخ",
       status: item.status,
       href: `/transmittals/${item.id}`,
       fresh: false,
@@ -171,11 +178,21 @@ export function Dashboard() {
   const current = visibleRows.find((row) => row.key === selected) ?? null;
   const open = (row: InboxRow) => setSelected(row.key);
 
-  const openFlow = async () => {
-    if (!current?.transmittalId) return;
+  const toggleRow = (row: InboxRow) => {
+    setSelected(row.key);
+    setCheckedRows((previous) => {
+      const next = new Set(previous);
+      if (next.has(row.key)) next.delete(row.key);
+      else next.add(row.key);
+      return next;
+    });
+  };
+
+  const openFlow = async (row: InboxRow | null = current) => {
+    if (!row?.transmittalId) return;
     setFlowBusy(true);
     try {
-      setFlow(await api.get<TransmittalDetail>(`/transmittals/${current.transmittalId}`));
+      setFlow(await api.get<TransmittalDetail>(`/transmittals/${row.transmittalId}`));
     } catch (err) {
       setNotice(err instanceof ApiError ? err.detail : "دریافت گردش مدرک ناموفق بود.");
     } finally {
@@ -183,16 +200,28 @@ export function Dashboard() {
     }
   };
 
-  const acknowledge = async () => {
-    if (!current?.transmittalId) return;
+  const acknowledge = async (row: InboxRow | null = current) => {
+    if (!row?.transmittalId) return;
     setNotice(null);
     try {
-      await api.post(`/transmittals/${current.transmittalId}/acknowledge`, { note: null });
+      await api.post(`/transmittals/${row.transmittalId}/acknowledge`, { note: null });
       setNotice("تأییدیه دریافت ثبت شد.");
       await load();
     } catch (err) {
       setNotice(err instanceof ApiError ? err.detail : "ثبت تأییدیه ناموفق بود.");
     }
+  };
+
+  const chooseOperation = async (row: InboxRow, operation: InboxOperation) => {
+    setSelected(row.key);
+    setRowMenu(null);
+    if (operation === "info" && row.transmittalId) {
+      await acknowledge(row);
+      return;
+    }
+    // The detail workspace performs the permission-checked route action. Opening
+    // it here keeps the dropdown useful for both transmittals and review results.
+    navigate(row.href);
   };
 
   if (!project) return <EmptyState title="پروژه‌ای انتخاب نشده است" />;
@@ -229,6 +258,9 @@ export function Dashboard() {
             <span>
               خوانده شده: <b>{persianDigits(rows.length - unreadCount)}</b>
             </span>
+            <span>
+              انتخاب‌شده: <b>{persianDigits(checkedRows.size)}</b>
+            </span>
             <Button className="btn-sm" onClick={() => void load()}>
               بازخوانی
             </Button>
@@ -249,9 +281,9 @@ export function Dashboard() {
           </select>
           <select className="input w-40" value={filterAction} onChange={(event) => setFilterAction(event.target.value)}>
             <option value="">همه عملکردهای ارجاع</option>
-            <option value="For Follow Up">For Follow Up</option>
+            <option value="For Construction">For Construction</option>
             <option value="For Information">For Information</option>
-            <option value="For Review and Action">For Review and Action</option>
+            <option value="For Follow Up">For Follow Up</option>
           </select>
           <Button
             className="btn-sm"
@@ -277,46 +309,59 @@ export function Dashboard() {
             <table className="table-base">
               <thead>
                 <tr>
-                  <th className="cell-center" style={{ width: 22 }} />
-                  <th style={{ width: 34 }}>ردیف</th>
-                  <th style={{ width: 108 }}>تاریخ دریافت</th>
+                  <th className="cell-center" style={{ width: 38 }}>ردیف</th>
+                  <th className="cell-center" style={{ width: 34 }}>انتخاب</th>
+                  <th className="cell-center" style={{ width: 34 }}>وضعیت</th>
+                  <th style={{ width: 112 }}>تاریخ و ساعت دریافت</th>
                   <th>عنوان مدرک</th>
-                  <th style={{ width: 118 }}>عملکرد ارجاع</th>
-                  <th style={{ width: 120 }}>فرستنده</th>
-                  <th style={{ width: 104 }}>نوع مدرک</th>
-                  <th style={{ width: 82 }}>مهلت پاسخ</th>
-                  <th style={{ width: 84 }}>پاسخ</th>
-                  <th className="cell-center" style={{ width: 62 }}>عملیات</th>
+                  <th style={{ width: 124 }}>عملگر ارجاع</th>
+                  <th style={{ width: 122 }}>فرستنده</th>
+                  <th style={{ width: 108 }}>نوع مدرک</th>
+                  <th style={{ width: 86 }}>مهلت پاسخ</th>
+                  <th className="cell-center" style={{ width: 78 }}>عملیات</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleRows.map((row, index) => (
                   <tr
                     key={row.key}
-                    className={clsx(selected === row.key && "is-selected", "cursor-pointer")}
+                    className={clsx(
+                      (selected === row.key || checkedRows.has(row.key)) && "is-selected",
+                      "cursor-pointer",
+                    )}
                     onClick={() => open(row)}
                     onDoubleClick={() => navigate(row.href)}
                   >
-                    <td className="cell-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <span
-                          className="status-dot"
-                          style={{ background: row.fresh ? "#c0392b" : row.kind === "review" ? "#e3b341" : "#3f8f45" }}
-                          title={row.fresh ? "خوانده نشده" : "خوانده شده"}
-                        />
-                        <span className="text-[10px] text-[#5c6b78]" title="پیوست دارد">
-                          ⌸
-                        </span>
-                      </div>
-                    </td>
                     <td className="cell-center">{persianDigits(index + 1)}</td>
+                    <td className="cell-center">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-[#1f4e79]"
+                        checked={checkedRows.has(row.key)}
+                        aria-label={`انتخاب ردیف ${index + 1}`}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={() => toggleRow(row)}
+                      />
+                    </td>
+                    <td className="cell-center">
+                      <span
+                        className="status-dot"
+                        style={{ background: row.fresh ? "#d6a928" : "#a9b0b7" }}
+                        title={row.fresh ? "خوانده نشده" : "خوانده شده"}
+                      />
+                    </td>
                     <td className="whitespace-nowrap text-[10px] leading-4">
                       {row.received ? (
                         <>
                           <span>{jalali(row.received)}</span>
                           <br />
                           <span className="text-[9.5px] text-[#5c6b78]">
-                            {new Date(row.received).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                            {new Date(row.received).toLocaleTimeString("en-GB", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                              hour12: false,
+                            })}
                           </span>
                         </>
                       ) : (
@@ -324,33 +369,17 @@ export function Dashboard() {
                       )}
                     </td>
                     <td>
-                      <div className="flex items-center gap-1">
-                        <span className="ltr font-bold text-[#1f3864]">{row.title}</span>
-                        {row.fresh ? <Badge className="bg-[#dff3e2] text-[#1c5c2c]">جدید</Badge> : null}
-                        {row.kind === "review" && row.decision ? <DecisionBadge decision={row.decision} /> : null}
+                      <div className="min-w-0">
+                        {row.code ? <span className="ltr block text-[9.5px] text-[#17427a]">{row.code}</span> : null}
+                        <p className="truncate font-bold text-[#1f3864]">{row.title}</p>
+                        <p className="line-clamp-1 text-[10px] text-[#3c4b58]">{row.subject}</p>
                       </div>
-                      <p className="line-clamp-1 text-[10px] text-[#3c4b58]">{row.subject}</p>
                     </td>
                     <td className="text-[10px]">{row.action}</td>
                     <td className="text-[10px] leading-4">{row.sender}</td>
                     <td className="text-[10px]">{row.doc_type}</td>
                     <td className="whitespace-nowrap text-[10px]">
                       {row.due ? jalali(row.due) : <span className="text-[#8a5a10]">در اسرع وقت</span>}
-                    </td>
-                    <td className="text-[10px]">
-                      {row.kind === "review" ? (
-                        <ConfidenceBadge value={row.confidence ?? 0} />
-                      ) : (
-                        <Badge
-                          className={
-                            row.reply.startsWith("بدون")
-                              ? "bg-[#fdf1e3] text-[#8a5a10]"
-                              : "bg-[#e6f4e8] text-[#1c5c2c]"
-                          }
-                        >
-                          {row.reply}
-                        </Badge>
-                      )}
                     </td>
                     <td className="cell-center">
                       <div className="relative">
@@ -360,6 +389,7 @@ export function Dashboard() {
                           aria-expanded={rowMenu === row.key}
                           onClick={(event) => {
                             event.stopPropagation();
+                            setSelected(row.key);
                             setRowMenu(rowMenu === row.key ? null : row.key);
                           }}
                         >
@@ -367,25 +397,33 @@ export function Dashboard() {
                         </Button>
                         {rowMenu === row.key ? (
                           <div
-                            className="absolute left-0 top-full z-20 w-40 border border-[#4a5a67] bg-white text-right shadow-lg"
+                            className="absolute left-0 top-full z-20 w-48 border border-[#4a5a67] bg-white text-right shadow-lg"
                             onClick={(event) => event.stopPropagation()}
                           >
+                            <div className="border-b border-[#c3ccd6] bg-[#eef2f6] px-2 py-1 text-[9.5px] font-bold text-[#33475b]">
+                              نوع اقدام
+                            </div>
+                            {INBOX_OPERATIONS.map((operation) => (
+                              <button
+                                key={operation.value}
+                                type="button"
+                                className="block w-full px-2 py-1 text-right text-[10.5px] hover:bg-[#e8eff6]"
+                                onClick={() => void chooseOperation(row, operation.value)}
+                              >
+                                {operation.label}
+                              </button>
+                            ))}
+                            <div className="border-t border-[#c3ccd6]" />
                             {[
                               { label: "مشاهده مدرک", run: () => navigate(row.href) },
                               {
                                 label: "تأییدیه دریافت",
-                                run: () => {
-                                  setSelected(row.key);
-                                  void acknowledge();
-                                },
+                                run: () => void acknowledge(row),
                                 disabled: !row.transmittalId,
                               },
                               {
                                 label: "گردش مدرک",
-                                run: () => {
-                                  setSelected(row.key);
-                                  void openFlow();
-                                },
+                                run: () => void openFlow(row),
                                 disabled: !row.transmittalId,
                               },
                               {
@@ -398,6 +436,7 @@ export function Dashboard() {
                             ].map((action) => (
                               <button
                                 key={action.label}
+                                type="button"
                                 className="block w-full px-2 py-1 text-right text-[10.5px] hover:bg-[#e8eff6] disabled:text-[#9aa8b4]"
                                 disabled={action.disabled}
                                 onClick={() => {

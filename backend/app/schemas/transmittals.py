@@ -100,6 +100,13 @@ class TransmittalOut(ORMModel):
     line_count: int = 0
     recipient_count: int = 0
     acknowledged_count: int = 0
+    # A compact first-line projection keeps the inbox useful without requiring
+    # one detail request per transmittal row. Multi-line sheets still expose
+    # their complete lines through TransmittalDetail.
+    document_code: str | None = None
+    document_title: str | None = None
+    document_type: str | None = None
+    line_action: str | None = None
 
 
 class TransmittalDetail(TransmittalOut):

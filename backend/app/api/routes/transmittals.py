@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy import and_, func, or_, select
 
@@ -384,6 +384,60 @@ def get_transmittal(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser)
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     acl.require_project(db, user, transmittal.project_id)
     return _detail(db, transmittal)
+
+
+@router.delete(
+    "/transmittals/{transmittal_id}",
+    status_code=204,
+    response_model=None,
+    summary="حذف پیش‌نویس برگه ارسال از کارتابل",
+)
+def delete_transmittal(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Response:
+    """Remove an unfinished inbox sheet without deleting registered documents.
+
+    Issued or routed sheets are records in the document-control audit trail and
+    therefore use the existing cancel workflow instead of physical deletion.
+    """
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+
+    acl.require_project(db, user, transmittal.project_id)
+    can_manage = acl.has_role(
+        db,
+        user,
+        transmittal.project_id,
+        ProjectRole.DCC,
+        ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
+    )
+    if transmittal.created_by_id != user.id and not can_manage:
+        raise HTTPException(status_code=403, detail="فقط سازنده یا مسئول کنترل برگه می‌تواند پیش‌نویس را حذف کند.")
+    if str(transmittal.status) != str(TransmittalStatus.DRAFT):
+        raise HTTPException(
+            status_code=409,
+            detail="برگه‌های صادرشده یا در گردش حذف نمی‌شوند؛ برای آن‌ها از عملیات «لغو» استفاده کنید.",
+        )
+
+    before = {
+        "number": transmittal.number,
+        "status": str(transmittal.status),
+        "stage": str(transmittal.stage),
+        "line_count": len(transmittal.lines),
+        "recipient_count": len(transmittal.recipients),
+    }
+    audit.record(
+        db,
+        action="transmittal.delete",
+        entity_type="transmittal",
+        entity_id=transmittal.id,
+        actor=user,
+        project_id=transmittal.project_id,
+        before=before,
+    )
+    db.delete(transmittal)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.post(

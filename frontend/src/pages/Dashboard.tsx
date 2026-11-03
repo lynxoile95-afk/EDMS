@@ -11,6 +11,7 @@ import {
   IconChain,
   IconClock,
   IconComment,
+  IconDelete,
   IconDoc,
   IconEdit,
   IconFlow,
@@ -59,6 +60,7 @@ interface InboxRow {
   fresh: boolean;
   entityId?: string;
   transmittalId?: string;
+  canDelete: boolean;
 }
 
 export function Dashboard() {
@@ -73,6 +75,7 @@ export function Dashboard() {
   const [checkedRows, setCheckedRows] = useState<Set<string>>(new Set());
   const [flow, setFlow] = useState<TransmittalDetail | null>(null);
   const [flowBusy, setFlowBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [unreadEntities, setUnreadEntities] = useState<Set<string>>(new Set());
   const [filterText, setFilterText] = useState("");
@@ -129,6 +132,7 @@ export function Dashboard() {
       href: `/review/${item.id}`,
       fresh: false,
       entityId: item.id,
+      canDelete: false,
     }));
 
     const transmittalRows: InboxRow[] = transmittals.map((item) => ({
@@ -150,6 +154,9 @@ export function Dashboard() {
       fresh: false,
       entityId: item.id,
       transmittalId: item.id,
+      // Hard deletion is intentionally limited to drafts; issued sheets remain
+      // in the audit trail and use the separate, permission-checked cancel flow.
+      canDelete: item.status === "draft",
     }));
 
     const all = [...transmittalRows, ...reviewRows].map((row) => ({
@@ -209,6 +216,77 @@ export function Dashboard() {
       await load();
     } catch (err) {
       setNotice(err instanceof ApiError ? err.detail : "ثبت تأییدیه ناموفق بود.");
+    }
+  };
+
+  const deleteRow = async (row: InboxRow | null = current) => {
+    if (!row?.transmittalId) {
+      setNotice("حذف فقط برای ردیف‌های ترانسمیتال امکان‌پذیر است.");
+      return;
+    }
+    if (!row.canDelete) {
+      setNotice("برگه‌های صادرشده یا در گردش حذف نمی‌شوند؛ برای آن‌ها از «لغو» استفاده کنید.");
+      return;
+    }
+    if (!window.confirm(`ردیف «${row.title}» از کارتابل حذف شود؟ این عملیات برای پیش‌نویس قابل بازگشت نیست.`)) {
+      return;
+    }
+
+    setDeleteBusy(true);
+    setNotice(null);
+    try {
+      await api.delete(`/transmittals/${row.transmittalId}`);
+      setCheckedRows((previous) => {
+        const next = new Set(previous);
+        next.delete(row.key);
+        return next;
+      });
+      if (selected === row.key) setSelected(null);
+      setNotice("ردیف با موفقیت از کارتابل حذف شد.");
+      await load();
+    } catch (err) {
+      setNotice(err instanceof ApiError ? err.detail : "حذف ردیف ناموفق بود.");
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  const deleteSelectedRows = async () => {
+    const selectedRows = rows.filter((row) => checkedRows.has(row.key));
+    const deletableRows = selectedRows.filter((row) => row.canDelete && row.transmittalId);
+    if (deletableRows.length === 0) {
+      setNotice("از بین ردیف‌های انتخاب‌شده، پیش‌نویس قابل حذفی وجود ندارد.");
+      return;
+    }
+
+    const skipped = selectedRows.length - deletableRows.length;
+    const suffix = skipped ? ` ${persianDigits(skipped)} ردیف غیرقابل حذف نادیده گرفته می‌شود.` : "";
+    if (
+      !window.confirm(
+        `${persianDigits(deletableRows.length)} ردیف پیش‌نویس از کارتابل حذف شود؟ این عملیات قابل بازگشت نیست.${suffix}`,
+      )
+    ) {
+      return;
+    }
+
+    setDeleteBusy(true);
+    setNotice(null);
+    const results = await Promise.allSettled(
+      deletableRows.map((row) => api.delete(`/transmittals/${row.transmittalId}`)),
+    );
+    const deletedKeys = new Set(
+      deletableRows.filter((_, index) => results[index].status === "fulfilled").map((row) => row.key),
+    );
+    const failed = results.length - deletedKeys.size;
+    setCheckedRows((previous) => new Set([...previous].filter((key) => !deletedKeys.has(key))));
+    if (selected && deletedKeys.has(selected)) setSelected(null);
+    await load();
+    setDeleteBusy(false);
+
+    if (failed) {
+      setNotice(`${persianDigits(deletedKeys.size)} ردیف حذف شد؛ ${persianDigits(failed)} ردیف حذف نشد.`);
+    } else {
+      setNotice(`${persianDigits(deletedKeys.size)} ردیف با موفقیت از کارتابل حذف شد.`);
     }
   };
 
@@ -452,11 +530,19 @@ export function Dashboard() {
                                   api.download(`/transmittals/${row.transmittalId}/pdf`, `${row.title}.pdf`),
                                 disabled: !row.transmittalId,
                               },
+                              {
+                                label: "حذف ردیف",
+                                run: () => void deleteRow(row),
+                                disabled: !row.canDelete || deleteBusy,
+                              },
                             ].map((action) => (
                               <button
                                 key={action.label}
                                 type="button"
-                                className="block w-full px-2 py-1 text-right text-[10.5px] hover:bg-[#e8eff6] disabled:text-[#9aa8b4]"
+                                className={clsx(
+                                  "block w-full px-2 py-1 text-right text-[10.5px] hover:bg-[#e8eff6] disabled:text-[#9aa8b4]",
+                                  action.label === "حذف ردیف" && "text-[#97282b]",
+                                )}
                                 disabled={action.disabled}
                                 onClick={() => {
                                   setRowMenu(null);
@@ -539,9 +625,21 @@ export function Dashboard() {
               onClick: () => void openFlow(),
             },
             {
+              label: checkedRows.size > 1 ? "حذف ردیف‌های انتخاب‌شده" : "حذف ردیف",
+              icon: <IconDelete />,
+              danger: true,
+              disabled:
+                deleteBusy ||
+                (checkedRows.size > 0
+                  ? !rows.some((row) => checkedRows.has(row.key) && row.canDelete && row.transmittalId)
+                  : !current?.canDelete),
+              title: "حذف پیش‌نویس‌های انتخاب‌شده از کارتابل",
+              onClick: () => void (checkedRows.size > 0 ? deleteSelectedRows() : deleteRow()),
+            },
+            {
               label: "بازخوانی",
               icon: <IconRefresh />,
-              disabled: loading,
+              disabled: loading || deleteBusy,
               onClick: () => void load(),
             },
             {

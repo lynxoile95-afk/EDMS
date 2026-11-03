@@ -285,6 +285,44 @@
     align-items: center;
     gap: 4px;
   }
+  /* Compact four-column KPI strip used above the personal inbox. */
+  .dashboard-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 3px;
+    margin-bottom: 4px;
+  }
+  .dashboard-kpi-grid > div {
+    min-width: 0;
+    margin-bottom: 0;
+    padding: 3px 6px;
+  }
+  .dashboard-kpi-grid > div > p:first-child {
+    overflow: hidden;
+    font-size: 9.5px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dashboard-kpi-grid > div > p:nth-child(2) {
+    margin-top: 0;
+    font-size: 13px;
+    line-height: 1.2;
+  }
+  .dashboard-kpi-grid > div > p:nth-child(3) {
+    margin-top: 0;
+    overflow: hidden;
+    font-size: 8.5px;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  @media (max-width: 640px) {
+    .dashboard-kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
   /* Main windows of a page end with the reference system's green strip. */
   .card.is-main::after {
     content: "";

@@ -234,11 +234,30 @@ export function Dashboard() {
   return (
     <div onClick={() => rowMenu && setRowMenu(null)}>
       {/* ---------- summary strip ---------- */}
-      <div className="mb-2 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="مدارک ثبت‌شده در MDL" value={persianDigits(data.documents_total)} hint={`${persianDigits(data.revisions_total)} بازنگری`} />
-        <Stat label="پیشرفت صدور مدارک" value={percent(completion)} hint={`${persianDigits(data.documents_issued)} مدرک صادرشده`} tone="good" />
-        <Stat label="در صف بازبینی DCC" value={persianDigits(data.review_queue)} hint={`${persianDigits(data.quarantined)} قرنطینه`} tone={data.review_queue ? "warn" : "default"} />
-        <Stat label="نرخ پذیرش خودکار (۳۰ روز)" value={percent(data.auto_accept_rate)} hint="نسبت مدارک سبز" tone={data.auto_accept_rate > 0.7 ? "good" : "warn"} />
+      <div className="dashboard-kpi-grid">
+        <Stat
+          label="مدارک بارگذاری در MDL"
+          value={persianDigits(data.documents_total)}
+          hint={`${persianDigits(data.revisions_total)} بازنگری`}
+        />
+        <Stat
+          label="تعداد مدارک ترانسمیتال شده"
+          value={persianDigits(data.transmittals_total)}
+          hint={`${persianDigits(data.transmittals_open)} برگه باز`}
+          tone="good"
+        />
+        <Stat
+          label="پیشرفت صدور مدارک"
+          value={percent(completion)}
+          hint={`${persianDigits(data.documents_issued)} مدرک صادرشده`}
+          tone="good"
+        />
+        <Stat
+          label="در صف بازبینی"
+          value={persianDigits(data.review_queue)}
+          hint={`${persianDigits(data.quarantined)} قرنطینه`}
+          tone={data.review_queue ? "warn" : "default"}
+        />
       </div>
 
       {/* ---------- inbox ---------- */}

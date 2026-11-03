@@ -39,7 +39,7 @@ logger = logging.getLogger("bootstrap")
 #: The fourth element is the discipline code for a discipline engineer, else None.
 DEMO_USERS: list[tuple[str, str, ProjectRole, str | None]] = [
     ("submitter@example.com", "مهندس رضا کریمی — پیمانکار", ProjectRole.SUBMITTER, None),
-    ("dcc@example.com", "مهندس مریم رستمی — کارشناس کنترل اسناد مهندسی", ProjectRole.DCC, None),
+    ("dcc@example.com", "مهندس رضا علی اکبری - کارشناس ارشد هوش مصنوعی", ProjectRole.DCC, None),
     ("pm@example.com", "مهندس بهرام توکلی — مدیر پروژه", ProjectRole.PROJECT_MANAGER, None),
     ("em@example.com", "مهندس فرهاد موحد — مدیر مهندسی", ProjectRole.ENGINEERING_MANAGER, None),
     ("ele@example.com", "مهندس امیر رضایی — کارشناس برق", ProjectRole.REVIEWER, "ELE"),

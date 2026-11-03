@@ -107,7 +107,7 @@ export function Layout() {
         <div className="flex min-w-0 items-center gap-3">
           <div className="masthead-logo">EDMS</div>
           <div className="min-w-0">
-            <h1 className="masthead-title">سامانه مدیریت اسناد مهندسی</h1>
+            <h1 className="masthead-title">سامانه هوشمند مدیریت اسناد مهندسی</h1>
             <p className="masthead-sub">Engineering Document Management System — EDMS-AI</p>
           </div>
         </div>
@@ -287,7 +287,7 @@ export function Layout() {
       </div>
 
       <footer className="border-t border-[#b9c3cd] bg-gradient-to-b from-[#f4f7fa] to-[#e2e8ee] px-3 py-1.5 text-center text-[9.5px] text-[#5c6b78]">
-        سامانه مدیریت اسناد مهندسی — نسخه ۱.۰ · تاریخ شمسی · Asia/Tehran
+        سامانه هوشمند مدیریت اسناد مهندسی — نسخه ۱.۰ · تاریخ شمسی · Asia/Tehran
       </footer>
     </div>
   );

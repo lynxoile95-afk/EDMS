@@ -33,7 +33,7 @@ export function Login() {
         <div className="flex items-center gap-3">
           <div className="masthead-logo">EDMS</div>
           <div>
-            <h1 className="masthead-title">سامانه مدیریت اسناد مهندسی</h1>
+            <h1 className="masthead-title">سامانه هوشمند مدیریت اسناد مهندسی</h1>
             <p className="masthead-sub">Engineering Document Management System — EDMS-AI</p>
           </div>
         </div>
@@ -147,7 +147,7 @@ export function Login() {
       </div>
 
       <footer className="pb-2 text-center text-[9.5px] text-[#5c6b78]">
-        سامانه مدیریت اسناد مهندسی · تقویم شمسی · Asia/Tehran · Data stays on-premise
+        سامانه هوشمند مدیریت اسناد مهندسی · تقویم شمسی · Asia/Tehran · Data stays on-premise
       </footer>
     </div>
   );

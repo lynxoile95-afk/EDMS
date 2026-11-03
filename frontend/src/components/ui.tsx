@@ -39,11 +39,11 @@ export function CardHeader({
 }) {
   return (
     <div className="card-header">
-      <div className="min-w-0 flex-1 text-center">
-        <h2 className="truncate">{title}</h2>
-        {subtitle ? <p className="mt-0.5 text-[10px] font-normal text-[#5c6b78]">{subtitle}</p> : null}
+      <div className="card-header-content">
+        <h2 className="card-header-title truncate">{title}</h2>
+        {subtitle ? <p className="card-header-subtitle">{subtitle}</p> : null}
       </div>
-      {actions ? <div className="flex flex-wrap items-center gap-1">{actions}</div> : null}
+      {actions ? <div className="card-header-actions">{actions}</div> : null}
     </div>
   );
 }

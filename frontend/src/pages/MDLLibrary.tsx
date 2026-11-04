@@ -98,9 +98,6 @@ export function MDLLibrary() {
   const emptyRow = { doc_code: "", title: "", poi: "IFR", weight: "1", unit_code: "", doc_type: "" };
   const [rowForm, setRowForm] = useState(emptyRow);
   const [parsed, setParsed] = useState<CodeParse | null>(null);
-  // a value the operator typed by hand wins over the one read from the code
-  const unitTouched = useRef(false);
-  const typeTouched = useRef(false);
 
   useEffect(() => {
     if (!project) return;
@@ -125,10 +122,12 @@ export function MDLLibrary() {
           if (!alive) return;
           setParsed(data);
           if (!data.ok) return;
+          // The manual form has exactly four inputs. Unit and document type are
+          // derived from the project code and are never entered independently.
           setRowForm((prev) => ({
             ...prev,
-            unit_code: unitTouched.current ? prev.unit_code : data.fields.unit_code ?? "",
-            doc_type: typeTouched.current ? prev.doc_type : data.fields.doc_type ?? "",
+            unit_code: data.fields.unit_code ?? "",
+            doc_type: data.fields.doc_type ?? "",
           }));
         })
         .catch(() => {
@@ -147,8 +146,6 @@ export function MDLLibrary() {
     setEditing(null);
     setRowError(null);
     setParsed(null);
-    unitTouched.current = false;
-    typeTouched.current = false;
     setRowForm(emptyRow);
     setRowOpen(true);
   };
@@ -157,9 +154,6 @@ export function MDLLibrary() {
     setEditing(item);
     setRowError(null);
     setParsed(null);
-    // an existing row keeps exactly the values it was saved with
-    unitTouched.current = true;
-    typeTouched.current = true;
     setRowForm({
       doc_code: item.doc_code,
       title: item.title,
@@ -602,28 +596,6 @@ export function MDLLibrary() {
               value={rowForm.title}
               placeholder="Plot Plan / پلان موقعیت"
               onChange={(event) => setRowForm({ ...rowForm, title: event.target.value })}
-            />
-          </Field>
-          <Field label="یونیت (واحد)" hint="از کد خوانده می‌شود">
-            <Input
-              className="ltr"
-              value={rowForm.unit_code}
-              placeholder="20"
-              onChange={(event) => {
-                unitTouched.current = true;
-                setRowForm({ ...rowForm, unit_code: event.target.value });
-              }}
-            />
-          </Field>
-          <Field label="نوع مدرک" hint="از کد خوانده می‌شود">
-            <Input
-              className="ltr"
-              value={rowForm.doc_type}
-              placeholder="DWG"
-              onChange={(event) => {
-                typeTouched.current = true;
-                setRowForm({ ...rowForm, doc_type: event.target.value });
-              }}
             />
           </Field>
           <Field label="P.O.I">

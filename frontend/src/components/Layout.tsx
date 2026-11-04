@@ -8,6 +8,7 @@ import type { Notification } from "@/lib/types";
 import { persianDigits } from "@/lib/format";
 
 const TOP_LINKS = [
+  { to: "/projects", label: "پروژه‌ها", icon: "▦" },
   { to: "/dashboard", label: "خانه", icon: "⌂" },
   { to: "/transmittals", label: "مدارک مهندسی", icon: "▤" },
   { to: "/mdl", label: "MDL", icon: "☰" },
@@ -17,6 +18,12 @@ const TOP_LINKS = [
 ];
 
 const MENU: { title: string; items: { to: string; label: string; icon: string; badge?: "queue" | "unread" }[] }[] = [
+  {
+    title: "Project Control",
+    items: [
+      { to: "/projects", label: "تعریف و انتخاب پروژه", icon: "▦" },
+    ],
+  },
   {
     title: "Engineering Documents",
     items: [
@@ -40,6 +47,7 @@ const MENU: { title: string; items: { to: string; label: string; icon: string; b
 ];
 
 const TITLES: Record<string, string> = {
+  "/projects": "تعریف و انتخاب پروژه",
   "/dashboard": "کارتابل من",
   "/mdl": "فهرست مدارک پروژه (MDL)",
   "/upload": "ثبت و بارگذاری مدرک",
@@ -276,11 +284,14 @@ export function Layout() {
           <div className="mb-[3px] flex items-center justify-end gap-1 text-[9.5px] text-[#5c6b78]">
             <span className="border border-[#c3ccd6] bg-[#f7f9fb] px-1.5 py-[1px]">EDMS Result Page</span>
           </div>
-          {project ? (
+          {project || location.pathname === "/projects" ? (
             <Outlet />
           ) : (
             <div className="card p-6 text-center text-[11px] text-[#4a5a67]">
-              هنوز به هیچ پروژه‌ای دسترسی ندارید. با مدیر سیستم تماس بگیرید.
+              <p>ابتدا یک پروژه را تعریف و انتخاب کنید.</p>
+              <Link className="btn btn-primary mt-3 inline-block" to="/projects">
+                رفتن به مدیریت پروژه‌ها
+              </Link>
             </div>
           )}
         </main>

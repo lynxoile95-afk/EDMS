@@ -5,6 +5,7 @@ import { ProjectProvider } from "@/lib/project";
 import { Layout } from "@/components/Layout";
 import { Spinner } from "@/components/ui";
 import { Login } from "@/pages/Login";
+import { Projects } from "@/pages/Projects";
 import { Dashboard } from "@/pages/Dashboard";
 import { MDLLibrary } from "@/pages/MDLLibrary";
 import { UploadPage } from "@/pages/Upload";
@@ -58,6 +59,7 @@ export default function App() {
                 </RequireAuth>
               }
             >
+              <Route path="/projects" element={<Projects />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/mdl" element={<MDLLibrary />} />
               <Route path="/upload" element={<UploadPage />} />

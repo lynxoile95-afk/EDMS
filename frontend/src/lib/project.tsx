@@ -34,9 +34,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       const list = await api.get<Project[]>("/projects");
       setProjects(list);
       const stored = localStorage.getItem(STORAGE_KEY);
-      const valid = list.some((item) => item.id === stored) ? stored : list[0]?.id ?? null;
+      // Project data must never silently land in the first project returned by the
+      // API. A user explicitly selects the project from the project screen/header.
+      const valid = stored && list.some((item) => item.id === stored) ? stored : null;
       setProjectId(valid);
       if (valid) localStorage.setItem(STORAGE_KEY, valid);
+      else localStorage.removeItem(STORAGE_KEY);
     } finally {
       setLoading(false);
     }
@@ -47,6 +50,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   }, [load]);
 
   const select = useCallback((id: string) => {
+    if (!id) {
+      localStorage.removeItem(STORAGE_KEY);
+      setProjectId(null);
+      return;
+    }
     localStorage.setItem(STORAGE_KEY, id);
     setProjectId(id);
   }, []);

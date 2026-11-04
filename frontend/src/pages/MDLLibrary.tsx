@@ -95,7 +95,7 @@ export function MDLLibrary() {
   // title, the P.O.I and the weight. Unit, document type, discipline, phase and
   // serial are read back out of the code itself by GET .../mdl/parse-code, using
   // the same parser the create endpoint validates with.
-  const emptyRow = { doc_code: "", title: "", poi: "IFR", weight: "1", unit_code: "", doc_type: "" };
+  const emptyRow = { doc_code: "", title: "", poi: "IFR", weight: "1" };
   const [rowForm, setRowForm] = useState(emptyRow);
   const [parsed, setParsed] = useState<CodeParse | null>(null);
 
@@ -121,14 +121,6 @@ export function MDLLibrary() {
         .then((data) => {
           if (!alive) return;
           setParsed(data);
-          if (!data.ok) return;
-          // The manual form has exactly four inputs. Unit and document type are
-          // derived from the project code and are never entered independently.
-          setRowForm((prev) => ({
-            ...prev,
-            unit_code: data.fields.unit_code ?? "",
-            doc_type: data.fields.doc_type ?? "",
-          }));
         })
         .catch(() => {
           if (alive) setParsed(null);
@@ -138,7 +130,7 @@ export function MDLLibrary() {
       alive = false;
       window.clearTimeout(timer);
     };
-    // `rowForm.doc_code` is the only trigger: the setRowForm above must not re-run this.
+    // `rowForm.doc_code` is the only trigger for parsing the code.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowForm.doc_code, rowOpen, project]);
 
@@ -159,8 +151,6 @@ export function MDLLibrary() {
       title: item.title,
       poi: item.poi ?? "",
       weight: String(item.weight ?? 1),
-      unit_code: item.unit_code ?? "",
-      doc_type: item.doc_type ?? "",
     });
     setRowOpen(true);
   };
@@ -178,13 +168,14 @@ export function MDLLibrary() {
     }
     setBusy(true);
     try {
-      // null means "read it from the code" on create, and "leave it as it is" on edit.
+      // The manual form has exactly four inputs. Unit, document type, discipline,
+      // phase and serial are always derived from the document code by the backend.
+      // Do not send derived unit/type values as explicit lookup claims: a valid new
+      // unit code must be auto-registered instead of rejected.
       const body = {
         title: rowForm.title.trim(),
         poi: rowForm.poi.trim().toUpperCase() || null,
         weight: Number(rowForm.weight) || 1,
-        unit_code: rowForm.unit_code.trim().toUpperCase() || null,
-        doc_type: rowForm.doc_type.trim().toUpperCase() || null,
       };
       if (editing) {
         await api.patch(`/projects/${project.id}/mdl/items/${editing.id}`, {

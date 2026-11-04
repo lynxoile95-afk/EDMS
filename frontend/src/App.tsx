@@ -14,6 +14,7 @@ import { ReviewQueue } from "@/pages/ReviewQueue";
 import { ReviewDetail } from "@/pages/ReviewDetail";
 import { Team } from "./pages/Team";
 import { Transmittals } from "@/pages/Transmittals";
+import { ManualTransmittalPage } from "@/pages/ManualTransmittal";
 import { TransmittalDetail } from "@/pages/TransmittalDetail";
 import { CommentList } from "@/pages/CommentList";
 
@@ -68,6 +69,7 @@ export default function App() {
               <Route path="/review/:resultId" element={<ReviewDetail />} />
               <Route path="/team" element={<Team />} />
               <Route path="/transmittals" element={<Transmittals />} />
+              <Route path="/transmittals/new" element={<ManualTransmittalPage />} />
               <Route path="/transmittals/:transmittalId" element={<TransmittalDetail />} />
               <Route path="/documents/:revisionId/comments" element={<CommentList />} />
             </Route>

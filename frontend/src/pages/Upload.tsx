@@ -380,6 +380,17 @@ export function UploadPage() {
                 />
               </FField>
             </FieldGrid>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-[#d5dde5] pt-2">
+              <div>
+                <p className="text-[11px] font-bold text-[#1f3864]">ثبت ترانسمیتال دستی</p>
+                <p className="text-[9.5px] leading-4 text-[#5c6b78]">
+                  بدون استخراج هوش مصنوعی، مدارک MDL و بازنگری آن‌ها را انتخاب و ترانسمیتال جدید ایجاد کنید.
+                </p>
+              </div>
+              <Button variant="secondary" className="btn-sm" onClick={() => navigate("/transmittals/new")}>
+                ایجاد ترانسمیتال جدید
+              </Button>
+            </div>
           </div>
         </Card>
 

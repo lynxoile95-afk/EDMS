@@ -51,16 +51,14 @@ interface CodeStructure {
   serial_blocks: { discipline: string; name_fa: string; from: number; to: number }[];
   known_disciplines?: { id: string; code: string; name: string }[];
 }
+// The approved MDL workbook has exactly these four columns. Unit, discipline,
+// phase, document type and serial are authoritative segments of the document code
+// and are not manually mapped from Excel.
 const FIELD_LABELS: Record<string, string> = {
   doc_code: "کد مدرک *",
   title: "عنوان *",
-  discipline: "دیسیپلین",
-  unit: "یونیت",
-  doc_type: "نوع مدرک",
-  current_rev: "بازنگری جاری",
-  status: "وضعیت",
-  responsible: "مسئول",
-  due_date: "تاریخ موعد",
+  poi: "P.O.I",
+  weight: "وزن (Weight)",
 };
 
 const PAGE_SIZE = 25;
@@ -698,8 +696,10 @@ export function MDLLibrary() {
                 if (file) void pickFile(file);
               }}
             />
-            <p className="mt-2 text-[11px] text-slate-400">
-              فایل اکسل MDL پروژه (.xlsx). پس از خواندن، ستون‌ها به‌صورت خودکار پیشنهاد می‌شوند.
+            <p className="mt-2 text-[11px] leading-5 text-slate-400">
+              قالب تأییدشده: <span className="ltr">Doc. No.</span>، <span className="ltr">Document Title</span>،
+              <span className="ltr">P.O.I</span> و <span className="ltr">(Weight) وزن</span>.
+              یونیت، دیسیپلین، فاز، نوع مدرک و سریال مستقیماً از کد مدرک خوانده می‌شوند.
             </p>
           </div>
 

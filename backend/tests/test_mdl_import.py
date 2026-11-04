@@ -46,6 +46,48 @@ def test_preview_detects_headers(db, actor):
     assert mapping["discipline"] == 2
 
 
+def test_reference_four_column_headers_are_mapped_exactly(db, actor):
+    path = build_xlsx(
+        [
+            ["7100-00-EB-EL-SPE-7050", "Specification For Electrical Heat Tracing System", "IFI", 1],
+        ],
+        headers=["Doc. No.", "Document Title", "P.O.I", "(Weight) وزن"],
+    )
+    mapping = mdl_import.preview(path)["suggested_mapping"]
+    assert mapping == {"doc_code": 0, "title": 1, "poi": 2, "weight": 3}
+
+
+def test_reference_four_column_file_imports_code_segments(db, project, actor):
+    path = build_xlsx(
+        [
+            ["7100-00-EB-EL-SPE-7050", "Specification For Electrical Heat Tracing System", "IFI", 1],
+            ["7100-00-EB-HS-PHY-9800", "Active Passive Fire Protection Philosophy", "IFI", 1],
+            ["7100-00-EB-IN-SPE-7007", "Specification For FGS", "IFI", 1],
+            ["7100-00-EB-PI-PLP-0500", "Overall Plot Plan", "IFC", 1],
+            ["7100-63-EB-PR-PID-0100", "Piping And Instrument PID", "IFC", 1],
+        ],
+        headers=["Doc. No.", "Document Title", "P.O.I", "(Weight) وزن"],
+    )
+    preview = mdl_import.preview(path)
+    report = mdl_import.import_mdl(
+        db,
+        project=project,
+        file_path=path,
+        filename="MDL OIL.xlsx",
+        mapping=preview["suggested_mapping"],
+        actor=actor,
+        header_row=preview["header_row"] - 1,
+    )
+    db.commit()
+    assert report.status == "completed"
+    assert report.imported == 5
+    assert report.errors == 0
+    item = db.query(MDLItem).filter_by(doc_code_norm="7100-63-EB-PR-PID-0100").one()
+    assert item.poi == "IFC"
+    assert item.weight == 1
+    assert item.doc_type == "PID"
+
+
 def test_preview_persian_headers(db, actor):
     path = build_xlsx(
         [["TST-CIV-DR-0102", "نقشه آزمون", "CIV", "U-100", "DWG", "B", "Draft"]],
@@ -109,18 +151,20 @@ def test_import_detects_duplicate_rows(db: Session, project, actor):
     assert any("تکراری" in entry["message"] for entry in report.entries)
 
 
-def test_import_updates_existing_row(db: Session, project, actor):
+def test_import_rejects_existing_row_without_updating(db: Session, project, actor):
     path = build_xlsx([["TST-CIV-DR-001", "Plot Plan (Rev C)", "CIV", "U-100", "DWG", "C", "Draft"]])
     preview = mdl_import.preview(path)
     report = mdl_import.import_mdl(
-        db, project=project, file_path=path, filename="update.xlsx",
+        db, project=project, file_path=path, filename="duplicate-existing.xlsx",
         mapping=preview["suggested_mapping"], actor=actor, header_row=preview["header_row"] - 1,
     )
-    db.commit()
-    assert report.updated == 1
+    assert report.status == "rejected"
+    assert report.updated == 0
+    assert report.errors == 1
+    assert any("تکرار مجاز نیست" in entry["message"] for entry in report.entries)
     item = db.query(MDLItem).filter_by(doc_code_norm="TST-CIV-DR-001").one()
-    assert item.current_rev == "C"
-    assert "Rev C" in item.title
+    assert item.current_rev == "A"
+    assert item.title == "Plot Plan"
 
 
 def test_dry_run_does_not_persist(db: Session, project, actor):

@@ -71,7 +71,8 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "responsible": ["responsible", "owner", "assignee", "resp", "مسئول", "مسئولتهیه"],
     "due_date": ["duedate", "planneddate", "targetdate", "موعد", "تاریختحویل", "تاریخموعد"],
     "planned_issue_date": ["issuedate", "plannedissuedate", "تاریخصدور", "تاریخبرنامه"],
-    "weight": ["weight", "وزن"],
+    # The reference MDL sheet uses the bilingual header ``(Weight) وزن``.
+    "weight": ["weight", "وزن", "weightوزن", "وزنweight"],
     "page_count": ["pages", "pagecount", "تعدادصفحه", "صفحات"],
 }
 
@@ -294,6 +295,18 @@ def import_mdl(
             continue
         seen_codes[code_norm] = row.row_number
 
+        # MDL codes are immutable unique identities inside a project. Do not
+        # silently turn an Excel import into an update of an existing row; a
+        # repeated normalized code must be rejected and corrected in the source.
+        if code_norm in existing:
+            report.add(
+                row.row_number,
+                Severity.ERROR,
+                f"کد مدرک «{str(raw_code).strip()}» قبلاً در MDL این پروژه ثبت شده است؛ تکرار مجاز نیست.",
+                "doc_code",
+            )
+            continue
+
         title = str(row.values.get("title") or "").strip()
         if not title:
             report.add(row.row_number, Severity.WARNING, "عنوان مدرک خالی است.", "title")
@@ -375,14 +388,19 @@ def import_mdl(
         )
 
     # ------------------------------------------------------------- commit
-    if report.errors and not dry_run:
+    if report.errors:
         report.status = MDLImportStatus.REJECTED.value
         batch.status = MDLImportStatus.REJECTED
         batch.row_count = report.total
         batch.error_count = report.errors
         batch.warning_count = report.warnings
         batch.report = report.entries
-        db.flush()
+        if dry_run:
+            # A dry-run with errors is still rejected; it must never be reported
+            # as validated merely because no rows are persisted.
+            db.rollback()
+        else:
+            db.flush()
         return report
 
     if dry_run:
@@ -420,64 +438,41 @@ def import_mdl(
         if row["responsible_email"]:
             responsible = users_by_email.get(row["responsible_email"].lower())
 
-        item = existing.get(row["doc_code_norm"])
-        if item is None:
-            item = MDLItem(
-                project_id=project.id,
-                import_batch_id=batch.id,
-                doc_code=row["doc_code"],
-                doc_code_norm=row["doc_code_norm"],
-                title=row["title"],
-                title_norm=row["title_norm"],
-                discipline_id=discipline.id if discipline else None,
-                unit_id=unit.id if unit else None,
-                doc_type=row["doc_type"],
-                current_rev=row["current_rev"],
-                rev_seq=row["rev_seq"],
-                status=row["status"],
-                responsible_id=responsible.id if responsible else None,
-                planned_issue_date=row["planned_issue_date"],
-                due_date=row["due_date"],
-                weight=row["weight"],
-                page_count=row["page_count"],
-                source_row=row["row"],
-                phase=row["phase"],
-                serial_no=row["serial_no"],
-                category=row["category"],
-                doc_class=row["doc_class"],
-                basic_detail=row["basic_detail"],
-                poi=row["poi"],
-                remark=row["remark"],
-                aliases=[],
-                attributes={},
-            )
-            db.add(item)
-            existing[row["doc_code_norm"]] = item
-            report.imported += 1
-        else:
-            item.title = row["title"] or item.title
-            item.title_norm = row["title_norm"] or item.title_norm
-            item.discipline_id = discipline.id if discipline else item.discipline_id
-            item.unit_id = unit.id if unit else item.unit_id
-            item.doc_type = row["doc_type"] or item.doc_type
-            item.phase = row["phase"] or item.phase
-            item.serial_no = row["serial_no"] or item.serial_no
-            item.category = row["category"] or item.category
-            item.doc_class = row["doc_class"] or item.doc_class
-            item.basic_detail = row["basic_detail"] or item.basic_detail
-            item.poi = row["poi"] or item.poi
-            item.remark = row["remark"] or item.remark
-            item.current_rev = row["current_rev"] or item.current_rev
-            item.rev_seq = row["rev_seq"] if row["current_rev"] else item.rev_seq
-            item.status = row["status"] or item.status
-            item.weight = row["weight"]
-            item.due_date = row["due_date"] or item.due_date
-            item.planned_issue_date = row["planned_issue_date"] or item.planned_issue_date
-            item.page_count = row["page_count"] or item.page_count
-            item.import_batch_id = batch.id
-            item.source_row = row["row"]
-            item.is_active = True
-            report.updated += 1
+        # Existing codes were rejected during validation above. Always create a
+        # new row here; this defensive structure prevents a future change from
+        # silently converting duplicate imports into updates.
+        item = MDLItem(
+            project_id=project.id,
+            import_batch_id=batch.id,
+            doc_code=row["doc_code"],
+            doc_code_norm=row["doc_code_norm"],
+            title=row["title"],
+            title_norm=row["title_norm"],
+            discipline_id=discipline.id if discipline else None,
+            unit_id=unit.id if unit else None,
+            doc_type=row["doc_type"],
+            current_rev=row["current_rev"],
+            rev_seq=row["rev_seq"],
+            status=row["status"],
+            responsible_id=responsible.id if responsible else None,
+            planned_issue_date=row["planned_issue_date"],
+            due_date=row["due_date"],
+            weight=row["weight"],
+            page_count=row["page_count"],
+            source_row=row["row"],
+            phase=row["phase"],
+            serial_no=row["serial_no"],
+            category=row["category"],
+            doc_class=row["doc_class"],
+            basic_detail=row["basic_detail"],
+            poi=row["poi"],
+            remark=row["remark"],
+            aliases=[],
+            attributes={},
+        )
+        db.add(item)
+        existing[row["doc_code_norm"]] = item
+        report.imported += 1
 
     batch.status = MDLImportStatus.COMPLETED
     batch.row_count = report.total

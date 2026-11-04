@@ -15,6 +15,7 @@ DEFAULT_PROJECT_SETTINGS: dict[str, Any] = {
     # These fields keep project-definition metadata in the existing project-scoped
     # JSON settings object, so old databases remain migration-compatible.
     "project_type": None,
+    "project_type_title_en": None,
     "project_type_label": None,
     "project_type_feature": None,
     "project_parties": [],

@@ -29,43 +29,87 @@ const NEW_CLIENT = "__new_client__";
 const PROJECT_TYPES = [
   {
     code: "EPC",
+    title_en: "Engineering, Procurement and Construction",
     responsibility: "مهندسی + خرید + ساخت",
     feature: "مسئولیت یکپارچه اجرای پروژه",
   },
   {
     code: "EPCF",
+    title_en: "Engineering, Procurement, Construction and Finance",
     responsibility: "EPC + تأمین مالی",
     feature: "مسئولیت تأمین مالی نیز به قرارداد اضافه می‌شود",
   },
   {
     code: "EPCM",
+    title_en: "Engineering, Procurement and Construction Management",
     responsibility: "مهندسی + تأمین + مدیریت ساخت",
     feature: "مدیریت ساخت به‌جای تعهد مستقیم به اجرای کل ساخت",
   },
   {
     code: "MC",
+    title_en: "Management Contract",
     responsibility: "مدیریت پیمانکاران و عملیات اجرایی",
     feature: "تمرکز بر مدیریت اجرا",
   },
   {
     code: "PMC",
+    title_en: "Project Management Consultancy",
     responsibility: "مدیریت و کنترل پروژه از طرف کارفرما",
     feature: "نقش مشاور و نماینده کارفرما",
   },
   {
     code: "EP",
+    title_en: "Engineering and Procurement",
     responsibility: "مهندسی و خرید",
     feature: "ساخت معمولاً بر عهده سایر پیمانکاران است",
   },
   {
     code: "PC",
+    title_en: "Procurement and Construction",
     responsibility: "خرید و ساخت",
     feature: "مهندسی عمدتاً توسط طرف دیگری انجام می‌شود",
   },
   {
     code: "BOT",
+    title_en: "Build, Operate and Transfer",
     responsibility: "ساخت و بهره‌برداری و انتقال",
     feature: "مناسب پروژه‌های سرمایه‌گذاری زیرساختی",
+  },
+  {
+    code: "TLA",
+    title_en: "Technology License Agreement",
+    responsibility: "قرارداد اعطای لیسانس فناوری",
+    feature: "اعطای حق استفاده از فناوری و شرایط مجوز",
+  },
+  {
+    code: "LA",
+    title_en: "License Agreement",
+    responsibility: "قرارداد لیسانس",
+    feature: "تعیین حقوق و شرایط بهره‌برداری از فناوری یا محصول",
+  },
+  {
+    code: "TTA",
+    title_en: "Technology Transfer Agreement",
+    responsibility: "قرارداد انتقال فناوری",
+    feature: "انتقال فناوری، مستندات و خدمات مرتبط",
+  },
+  {
+    code: "KTA",
+    title_en: "Know-How Transfer Agreement",
+    responsibility: "قرارداد انتقال دانش فنی",
+    feature: "انتقال دانش فنی، تجربه و روش‌های اجرایی",
+  },
+  {
+    code: "PDP",
+    title_en: "Process Design Package",
+    responsibility: "بسته طراحی فرآیند",
+    feature: "ارائه مبانی و مدارک طراحی فرآیند",
+  },
+  {
+    code: "BEDP",
+    title_en: "Basic Engineering Design Package",
+    responsibility: "بسته طراحی مهندسی پایه",
+    feature: "ارائه بسته طراحی مهندسی پایه",
   },
 ] as const;
 
@@ -262,6 +306,7 @@ export function Projects() {
         description: form.description.trim() || null,
         settings: {
           project_type: selectedProjectType?.code,
+          project_type_title_en: selectedProjectType?.title_en,
           project_type_label: selectedProjectType?.responsibility,
           project_type_feature: selectedProjectType?.feature,
           project_parties: parties,
@@ -369,7 +414,7 @@ export function Projects() {
                     <option value="">انتخاب نوع قرارداد…</option>
                     {PROJECT_TYPES.map((item) => (
                       <option key={item.code} value={item.code}>
-                        {item.code} — {item.responsibility}
+                        {item.code} — {item.responsibility} ({item.title_en})
                       </option>
                     ))}
                   </Select>
@@ -377,7 +422,12 @@ export function Projects() {
                 <div className="self-end text-[9.5px] leading-4 text-[#5c6b78]">
                   {selectedProjectType ? (
                     <>
-                      <b className="text-[#1f3864]">ویژگی:</b> {selectedProjectType.feature}
+                      <div>
+                        <b className="text-[#1f3864]">عنوان انگلیسی:</b> {selectedProjectType.title_en}
+                      </div>
+                      <div>
+                        <b className="text-[#1f3864]">ویژگی:</b> {selectedProjectType.feature}
+                      </div>
                     </>
                   ) : (
                     "پس از انتخاب نوع قرارداد، ویژگی آن در این قسمت نمایش داده می‌شود."

@@ -11,6 +11,13 @@ from typing import Any
 from app.services.code_structure import DEFAULT_CODE_PATTERN as DEFAULT_DOC_CODE_PATTERN  # noqa: E402
 
 DEFAULT_PROJECT_SETTINGS: dict[str, Any] = {
+    # ---- project contract and delivery parties ----
+    # These fields keep project-definition metadata in the existing project-scoped
+    # JSON settings object, so old databases remain migration-compatible.
+    "project_type": None,
+    "project_type_label": None,
+    "project_type_feature": None,
+    "project_parties": [],
     # ---- document identity ----
     "doc_code_pattern": DEFAULT_DOC_CODE_PATTERN,
     "rev_scheme": "auto",  # auto | alpha | numeric | p_prefix

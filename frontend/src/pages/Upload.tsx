@@ -222,10 +222,10 @@ export function UploadPage() {
   if (!project) return <EmptyState title="پروژه‌ای انتخاب نشده است" />;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      <Card className="lg:col-span-2">
+    <div className="space-y-3">
+      <Card>
         <CardHeader
-          title="بارگذاری مدرک"
+          title="بارگذاری مدارک"
           subtitle="فایل‌های PDF را اضافه کنید؛ سیستم کادر مشخصات را می‌خواند و با MDL تطبیق می‌دهد."
         />
         <div className="space-y-4 p-4">
@@ -327,11 +327,19 @@ export function UploadPage() {
 
           {error ? <ErrorBox message={error} /> : null}
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[#d5dde5] pt-2">
             <Button onClick={() => void start()} disabled={busy || staged.length === 0 || phase === "done"}>
               {busy ? "در حال پردازش…" : "شروع پردازش هوشمند"}
             </Button>
-            <Button variant="secondary" onClick={() => { setStaged([]); setSession(null); setPhase("idle"); setError(null); }}>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setStaged([]);
+                setSession(null);
+                setPhase("idle");
+                setError(null);
+              }}
+            >
               پاک کردن
             </Button>
             {phase === "done" ? (
@@ -343,90 +351,88 @@ export function UploadPage() {
         </div>
       </Card>
 
-      <div className="space-y-4">
-        <Card className="is-main">
-          <CardHeader title="تنظیمات ارسال" />
-          <div className="p-[3px]">
-            <FieldGrid>
-              <FField label="هدف ارسال (P.O.I):">
-                <select className="input" value={purpose} onChange={(event) => setPurpose(event.target.value)}>
-                  {Object.entries(PURPOSE_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </FField>
-              <FField label="نوع ارسال:">
-                <select className="input" value={mode} onChange={(event) => setMode(event.target.value)}>
-                  <option value="new_document">سند جدید</option>
-                  <option value="revision">بازنگری سند موجود</option>
-                  <option value="response_to_comment">پاسخ به نظرات</option>
-                </select>
-              </FField>
-              <FField label="نوع برگه ارسال:">
-                <select className="input" value={type} onChange={(event) => setType(event.target.value)}>
-                  <option value="internal">داخلی — Internal</option>
-                  <option value="external">خارجی — External (نیازمند تأیید مدیر پروژه)</option>
-                </select>
-              </FField>
-              <FField label="توضیحات (Remarks):">
-                <textarea
-                  className="input min-h-[20px] w-full"
-                  rows={2}
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                  placeholder="اختیاری"
-                />
-              </FField>
-            </FieldGrid>
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-[#d5dde5] pt-2">
-              <div>
-                <p className="text-[11px] font-bold text-[#1f3864]">ثبت ترانسمیتال دستی</p>
-                <p className="text-[9.5px] leading-4 text-[#5c6b78]">
-                  بدون استخراج هوش مصنوعی، مدارک MDL و بازنگری آن‌ها را انتخاب و ترانسمیتال جدید ایجاد کنید.
+      <Card className="is-main">
+        <CardHeader title="بارگذاری دستی مدارک" />
+        <div className="p-[3px]">
+          <FieldGrid>
+            <FField label="هدف ارسال (P.O.I):">
+              <select className="input" value={purpose} onChange={(event) => setPurpose(event.target.value)}>
+                {Object.entries(PURPOSE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </FField>
+            <FField label="نوع ارسال:">
+              <select className="input" value={mode} onChange={(event) => setMode(event.target.value)}>
+                <option value="new_document">سند جدید</option>
+                <option value="revision">بازنگری سند موجود</option>
+                <option value="response_to_comment">پاسخ به نظرات</option>
+              </select>
+            </FField>
+            <FField label="نوع برگه ارسال:">
+              <select className="input" value={type} onChange={(event) => setType(event.target.value)}>
+                <option value="internal">داخلی — Internal</option>
+                <option value="external">خارجی — External (نیازمند تأیید مدیر پروژه)</option>
+              </select>
+            </FField>
+            <FField label="توضیحات (Remarks):">
+              <textarea
+                className="input min-h-[20px] w-full"
+                rows={2}
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder="اختیاری"
+              />
+            </FField>
+          </FieldGrid>
+          <div className="flex flex-wrap items-center justify-center gap-3 border-x border-[#a8a284] bg-white px-3 py-3">
+            <Button variant="secondary" onClick={() => navigate("/transmittals/new")}>
+              ایجاد ترانسمیتال جدید
+            </Button>
+          </div>
+          <div className="border border-[#a8a284] bg-white px-3 py-2 text-right">
+            <p className="text-[11px] font-bold text-[#1f3864]">ثبت ترانسمیتال دستی</p>
+            <p className="text-[9.5px] leading-4 text-[#5c6b78]">
+              بدون استخراج هوش مصنوعی، مدارک MDL و بازنگری آن‌ها را انتخاب و ترانسمیتال جدید ایجاد کنید.
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      {session ? (
+        <Card>
+          <CardHeader
+            title="نتیجه پردازش"
+            subtitle={`وضعیت جلسه: ${STATUS_LABELS[session.status] ?? session.status}`}
+          />
+          <div className="space-y-2 p-4">
+            {phase === "processing" ? <Spinner label="در حال استخراج و تطبیق…" /> : null}
+            {(session.results ?? []).length === 0 && phase === "done" ? (
+              <p className="text-xs text-slate-500">نتیجه‌ای برای نمایش وجود ندارد.</p>
+            ) : null}
+            {(session.results ?? []).map((result) => (
+              <button
+                key={result.id}
+                className="w-full rounded-lg border border-slate-200 p-2 text-right transition hover:border-brand-300"
+                onClick={() => navigate(`/review/${result.id}`)}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="ltr font-mono text-xs">{result.doc_code ?? "—"}</span>
+                  <DecisionBadge decision={result.decision} />
+                </div>
+                <p className="mt-1 line-clamp-1 text-[11px] text-slate-500">
+                  {result.title ?? "بدون عنوان"} · Rev {result.rev ?? "—"}
                 </p>
-              </div>
-              <Button variant="secondary" className="btn-sm" onClick={() => navigate("/transmittals/new")}>
-                ایجاد ترانسمیتال جدید
-              </Button>
-            </div>
+              </button>
+            ))}
+            <p className="text-[11px] text-slate-400">
+              تعداد فایل‌ها: {persianDigits(session.files.length)}
+            </p>
           </div>
         </Card>
-
-        {session ? (
-          <Card>
-            <CardHeader
-              title="نتیجه پردازش"
-              subtitle={`وضعیت جلسه: ${STATUS_LABELS[session.status] ?? session.status}`}
-            />
-            <div className="space-y-2 p-4">
-              {phase === "processing" ? <Spinner label="در حال استخراج و تطبیق…" /> : null}
-              {(session.results ?? []).length === 0 && phase === "done" ? (
-                <p className="text-xs text-slate-500">نتیجه‌ای برای نمایش وجود ندارد.</p>
-              ) : null}
-              {(session.results ?? []).map((result) => (
-                <button
-                  key={result.id}
-                  className="w-full rounded-lg border border-slate-200 p-2 text-right transition hover:border-brand-300"
-                  onClick={() => navigate(`/review/${result.id}`)}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="ltr font-mono text-xs">{result.doc_code ?? "—"}</span>
-                    <DecisionBadge decision={result.decision} />
-                  </div>
-                  <p className="mt-1 line-clamp-1 text-[11px] text-slate-500">
-                    {result.title ?? "بدون عنوان"} · Rev {result.rev ?? "—"}
-                  </p>
-                </button>
-              ))}
-              <p className="text-[11px] text-slate-400">
-                تعداد فایل‌ها: {persianDigits(session.files.length)}
-              </p>
-            </div>
-          </Card>
-        ) : null}
-      </div>
+      ) : null}
 
       {/* ---------------- where the AI key lives ---------------- */}
       <Modal

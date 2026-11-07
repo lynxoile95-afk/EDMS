@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { renderAsync } from "docx-preview";
 import type { DocumentAttachment } from "@/lib/types";
 import { Button, ErrorBox, Spinner } from "@/components/ui";
 import { PdfViewer } from "@/components/PdfViewer";
@@ -22,7 +23,7 @@ const TEXT_EXTENSIONS = new Set([
 const AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "ogg", "wav", "weba"]);
 const VIDEO_EXTENSIONS = new Set(["avi", "m4v", "mkv", "mov", "mp4", "ogv", "webm"]);
 
-type PreviewMode = "pdf" | "image" | "text" | "audio" | "video" | "unsupported";
+type PreviewMode = "pdf" | "docx" | "image" | "text" | "audio" | "video" | "unsupported";
 
 function extensionOf(filename: string): string {
   const dot = filename.lastIndexOf(".");
@@ -33,6 +34,7 @@ function modeOf(attachment: DocumentAttachment): PreviewMode {
   const contentType = attachment.content_type.toLowerCase();
   const extension = extensionOf(attachment.filename);
   if (attachment.kind === "pdf" || contentType === "application/pdf" || extension === "pdf") return "pdf";
+  if (extension === "docx" || contentType.includes("wordprocessingml.document")) return "docx";
   if (contentType.startsWith("image/") || IMAGE_EXTENSIONS.has(extension)) return "image";
   if (
     contentType.startsWith("text/") ||
@@ -50,6 +52,55 @@ function modeOf(attachment: DocumentAttachment): PreviewMode {
 
 function typeLabel(attachment: DocumentAttachment): string {
   return attachment.content_type || (attachment.kind === "pdf" ? "application/pdf" : "نوع ناشناخته");
+}
+
+function DocxViewer({ url }: { url: string }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const container = containerRef.current;
+    if (!container) return;
+    container.replaceChildren();
+    setLoading(true);
+    setError(null);
+
+    void fetch(url)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("docx preview failed");
+        return response.blob();
+      })
+      .then(async (blob) => {
+        if (cancelled || !containerRef.current) return;
+        await renderAsync(blob, containerRef.current, undefined, {
+          className: "docx-preview",
+          inWrapper: true,
+          breakPages: true,
+          useBase64URL: true,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setError("نمایش فایل Word ممکن نشد؛ فایل را دریافت کنید.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      container.replaceChildren();
+    };
+  }, [url]);
+
+  return (
+    <div className="relative max-h-[58vh] min-h-[20rem] overflow-auto border border-[#a8a284] bg-[#e9edf0] p-3">
+      {loading ? <Spinner label="در حال آماده‌سازی پیش‌نمایش Word…" /> : null}
+      {error ? <ErrorBox message={error} /> : null}
+      <div ref={containerRef} className={loading || error ? "hidden" : "docx-host"} />
+    </div>
+  );
 }
 
 export function AttachmentPreview({
@@ -119,6 +170,10 @@ export function AttachmentPreview({
         <PdfViewer url={url} />
       </div>
     );
+  }
+
+  if (mode === "docx") {
+    return <DocxViewer url={url} />;
   }
 
   if (mode === "image") {

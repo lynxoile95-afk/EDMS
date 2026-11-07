@@ -8,6 +8,7 @@ import os
 import tempfile
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import RedirectResponse
@@ -493,7 +494,10 @@ async def upload_attachment(
             "attachments",
             f"{attachment_id}{suffix.lower()}",
         )
-        content_type = file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        detected_type = mimetypes.guess_type(filename)[0]
+        content_type = file.content_type or detected_type or "application/octet-stream"
+        if content_type == "application/octet-stream" and detected_type:
+            content_type = detected_type
         get_storage().put_file(storage_key, temp_path, content_type=content_type)
         attachment = {
             "id": str(attachment_id),
@@ -584,6 +588,68 @@ def download_attachment(
     )
 
 
+@router.get(
+    "/transmittals/{transmittal_id}/attachments/{attachment_id}/preview",
+    summary="نمایش درون‌برنامه‌ای پیوست مدرک",
+)
+def preview_attachment(
+    transmittal_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+):
+    """Return attachment bytes with an inline disposition for authenticated preview.
+
+    The normal download endpoint deliberately redirects with ``attachment`` so the
+    browser saves the file. PDF.js and media/text previews need the opposite
+    behaviour, and a same-origin response also avoids requiring CORS on a public
+    S3/MinIO endpoint. The ACL and audit trail are the same as for downloads.
+    """
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_project(db, user, transmittal.project_id)
+    attachment = next(
+        (item for item in (transmittal.meta or {}).get("attachments", []) if str(item.get("id")) == str(attachment_id)),
+        None,
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+
+    storage = get_storage()
+    storage_key = attachment.get("storage_key")
+    if not storage_key or not storage.exists(storage_key):
+        raise HTTPException(status_code=404, detail="فایل پیوست در انبار اسناد پیدا نشد.")
+    try:
+        content = storage.get_bytes(storage_key)
+    except Exception as exc:  # noqa: BLE001 - hide storage implementation details
+        raise HTTPException(status_code=404, detail="فایل پیوست در انبار اسناد قابل دریافت نیست.") from exc
+
+    filename = os.path.basename(attachment.get("filename") or "attachment")
+    detected_type = mimetypes.guess_type(filename)[0]
+    content_type = attachment.get("content_type") or detected_type or "application/octet-stream"
+    if content_type == "application/octet-stream" and detected_type:
+        content_type = detected_type
+    audit.record(
+        db,
+        action="transmittal.attachment.preview",
+        entity_type="transmittal",
+        entity_id=transmittal.id,
+        actor=user,
+        project_id=transmittal.project_id,
+        after={"attachment_id": str(attachment_id), "filename": filename},
+    )
+    db.commit()
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
 @router.patch(
     "/transmittals/{transmittal_id}/attachments/{attachment_id}",
     response_model=AttachmentOut,
@@ -654,7 +720,10 @@ async def update_attachment(
                 "attachments",
                 f"{attachment_id}-{uuid.uuid4()}{suffix.lower()}",
             )
-            new_content_type = file.content_type or mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
+            detected_type = mimetypes.guess_type(safe_filename)[0]
+            new_content_type = file.content_type or detected_type or "application/octet-stream"
+            if new_content_type == "application/octet-stream" and detected_type:
+                new_content_type = detected_type
             get_storage().put_file(new_storage_key, temp_path, content_type=new_content_type)
             new_size = size
             new_sha256 = digest.hexdigest()

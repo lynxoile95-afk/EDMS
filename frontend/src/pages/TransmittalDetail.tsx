@@ -11,6 +11,7 @@ import type {
   TransmittalReferral,
 } from "@/lib/types";
 import { Button, EmptyState, ErrorBox, Modal, Spinner } from "@/components/ui";
+import { AttachmentPreview } from "@/components/AttachmentPreview";
 import { FieldGrid, FField, IconButton, Ribbon, StatusLamp, Window } from "@/components/window";
 import {
   IconAdd,
@@ -76,6 +77,12 @@ export function TransmittalDetail() {
   const [attachmentEditForm, setAttachmentEditForm] = useState({ filename: "", kind: "pdf" as "pdf" | "native" });
   const [attachmentEditFile, setAttachmentEditFile] = useState<File | null>(null);
   const [attachmentEditError, setAttachmentEditError] = useState<string | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<Detail["attachments"][number] | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewRequestRef = useRef(0);
+  const previewUrlRef = useRef<string | null>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const nativeInputRef = useRef<HTMLInputElement>(null);
 
@@ -114,6 +121,13 @@ export function TransmittalDetail() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(
+    () => () => {
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    },
+    [],
+  );
 
   const act = async (path: string, body: unknown, confirmText?: string) => {
     if (confirmText && !window.confirm(confirmText)) return;
@@ -321,6 +335,48 @@ export function TransmittalDetail() {
       );
     } catch (err) {
       setAttachmentError(err instanceof ApiError ? err.detail : "دریافت پیوست ناموفق بود.");
+    }
+  };
+
+  const closeAttachmentPreview = () => {
+    previewRequestRef.current += 1;
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreviewAttachment(null);
+    setPreviewUrl(null);
+    setPreviewLoading(false);
+    setPreviewError(null);
+  };
+
+  const openAttachmentPreview = async (attachment: Detail["attachments"][number]) => {
+    const requestId = previewRequestRef.current + 1;
+    previewRequestRef.current = requestId;
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreviewAttachment(attachment);
+    setPreviewUrl(null);
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const url = await api.blobUrl(
+        `/transmittals/${data.id}/attachments/${attachment.id}/preview`,
+      );
+      if (previewRequestRef.current !== requestId) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      previewUrlRef.current = url;
+      setPreviewUrl(url);
+    } catch (err) {
+      if (previewRequestRef.current === requestId) {
+        setPreviewError(err instanceof ApiError ? err.detail : "نمایش پیوست ناموفق بود.");
+      }
+    } finally {
+      if (previewRequestRef.current === requestId) setPreviewLoading(false);
     }
   };
 
@@ -633,7 +689,8 @@ export function TransmittalDetail() {
                           <span className="rounded-sm border border-[#a8a284] bg-white px-1 font-bold text-[#33475b]">{attachment.kind.toUpperCase()}</span>
                           <span className="max-w-[18rem] truncate" title={attachment.filename}>{attachment.filename}</span>
                           <span className="text-[#7a8794]">{fileSize(attachment.size_bytes)}</span>
-                          <IconButton icon={<IconView />} label="دانلود پیوست" onClick={() => void downloadAttachment(attachment)} />
+                          <IconButton icon={<IconView />} label="مشاهده پیوست" onClick={() => void openAttachmentPreview(attachment)} />
+                          <IconButton icon={<IconArchive />} label="دانلود پیوست" onClick={() => void downloadAttachment(attachment)} />
                           {canManageAttachments ? (
                             <IconButton icon={<IconEdit />} label="ویرایش پیوست" onClick={() => openAttachmentEdit(attachment)} />
                           ) : null}
@@ -963,7 +1020,8 @@ export function TransmittalDetail() {
                                 <td className="cell-center">{fileSize(attachment.size_bytes)}</td>
                                 <td className="cell-center">
                                   <span className="flex items-center justify-center gap-1">
-                                    <IconButton icon={<IconView />} label="دانلود پیوست" onClick={() => void downloadAttachment(attachment)} />
+                                    <IconButton icon={<IconView />} label="مشاهده پیوست" onClick={() => void openAttachmentPreview(attachment)} />
+                                    <IconButton icon={<IconArchive />} label="دانلود پیوست" onClick={() => void downloadAttachment(attachment)} />
                                     {canManageAttachments ? <IconButton icon={<IconEdit />} label="ویرایش پیوست" disabled={busy} onClick={() => openAttachmentEdit(attachment)} /> : null}
                                     {canManageAttachments ? <IconButton icon={<IconDelete />} label="حذف پیوست" disabled={busy} onClick={() => void deleteAttachment(attachment)} /> : null}
                                   </span>
@@ -1306,6 +1364,41 @@ export function TransmittalDetail() {
           کارشناس دیسیپلین ← مدیر مهندسی. هر ارجاع تا زمانی که گیرنده پاسخ نداده «در انتظار
           پاسخ» است و برگه از کارتابل او خارج نمی‌شود.
         </p>
+      </Modal>
+
+      {/* ---------- مشاهده واقعی PDF و فایل Native ---------- */}
+      <Modal
+        open={Boolean(previewAttachment)}
+        title={previewAttachment ? `مشاهده پیوست — ${previewAttachment.filename}` : "مشاهده پیوست"}
+        onClose={closeAttachmentPreview}
+        width="max-w-5xl"
+        footer={
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[9.5px] text-[#5c6b78]">
+              فایل از انبار اسناد و با احراز هویت دریافت شده است.
+            </span>
+            <div className="flex items-center gap-2">
+              {previewAttachment ? (
+                <Button className="btn-sm" onClick={() => void downloadAttachment(previewAttachment)}>
+                  دریافت فایل
+                </Button>
+              ) : null}
+              <Button className="btn-sm" onClick={closeAttachmentPreview}>
+                بستن
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        {previewAttachment ? (
+          <AttachmentPreview
+            attachment={previewAttachment}
+            url={previewUrl}
+            loading={previewLoading}
+            error={previewError}
+            onDownload={() => void downloadAttachment(previewAttachment)}
+          />
+        ) : null}
       </Modal>
 
       {/* ---------- ویرایش/جایگزینی واقعی پیوست ---------- */}

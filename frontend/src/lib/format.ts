@@ -75,6 +75,39 @@ export const DISPOSITION_LABELS: Record<string, string> = {
   rejected: "رد‌شده (Rejected)",
 };
 
+export const DOC_STATUS_OPTIONS = [
+  {
+    value: "Approved",
+    label: "Approved",
+    description: "مدرک به طور کامل بررسی شده و مورد تأیید قرار گرفته است.",
+  },
+  {
+    value: "Commented",
+    label: "Commented",
+    description: "مدرک بررسی شده و باید طبق موارد درخواستی کارفرما اصلاح و مجدداً ارسال شود.",
+  },
+  {
+    value: "Approved As Noted",
+    label: "Approved As Noted",
+    description: "مدرک با شرط اعمال نکات درخواستی کارفرما مورد تأیید قرار می‌گیرد.",
+  },
+  {
+    value: "Reject",
+    label: "Reject",
+    description: "به دلیل ایرادات فنی عمده، مدرک کامل بررسی نشده و عودت داده می‌شود.",
+  },
+] as const;
+
+export function docStatusOption(value?: string | null) {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase().replace(/[_-]+/g, " ");
+  return (
+    DOC_STATUS_OPTIONS.find(
+      (option) => option.value.toLowerCase() === normalized || option.label.toLowerCase() === normalized,
+    ) ?? { value, label: value, description: "" }
+  );
+}
+
 export const STATUS_LABELS: Record<string, string> = {
   draft: "پیش‌نویس",
   pending_approval: "در انتظار تأیید",

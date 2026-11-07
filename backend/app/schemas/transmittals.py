@@ -23,8 +23,10 @@ class LineOut(ORMModel):
     id: uuid.UUID
     line_no: int
     revision_id: uuid.UUID
+    mdl_item_id: uuid.UUID | None = None
     action: str
     status: str
+    doc_status: str | None = None
     due_date: date | None = None
     note: str | None = None
     doc_code: str | None = None
@@ -32,6 +34,18 @@ class LineOut(ORMModel):
     rev: str | None = None
     page_count: int | None = None
     discipline_code: str | None = None
+
+
+class AttachmentOut(BaseModel):
+    id: uuid.UUID
+    line_id: uuid.UUID
+    revision_id: uuid.UUID | None = None
+    kind: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    uploaded_at: datetime
+    uploaded_by_id: uuid.UUID | None = None
 
 
 class TransmittalCreate(BaseModel):
@@ -113,6 +127,7 @@ class TransmittalDetail(TransmittalOut):
     lines: list[LineOut] = []
     recipients: list[RecipientOut] = []
     referrals: list[ReferralOut] = []
+    attachments: list[AttachmentOut] = []
     pdf_url: str | None = None
     preview_number: str | None = None
     stage: str = "draft"

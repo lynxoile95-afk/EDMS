@@ -187,6 +187,7 @@ export const api = {
     request<T>(path, { method: "PUT", body: body === undefined ? undefined : JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
   postForm: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
+  patchForm: <T>(path: string, form: FormData) => request<T>(path, { method: "PATCH", body: form }),
   /** Fetch a protected binary resource as a blob URL (used by the PDF viewer). */
   async blobUrl(path: string, retry = true): Promise<string> {
     const response = await fetch(`${BASE_URL}${path}`, {

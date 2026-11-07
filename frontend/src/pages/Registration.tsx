@@ -16,7 +16,7 @@ import type { Registration, RegistrationRow, RegistrationSettings } from "@/lib/
 import { Badge, Button, EmptyState, ErrorBox, Spinner } from "@/components/ui";
 import { SectionBar } from "@/components/ui";
 import { PdfViewer } from "@/components/PdfViewer";
-import { persianDigits, confidenceClass, PURPOSE_LABELS } from "@/lib/format";
+import { DOC_STATUS_OPTIONS, persianDigits, confidenceClass, PURPOSE_LABELS } from "@/lib/format";
 
 /* ------------------------------------------------------------------ constants */
 
@@ -25,10 +25,13 @@ const MAX_FILES = 20;
 /** The four columns the model is never allowed to fill in. */
 const STATUS_CHOICES = [
   { value: "", label: "—" },
+  ...DOC_STATUS_OPTIONS.map((option) => ({
+    value: option.value,
+    label: `${option.label} — ${option.description}`,
+  })),
   { value: "Draft", label: "در دست تهیه (Draft)" },
   { value: "For Review", label: "برای بررسی (For Review)" },
   { value: "For Approval", label: "برای تأیید (For Approval)" },
-  { value: "Approved", label: "تأییدشده (Approved)" },
   { value: "Rejected", label: "ردشده (Rejected)" },
   { value: "As-Built", label: "چون‌ساخت (As-Built)" },
   { value: "Superseded", label: "جایگزین‌شده (Superseded)" },

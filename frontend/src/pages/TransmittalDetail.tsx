@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -32,10 +33,13 @@ import { Tabs } from "@/components/Tabs";
 import {
   ACTION_LABELS,
   DISPOSITION_LABELS,
+  DOC_STATUS_OPTIONS,
   PURPOSE_LABELS,
   REFERRAL_STATUS_LABELS,
   STAGE_LABELS,
   STATUS_LABELS,
+  docStatusOption,
+  fileSize,
   jalali,
   jalaliDateTime,
   persianDigits,
@@ -61,6 +65,19 @@ export function TransmittalDetail() {
   const [referError, setReferError] = useState<string | null>(null);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [forwardForm, setForwardForm] = useState({ to_user_id: "", note: "", due_days: "7" });
+  const [flowLine, setFlowLine] = useState<TransmittalLine | null>(null);
+  const [attachmentLineId, setAttachmentLineId] = useState<string | null>(null);
+  const [attachmentKind, setAttachmentKind] = useState<"pdf" | "native">("pdf");
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [editLine, setEditLine] = useState<TransmittalLine | null>(null);
+  const [editForm, setEditForm] = useState({ title: "", status: "", reason: "" });
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editAttachment, setEditAttachment] = useState<Detail["attachments"][number] | null>(null);
+  const [attachmentEditForm, setAttachmentEditForm] = useState({ filename: "", kind: "pdf" as "pdf" | "native" });
+  const [attachmentEditFile, setAttachmentEditFile] = useState<File | null>(null);
+  const [attachmentEditError, setAttachmentEditError] = useState<string | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const nativeInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     if (!transmittalId) return;
@@ -229,6 +246,127 @@ export function TransmittalDetail() {
     }
   };
 
+  const canEditDocuments = hasRole("dcc") || hasRole("system_admin");
+  const canManageAttachments = canManage;
+
+  const openFlowForLine = (line?: TransmittalLine) => {
+    setFlowLine(line ?? null);
+    setFlowOpen(true);
+  };
+
+  const openLineEdit = (line: TransmittalLine) => {
+    setEditError(null);
+    setEditLine(line);
+    setEditForm({ title: line.title ?? "", status: line.doc_status ?? "", reason: "" });
+  };
+
+  const saveLineEdit = async () => {
+    if (!editLine?.mdl_item_id) {
+      setEditError("شناسه مدرک برای ویرایش در دسترس نیست.");
+      return;
+    }
+    setBusy(true);
+    setEditError(null);
+    try {
+      await api.patch(`/projects/${data.project_id}/mdl/items/${editLine.mdl_item_id}`, {
+        title: editForm.title.trim() || null,
+        status: editForm.status || null,
+        reason: editForm.reason.trim() || "ویرایش از فضای کاری برگه ارسال",
+      });
+      setEditLine(null);
+      await load();
+    } catch (err) {
+      setEditError(err instanceof ApiError ? err.detail : "ذخیره ویرایش مدرک ناموفق بود.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const chooseAttachment = (line: TransmittalLine, kind: "pdf" | "native") => {
+    setAttachmentError(null);
+    setAttachmentLineId(line.id);
+    setAttachmentKind(kind);
+    if (kind === "pdf") pdfInputRef.current?.click();
+    else nativeInputRef.current?.click();
+  };
+
+  const uploadAttachment = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    const lineId = attachmentLineId;
+    const kind = attachmentKind;
+    event.target.value = "";
+    if (!file || !lineId) return;
+    setBusy(true);
+    setAttachmentError(null);
+    try {
+      const form = new FormData();
+      form.append("line_id", lineId);
+      form.append("kind", kind);
+      form.append("file", file);
+      await api.postForm(`/transmittals/${data.id}/attachments`, form);
+      await load();
+    } catch (err) {
+      setAttachmentError(err instanceof ApiError ? err.detail : "بارگذاری پیوست ناموفق بود.");
+    } finally {
+      setBusy(false);
+      setAttachmentLineId(null);
+    }
+  };
+
+  const downloadAttachment = async (attachment: Detail["attachments"][number]) => {
+    try {
+      await api.download(
+        `/transmittals/${data.id}/attachments/${attachment.id}/download`,
+        attachment.filename,
+      );
+    } catch (err) {
+      setAttachmentError(err instanceof ApiError ? err.detail : "دریافت پیوست ناموفق بود.");
+    }
+  };
+
+  const deleteAttachment = async (attachment: Detail["attachments"][number]) => {
+    if (!window.confirm(`پیوست «${attachment.filename}» حذف شود؟`)) return;
+    setBusy(true);
+    setAttachmentError(null);
+    try {
+      await api.delete(`/transmittals/${data.id}/attachments/${attachment.id}`);
+      await load();
+    } catch (err) {
+      setAttachmentError(err instanceof ApiError ? err.detail : "حذف پیوست ناموفق بود.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openAttachmentEdit = (attachment: Detail["attachments"][number]) => {
+    setAttachmentEditError(null);
+    setEditAttachment(attachment);
+    setAttachmentEditForm({ filename: attachment.filename, kind: attachment.kind });
+    setAttachmentEditFile(null);
+  };
+
+  const saveAttachmentEdit = async () => {
+    if (!editAttachment) return;
+    setBusy(true);
+    setAttachmentEditError(null);
+    try {
+      const form = new FormData();
+      form.append("filename", attachmentEditForm.filename.trim());
+      form.append("kind", attachmentEditForm.kind);
+      if (attachmentEditFile) form.append("file", attachmentEditFile);
+      await api.patchForm(
+        `/transmittals/${data.id}/attachments/${editAttachment.id}`,
+        form,
+      );
+      setEditAttachment(null);
+      await load();
+    } catch (err) {
+      setAttachmentEditError(err instanceof ApiError ? err.detail : "ویرایش پیوست ناموفق بود.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const disciplinesWithEngineer = members.filter(
     (member) => member.role === "reviewer" && member.discipline_id,
   );
@@ -321,21 +459,36 @@ export function TransmittalDetail() {
           </FField>
         </FieldGrid>
 
-        {/* attachment row of the reference workspace */}
-        <div className="mt-1 flex flex-wrap items-center gap-3 border border-[#a8a284] bg-white px-2 py-1">
-          <span className="flex items-center gap-1 text-[10px] text-[#1f3864]">
-            <IconPaperclip className="h-4 w-4" /> Add Attachment From Parzin
-            <span className="text-[9px] text-[#8a97a3]">(فاز ۲)</span>
+        {/* Real attachment controls; the hidden inputs keep the classic compact toolbar. */}
+        <div className="mt-1 flex flex-wrap items-center gap-2 border border-[#a8a284] bg-white px-2 py-1">
+          <span className="flex items-center gap-1 text-[10px] font-bold text-[#1f3864]">
+            <IconPaperclip className="h-4 w-4" /> پیوست‌های مدرک / Document Attachments
           </span>
-          <span className="flex items-center gap-1 text-[10px] text-[#1f3864]">
-            <IconDoc className="h-4 w-4" /> Attachment List ({persianDigits(data.line_count)})
+          <span className="text-[9.5px] text-[#5c6b78]">
+            {persianDigits((data.attachments ?? []).length)} فایل برای {persianDigits(data.line_count)} مدرک
           </span>
-          <span className="flex items-center gap-1 text-[10px] text-[#1f3864]">
-            <IconArchive className="h-4 w-4" /> Native Files Access
-          </span>
-          <span className="flex items-center gap-1 text-[10px] text-[#1f3864]">
-            <IconEdit className="h-4 w-4" /> Manage Doc. Attachments
-          </span>
+          <span className="flex-1" />
+          <button
+            type="button"
+            className="flex items-center gap-1 border border-[#8fa2b4] bg-[#eef3f8] px-1.5 py-0.5 text-[10px] font-bold text-[#1f3864] disabled:opacity-50"
+            disabled={!canManageAttachments || busy || data.lines.length === 0}
+            onClick={() => data.lines[0] && chooseAttachment(data.lines[0], "pdf")}
+            title="ابتدا مدرک را از فهرست پیوست‌ها انتخاب کنید؛ این دکمه برای مدرک اول است"
+          >
+            <IconPaperclip className="h-3.5 w-3.5" /> PDF
+          </button>
+          <button
+            type="button"
+            className="flex items-center gap-1 border border-[#8fa2b4] bg-[#eef3f8] px-1.5 py-0.5 text-[10px] font-bold text-[#1f3864] disabled:opacity-50"
+            disabled={!canManageAttachments || busy || data.lines.length === 0}
+            onClick={() => data.lines[0] && chooseAttachment(data.lines[0], "native")}
+            title="ابتدا مدرک را از فهرست پیوست‌ها انتخاب کنید؛ این دکمه برای مدرک اول است"
+          >
+            <IconArchive className="h-3.5 w-3.5" /> Native
+          </button>
+          <span className="text-[9px] text-[#8a97a3]">از دکمه‌های هر ردیف برای انتخاب مدرک دقیق استفاده کنید.</span>
+          <input ref={pdfInputRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(event) => void uploadAttachment(event)} />
+          <input ref={nativeInputRef} type="file" className="hidden" onChange={(event) => void uploadAttachment(event)} />
         </div>
 
         {/* documents grid — the columns printed by the reference system */}
@@ -358,6 +511,7 @@ export function TransmittalDetail() {
                 <th style={{ width: 74 }} className="cell-center">Assign To</th>
                 <th style={{ width: 62 }} className="cell-center">Flow History</th>
                 <th style={{ width: 48 }} className="cell-center">View</th>
+                <th style={{ width: 48 }} className="cell-center">Edit</th>
               </tr>
             </thead>
             <tbody>
@@ -374,9 +528,22 @@ export function TransmittalDetail() {
                   <td className="text-center">{line.discipline_code ?? "—"}</td>
                   <td className="cell-center">{line.rev ?? "—"}</td>
                   <td className="cell-center">{data.purpose}</td>
-                  <td className="text-center">{STATUS_LABELS[line.status] ?? line.status}</td>
+                  <td className="text-center" title={docStatusOption(line.doc_status)?.description ?? ""}>
+                    {docStatusOption(line.doc_status) ? (
+                      <span className="block">
+                        <span className="font-bold">{docStatusOption(line.doc_status)?.label}</span>
+                        {docStatusOption(line.doc_status)?.description ? (
+                          <span className="mt-0.5 block text-[8px] leading-3 text-[#5c6b78]">
+                            {docStatusOption(line.doc_status)?.description}
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   <td className="cell-center">—</td>
-                  <td className="text-center">{line.status === "issued" ? "Approved" : "In Review"}</td>
+                  <td className="text-center">{STATUS_LABELS[line.status] ?? line.status}</td>
                   <td className="text-center">Normal</td>
                   <td className="cell-center">
                     <Link to={`/documents/${line.revision_id}/comments`} aria-label="Comment List">
@@ -393,8 +560,8 @@ export function TransmittalDetail() {
                     <IconButton
                       icon={<IconFlow />}
                       label="گردش مدرک"
-                      disabled={(data.referrals ?? []).length === 0}
-                      onClick={() => setFlowOpen(true)}
+                      disabled={busy}
+                      onClick={() => openFlowForLine(line)}
                     />
                   </td>
                   <td className="cell-center">
@@ -409,10 +576,79 @@ export function TransmittalDetail() {
                       }
                     />
                   </td>
+                  <td className="cell-center">
+                    <IconButton
+                      icon={<IconEdit />}
+                      label="ویرایش مدرک و وضعیت"
+                      disabled={!canEditDocuments || !line.mdl_item_id || busy}
+                      onClick={() => openLineEdit(line)}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+
+        <div className="mt-1 border border-[#a8a284] bg-white">
+          <div className="flex items-center justify-between border-b border-[#a8a284] bg-[#eef3f8] px-2 py-1">
+            <span className="flex items-center gap-1 text-[10.5px] font-bold text-[#1f3864]">
+              <IconDoc className="h-3.5 w-3.5" /> Attachment List — فهرست و مدیریت پیوست‌ها
+            </span>
+            <span className="text-[9px] text-[#5c6b78]">PDF و فایل Native با احراز هویت دریافت می‌شوند.</span>
+          </div>
+          <div className="max-h-[25vh] overflow-auto">
+            {data.lines.map((line) => {
+              const lineAttachments = (data.attachments ?? []).filter((attachment) => attachment.line_id === line.id);
+              return (
+                <div key={line.id} className="flex flex-wrap items-center gap-2 border-b border-[#e6e1c8] px-2 py-1 last:border-b-0">
+                  <div className="min-w-[15rem] flex-1">
+                    <span className="ltr font-bold text-[#17427a]">{line.doc_code ?? "—"}</span>
+                    <span className="mx-1 text-[#8a97a3]">—</span>
+                    <span className="text-[10px]">{line.title ?? "بدون عنوان"}</span>
+                    <span className="mx-1 text-[9px] text-[#5c6b78]">({persianDigits(lineAttachments.length)} پیوست)</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 border border-[#8fa2b4] bg-[#f7f8f2] px-1.5 py-0.5 text-[9.5px] font-bold text-[#1f3864] disabled:opacity-50"
+                    disabled={!canManageAttachments || busy}
+                    onClick={() => chooseAttachment(line, "pdf")}
+                  >
+                    <IconPaperclip className="h-3 w-3" /> افزودن PDF
+                  </button>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 border border-[#8fa2b4] bg-[#f7f8f2] px-1.5 py-0.5 text-[9.5px] font-bold text-[#1f3864] disabled:opacity-50"
+                    disabled={!canManageAttachments || busy}
+                    onClick={() => chooseAttachment(line, "native")}
+                  >
+                    <IconArchive className="h-3 w-3" /> افزودن Native
+                  </button>
+                  {lineAttachments.length === 0 ? (
+                    <span className="text-[9.5px] text-[#8a97a3]">پیوستی ثبت نشده است.</span>
+                  ) : (
+                    <div className="flex min-w-full flex-wrap items-center gap-1 border-t border-dashed border-[#d4ceb0] pt-1">
+                      {lineAttachments.map((attachment) => (
+                        <div key={attachment.id} className="flex items-center gap-1 border border-[#b9c5cf] bg-[#fbfaf2] px-1 py-0.5 text-[9.5px]">
+                          <span className="rounded-sm border border-[#a8a284] bg-white px-1 font-bold text-[#33475b]">{attachment.kind.toUpperCase()}</span>
+                          <span className="max-w-[18rem] truncate" title={attachment.filename}>{attachment.filename}</span>
+                          <span className="text-[#7a8794]">{fileSize(attachment.size_bytes)}</span>
+                          <IconButton icon={<IconView />} label="دانلود پیوست" onClick={() => void downloadAttachment(attachment)} />
+                          {canManageAttachments ? (
+                            <IconButton icon={<IconEdit />} label="ویرایش پیوست" onClick={() => openAttachmentEdit(attachment)} />
+                          ) : null}
+                          {canManageAttachments ? (
+                            <IconButton icon={<IconDelete />} label="حذف پیوست" disabled={busy} onClick={() => void deleteAttachment(attachment)} />
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {attachmentError ? <div className="border-t border-[#c98a86] bg-[#fdeeee] px-2 py-1 text-[10px] text-[#8a2b25]">{attachmentError}</div> : null}
         </div>
 
         {/* the window's ribbon: only actions that really exist are enabled */}
@@ -466,8 +702,8 @@ export function TransmittalDetail() {
             {
               label: "گردش مدرک",
               icon: <IconFlow />,
-              disabled: (data.referrals ?? []).length === 0,
-              onClick: () => setFlowOpen(true),
+              disabled: busy,
+              onClick: () => openFlowForLine(),
             },
             {
               label: "یادآوری",
@@ -600,8 +836,8 @@ export function TransmittalDetail() {
                     <button
                       type="button"
                       className="flex items-center gap-1 text-[10px] font-bold text-[#1f4e79] hover:underline disabled:text-[#8a97a3]"
-                      disabled={(data.referrals ?? []).length === 0}
-                      onClick={() => setFlowOpen(true)}
+                      disabled={busy}
+                      onClick={() => openFlowForLine()}
                     >
                       <IconFlow className="h-3.5 w-3.5" /> Show All Flow History
                       {persianDigits((data.referrals ?? []).length)}
@@ -701,8 +937,46 @@ export function TransmittalDetail() {
                       ))}
                     </tbody>
                   </table>
+                  <div className="mt-1 border-t border-[#a8a284]">
+                    <div className="bg-[#fbfaf2] px-2 py-1 text-[10px] font-bold text-[#1f3864]">پیوست‌های ثبت‌شده برای هر مدرک</div>
+                    <table className="table-base">
+                      <thead>
+                        <tr>
+                          <th style={{ width: 130 }}>Doc. No.</th>
+                          <th>Filename</th>
+                          <th style={{ width: 74 }}>Type</th>
+                          <th style={{ width: 82 }}>Size</th>
+                          <th style={{ width: 92 }} className="cell-center">Operations</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(data.attachments ?? []).length === 0 ? (
+                          <tr><td colSpan={5} className="cell-center text-[10px] text-[#5c6b78]">پیوست PDF یا Native ثبت نشده است.</td></tr>
+                        ) : (
+                          (data.attachments ?? []).map((attachment) => {
+                            const line = data.lines.find((item) => item.id === attachment.line_id);
+                            return (
+                              <tr key={attachment.id}>
+                                <td className="ltr font-bold">{line?.doc_code ?? "—"}</td>
+                                <td className="truncate" title={attachment.filename}>{attachment.filename}</td>
+                                <td className="cell-center">{attachment.kind.toUpperCase()}</td>
+                                <td className="cell-center">{fileSize(attachment.size_bytes)}</td>
+                                <td className="cell-center">
+                                  <span className="flex items-center justify-center gap-1">
+                                    <IconButton icon={<IconView />} label="دانلود پیوست" onClick={() => void downloadAttachment(attachment)} />
+                                    {canManageAttachments ? <IconButton icon={<IconEdit />} label="ویرایش پیوست" disabled={busy} onClick={() => openAttachmentEdit(attachment)} /> : null}
+                                    {canManageAttachments ? <IconButton icon={<IconDelete />} label="حذف پیوست" disabled={busy} onClick={() => void deleteAttachment(attachment)} /> : null}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                   <p className="px-2 py-1 text-[9.5px] text-[#5c6b78]">
-                    فایل اصلی (Native File) هر خط از انبار اسناد و با احراز هویت دریافت می‌شود؛ SDC/DWG در فاز ۲.
+                    فایل اصلی PDF هر خط و فایل‌های Native پیوست‌شده از انبار اسناد و با احراز هویت دریافت می‌شوند.
                   </p>
                 </div>
               ),
@@ -959,8 +1233,8 @@ export function TransmittalDetail() {
       {/* ---------- گردش مدرک — the full referral history ---------- */}
       <Modal
         open={flowOpen}
-        title="گردش مدرک — Flow History"
-        onClose={() => setFlowOpen(false)}
+        title={`گردش مدرک — ${flowLine?.doc_code ?? data.number ?? "برگه ارسال"} — Flow History`}
+        onClose={() => { setFlowOpen(false); setFlowLine(null); }}
         width="max-w-4xl"
         footer={
           <div className="flex items-center justify-between">
@@ -973,6 +1247,13 @@ export function TransmittalDetail() {
           </div>
         }
       >
+        <div className="mb-1 border border-[#a8a284] bg-[#fffdf3] px-2 py-1 text-[10px] leading-5 text-[#3b4b57]">
+          <span className="font-bold text-[#1f3864]">مدرک منتخب:</span>{" "}
+          <span className="ltr font-bold">{flowLine?.doc_code ?? "—"}</span>{" "}
+          <span>{flowLine?.title ?? "گردش کامل برگه ارسال"}</span>
+          <span className="mx-1 text-[#7a8794]">·</span>
+          <span>تاریخچه ارجاع‌های همین برگه ارسال در زیر نمایش داده می‌شود.</span>
+        </div>
         <table className="table-base">
           <thead>
             <tr>
@@ -1025,6 +1306,123 @@ export function TransmittalDetail() {
           کارشناس دیسیپلین ← مدیر مهندسی. هر ارجاع تا زمانی که گیرنده پاسخ نداده «در انتظار
           پاسخ» است و برگه از کارتابل او خارج نمی‌شود.
         </p>
+      </Modal>
+
+      {/* ---------- ویرایش/جایگزینی واقعی پیوست ---------- */}
+      <Modal
+        open={Boolean(editAttachment)}
+        title="ویرایش پیوست — Attachment Edit"
+        onClose={() => setEditAttachment(null)}
+        width="max-w-xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button className="btn-sm" onClick={() => setEditAttachment(null)}>
+              انصراف
+            </Button>
+            <Button className="btn-sm btn-primary" disabled={busy || !canManageAttachments} onClick={() => void saveAttachmentEdit()}>
+              ذخیره پیوست
+            </Button>
+          </div>
+        }
+      >
+        {attachmentEditError ? <ErrorBox message={attachmentEditError} /> : null}
+        {editAttachment ? (
+          <FieldGrid>
+            <FField label="نام فایل:" full>
+              <input
+                className="input ltr"
+                value={attachmentEditForm.filename}
+                onChange={(event) => setAttachmentEditForm({ ...attachmentEditForm, filename: event.target.value })}
+              />
+            </FField>
+            <FField label="نوع پیوست:">
+              <select
+                className="input"
+                value={attachmentEditForm.kind}
+                onChange={(event) => setAttachmentEditForm({ ...attachmentEditForm, kind: event.target.value as "pdf" | "native" })}
+              >
+                <option value="pdf">PDF</option>
+                <option value="native">Native</option>
+              </select>
+            </FField>
+            <FField label="جایگزینی فایل:" full>
+              <input
+                className="input"
+                type="file"
+                accept={attachmentEditForm.kind === "pdf" ? "application/pdf,.pdf" : undefined}
+                onChange={(event) => setAttachmentEditFile(event.target.files?.[0] ?? null)}
+              />
+              <span className="mt-0.5 block text-[9.5px] leading-5 text-[#5c6b78]">
+                در صورت انتخاب فایل، bytes قبلی در انبار ذخیره‌سازی با نسخه جدید جایگزین می‌شود؛ بدون فایل فقط نام پیوست قابل تغییر است و تغییر نوع نیازمند فایل معتبر جدید است.
+              </span>
+            </FField>
+          </FieldGrid>
+        ) : null}
+      </Modal>
+
+      {/* ---------- ویرایش واقعی ردیف MDL از فضای کاری مدرک ---------- */}
+      <Modal
+        open={Boolean(editLine)}
+        title="ویرایش مدرک — Document Edit"
+        onClose={() => setEditLine(null)}
+        width="max-w-2xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button className="btn-sm" onClick={() => setEditLine(null)}>
+              انصراف
+            </Button>
+            <Button className="btn-sm btn-primary" disabled={busy || !canEditDocuments} onClick={() => void saveLineEdit()}>
+              ذخیره و بازخوانی
+            </Button>
+          </div>
+        }
+      >
+        {editError ? <ErrorBox message={editError} /> : null}
+        {editLine ? (
+          <FieldGrid>
+            <FField label="Doc. No.:">
+              <span className="ltr font-bold text-[#17427a]">{editLine.doc_code ?? "—"}</span>
+            </FField>
+            <FField label="Revision:">
+              <span className="ltr">{editLine.rev ?? "—"}</span>
+            </FField>
+            <FField label="Doc. Title:" full>
+              <input
+                className="input"
+                value={editForm.title}
+                onChange={(event) => setEditForm({ ...editForm, title: event.target.value })}
+              />
+            </FField>
+            <FField label="Doc. Status:" full>
+              <select
+                className="input"
+                value={editForm.status}
+                onChange={(event) => setEditForm({ ...editForm, status: event.target.value })}
+              >
+                <option value="">— بدون وضعیت —</option>
+                {editForm.status && !DOC_STATUS_OPTIONS.some((option) => option.value === editForm.status) ? (
+                  <option value={editForm.status}>{editForm.status}</option>
+                ) : null}
+                {DOC_STATUS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value} title={option.description}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-0.5 block text-[9.5px] leading-5 text-[#5c6b78]">
+                Approved: تأیید کامل · Commented: اصلاح و ارسال مجدد · Approved As Noted: تأیید مشروط · Reject: عودت به دلیل ایراد عمده
+              </span>
+            </FField>
+            <FField label="دلیل ویرایش:" full>
+              <input
+                className="input"
+                value={editForm.reason}
+                placeholder="برای ثبت در تاریخچه و ممیزی"
+                onChange={(event) => setEditForm({ ...editForm, reason: event.target.value })}
+              />
+            </FField>
+          </FieldGrid>
+        ) : null}
       </Modal>
 
       {/* ---------- ارجاع به دیسیپلین (مدیر مهندسی) ---------- */}

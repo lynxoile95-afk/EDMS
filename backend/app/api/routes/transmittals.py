@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
+import mimetypes
+import os
+import tempfile
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlalchemy import and_, func, or_, select
 
 from app.api.deps import CurrentUser, DbSession, ProjectDep
+from app.core.config import settings
 from app.models import (
     DocumentRevision,
+    ExtractionResult,
     Project,
     Transmittal,
     TransmittalLine,
     TransmittalRecipient,
-    User,
 )
 from app.models.enums import ProjectRole, TransmittalStatus, TransmittalType
 from app.schemas.transmittals import (
@@ -28,6 +33,7 @@ from app.schemas.transmittals import (
     LineOut,
     RecipientOut,
     ReferRequest,
+    AttachmentOut,
     ReferralOut,
     TransmittalCreate,
     TransmittalDetail,
@@ -35,7 +41,7 @@ from app.schemas.transmittals import (
 )
 from app.services import acl, audit, notification, numbering, routing, transmittal_service
 from app.services.project_settings import merge_settings
-from app.services.storage import get_storage
+from app.services.storage import build_key, get_storage
 from app.utils.jalali import format_jalali
 
 router = APIRouter(tags=["transmittals"])
@@ -97,15 +103,48 @@ def _referral_out(referral) -> ReferralOut:
     )
 
 
+def _attachment_out(raw: dict) -> AttachmentOut:
+    return AttachmentOut(
+        id=raw["id"],
+        line_id=raw["line_id"],
+        revision_id=raw.get("revision_id"),
+        kind=raw["kind"],
+        filename=raw["filename"],
+        content_type=raw.get("content_type") or "application/octet-stream",
+        size_bytes=int(raw.get("size_bytes") or 0),
+        uploaded_at=raw["uploaded_at"],
+        uploaded_by_id=raw.get("uploaded_by_id"),
+    )
+
+
 def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
     base = _out(transmittal)
+    result_ids = {
+        line.revision.extraction_result_id
+        for line in transmittal.lines
+        if line.revision is not None and line.revision.extraction_result_id is not None
+    }
+    result_statuses = {
+        result.id: result.doc_status
+        for result in db.execute(
+            select(ExtractionResult).where(ExtractionResult.id.in_(result_ids))
+        ).scalars()
+    } if result_ids else {}
     lines = [
         LineOut(
             id=line.id,
             line_no=line.line_no,
             revision_id=line.revision_id,
+            mdl_item_id=line.revision.mdl_item.id if line.revision and line.revision.mdl_item else None,
             action=str(line.action),
             status=str(line.status),
+            doc_status=(
+                line.revision.mdl_item.status
+                if line.revision and line.revision.mdl_item and line.revision.mdl_item.status
+                else result_statuses.get(line.revision.extraction_result_id)
+                if line.revision and line.revision.extraction_result_id
+                else None
+            ),
             due_date=line.due_date,
             note=line.note,
             doc_code=line.revision.mdl_item.doc_code if line.revision else None,
@@ -145,6 +184,7 @@ def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
         lines=lines,
         recipients=recipients,
         referrals=[_referral_out(item) for item in transmittal.referrals],
+        attachments=[_attachment_out(item) for item in (transmittal.meta or {}).get("attachments", [])],
         pdf_url=pdf_url,
         preview_number=None if transmittal.number else preview,
         stage_label=routing.STAGE_LABELS.get(str(transmittal.stage)),
@@ -386,6 +426,330 @@ def get_transmittal(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser)
     return _detail(db, transmittal)
 
 
+@router.post(
+    "/transmittals/{transmittal_id}/attachments",
+    status_code=201,
+    summary="پیوست PDF یا فایل Native به مدرک",
+)
+async def upload_attachment(
+    transmittal_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    line_id: uuid.UUID = Form(...),
+    kind: str = Form(..., description="pdf یا native"),
+    file: UploadFile = File(...),
+) -> dict:
+    """Store a document attachment beside the transmittal line.
+
+    Attachments intentionally live in the transmittal metadata because they are
+    supplementary files, not registered PDF revisions. The actual bytes still go
+    through the configured local/S3 storage abstraction and every operation is
+    audited.
+    """
+    if kind not in {"pdf", "native"}:
+        raise HTTPException(status_code=422, detail="نوع پیوست باید pdf یا native باشد.")
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    project = acl.require_project(
+        db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
+    )
+    line = db.get(TransmittalLine, line_id)
+    if line is None or line.transmittal_id != transmittal.id:
+        raise HTTPException(status_code=404, detail="ردیف مدرک این برگه ارسال یافت نشد.")
+
+    filename = os.path.basename((file.filename or "attachment").strip())[:500] or "attachment"
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    digest = hashlib.sha256()
+    size = 0
+    head = b""
+    suffix = os.path.splitext(filename)[1] or ".bin"
+    temp_path = ""
+    storage_key = ""
+    try:
+        with tempfile.NamedTemporaryFile(prefix="edms-attachment-", suffix=suffix, delete=False) as temp:
+            temp_path = temp.name
+            while chunk := await file.read(1024 * 1024):
+                if not head:
+                    head = chunk[:8]
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"حجم فایل بیشتر از حد مجاز ({settings.max_upload_mb} مگابایت) است.",
+                    )
+                digest.update(chunk)
+                temp.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=422, detail="فایل پیوست خالی است.")
+        if kind == "pdf" and not head.startswith(b"%PDF-"):
+            raise HTTPException(status_code=422, detail="پیوست PDF معتبر نیست.")
+
+        attachment_id = uuid.uuid4()
+        storage_key = build_key(
+            project.code,
+            "transmittals",
+            str(transmittal.id),
+            "attachments",
+            f"{attachment_id}{suffix.lower()}",
+        )
+        content_type = file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        get_storage().put_file(storage_key, temp_path, content_type=content_type)
+        attachment = {
+            "id": str(attachment_id),
+            "line_id": str(line.id),
+            "revision_id": str(line.revision_id),
+            "kind": kind,
+            "filename": filename,
+            "content_type": content_type,
+            "size_bytes": size,
+            "sha256": digest.hexdigest(),
+            "storage_key": storage_key,
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "uploaded_by_id": str(user.id),
+        }
+        meta = dict(transmittal.meta or {})
+        attachments = list(meta.get("attachments") or [])
+        attachments.append(attachment)
+        transmittal.meta = {**meta, "attachments": attachments}
+        audit.record(
+            db,
+            action="transmittal.attachment.upload",
+            entity_type="transmittal",
+            entity_id=transmittal.id,
+            actor=user,
+            project_id=project.id,
+            after={"attachment_id": str(attachment_id), "line_id": str(line.id), "kind": kind, "filename": filename},
+        )
+        db.commit()
+        return {"attachment": _attachment_out(attachment).model_dump(mode="json")}
+    except HTTPException:
+        db.rollback()
+        if storage_key:
+            try:
+                get_storage().delete(storage_key)
+            except Exception:
+                pass
+        raise
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        if storage_key:
+            try:
+                get_storage().delete(storage_key)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"ذخیره پیوست ناموفق بود: {exc}") from exc
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+@router.get(
+    "/transmittals/{transmittal_id}/attachments/{attachment_id}/download",
+    summary="دریافت پیوست مدرک",
+)
+def download_attachment(
+    transmittal_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+):
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_project(db, user, transmittal.project_id)
+    attachment = next(
+        (item for item in (transmittal.meta or {}).get("attachments", []) if str(item.get("id")) == str(attachment_id)),
+        None,
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    audit.record(
+        db,
+        action="transmittal.attachment.download",
+        entity_type="transmittal",
+        entity_id=transmittal.id,
+        actor=user,
+        project_id=transmittal.project_id,
+        after={"attachment_id": str(attachment_id)},
+    )
+    db.commit()
+    return RedirectResponse(
+        url=get_storage().presigned_url(
+            attachment["storage_key"],
+            filename=attachment.get("filename"),
+            expires_seconds=settings.download_link_ttl_seconds,
+        ),
+        status_code=302,
+    )
+
+
+@router.patch(
+    "/transmittals/{transmittal_id}/attachments/{attachment_id}",
+    response_model=AttachmentOut,
+    summary="ویرایش نام یا جایگزینی پیوست مدرک",
+)
+async def update_attachment(
+    transmittal_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    filename: str = Form(...),
+    kind: str = Form(..., description="pdf یا native"),
+    file: UploadFile | None = File(None),
+) -> AttachmentOut:
+    """Rename an attachment or replace its bytes without losing its audit identity."""
+    if kind not in {"pdf", "native"}:
+        raise HTTPException(status_code=422, detail="نوع پیوست باید pdf یا native باشد.")
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    project = acl.require_project(
+        db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
+    )
+    attachments = list((transmittal.meta or {}).get("attachments") or [])
+    attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+
+    safe_filename = os.path.basename(filename.strip())[:500]
+    if not safe_filename:
+        raise HTTPException(status_code=422, detail="نام فایل پیوست نمی‌تواند خالی باشد.")
+    if file is None and kind != attachment.get("kind"):
+        raise HTTPException(status_code=422, detail="برای تغییر نوع پیوست، فایل جدید همان نوع را انتخاب کنید.")
+    old_storage_key = attachment.get("storage_key")
+    temp_path = ""
+    new_storage_key = old_storage_key
+    new_size = int(attachment.get("size_bytes") or 0)
+    new_sha256 = attachment.get("sha256")
+    new_content_type = attachment.get("content_type") or "application/octet-stream"
+    try:
+        if file is not None:
+            max_bytes = settings.max_upload_mb * 1024 * 1024
+            digest = hashlib.sha256()
+            size = 0
+            head = b""
+            suffix = os.path.splitext(safe_filename)[1] or ".bin"
+            with tempfile.NamedTemporaryFile(prefix="edms-attachment-replace-", suffix=suffix, delete=False) as temp:
+                temp_path = temp.name
+                while chunk := await file.read(1024 * 1024):
+                    if not head:
+                        head = chunk[:8]
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"حجم فایل بیشتر از حد مجاز ({settings.max_upload_mb} مگابایت) است.",
+                        )
+                    digest.update(chunk)
+                    temp.write(chunk)
+            if size == 0:
+                raise HTTPException(status_code=422, detail="فایل پیوست خالی است.")
+            if kind == "pdf" and not head.startswith(b"%PDF-"):
+                raise HTTPException(status_code=422, detail="پیوست PDF معتبر نیست.")
+            new_storage_key = build_key(
+                project.code,
+                "transmittals",
+                str(transmittal.id),
+                "attachments",
+                f"{attachment_id}-{uuid.uuid4()}{suffix.lower()}",
+            )
+            new_content_type = file.content_type or mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
+            get_storage().put_file(new_storage_key, temp_path, content_type=new_content_type)
+            new_size = size
+            new_sha256 = digest.hexdigest()
+
+        updated = {
+            **attachment,
+            "filename": safe_filename,
+            "kind": kind,
+            "content_type": new_content_type,
+            "size_bytes": new_size,
+            "sha256": new_sha256,
+            "storage_key": new_storage_key,
+        }
+        meta = dict(transmittal.meta or {})
+        meta["attachments"] = [updated if str(item.get("id")) == str(attachment_id) else item for item in attachments]
+        transmittal.meta = meta
+        audit.record(
+            db,
+            action="transmittal.attachment.update",
+            entity_type="transmittal",
+            entity_id=transmittal.id,
+            actor=user,
+            project_id=project.id,
+            before={"attachment_id": str(attachment_id), "filename": attachment.get("filename"), "kind": attachment.get("kind")},
+            after={"attachment_id": str(attachment_id), "filename": safe_filename, "kind": kind, "replaced": file is not None},
+        )
+        db.commit()
+        if file is not None and old_storage_key and old_storage_key != new_storage_key:
+            try:
+                get_storage().delete(old_storage_key)
+            except Exception:
+                pass
+        return _attachment_out(updated)
+    except HTTPException:
+        db.rollback()
+        if new_storage_key != old_storage_key:
+            try:
+                get_storage().delete(new_storage_key)
+            except Exception:
+                pass
+        raise
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        if new_storage_key != old_storage_key:
+            try:
+                get_storage().delete(new_storage_key)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"ویرایش پیوست ناموفق بود: {exc}") from exc
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+@router.delete(
+    "/transmittals/{transmittal_id}/attachments/{attachment_id}",
+    response_model=TransmittalDetail,
+    summary="حذف پیوست مدرک",
+)
+def delete_attachment(
+    transmittal_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_project(db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN])
+    attachments = list((transmittal.meta or {}).get("attachments") or [])
+    attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    try:
+        get_storage().delete(attachment["storage_key"])
+    except Exception:
+        # The DB metadata is still removed; a missing object must not block cleanup.
+        pass
+    meta = dict(transmittal.meta or {})
+    meta["attachments"] = [item for item in attachments if str(item.get("id")) != str(attachment_id)]
+    transmittal.meta = meta
+    audit.record(
+        db,
+        action="transmittal.attachment.delete",
+        entity_type="transmittal",
+        entity_id=transmittal.id,
+        actor=user,
+        project_id=transmittal.project_id,
+        before={"attachment_id": str(attachment_id), "filename": attachment.get("filename")},
+    )
+    db.commit()
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
 @router.delete(
     "/transmittals/{transmittal_id}",
     status_code=204,
@@ -451,7 +815,7 @@ def issue_transmittal(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    project = acl.require_project(db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
     if payload.remarks:
         transmittal.remarks = payload.remarks
     try:

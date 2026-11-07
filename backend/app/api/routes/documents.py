@@ -5,10 +5,10 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
-from app.models import DocumentRevision, MDLItem, Transmittal, TransmittalLine
+from app.models import DocumentRevision, ExtractionResult, MDLItem, Transmittal, TransmittalLine
 from app.schemas.transmittals import LineOut
 from app.services import acl, documents as document_service
 from app.utils.jalali import format_jalali
@@ -40,6 +40,7 @@ def get_revision(revision_id: uuid.UUID, db: DbSession, user: CurrentUser) -> di
             "discipline": item.discipline.code if item and item.discipline else None,
             "unit": item.unit.code if item and item.unit else None,
             "doc_type": item.doc_type if item else None,
+            "doc_status": item.status if item else None,
         }
         if item
         else None,
@@ -79,13 +80,19 @@ def revision_transmittals(revision_id: uuid.UUID, db: DbSession, user: CurrentUs
     lines = db.execute(
         select(TransmittalLine).where(TransmittalLine.revision_id == revision_id)
     ).scalars()
+    extraction_status = None
+    if revision.extraction_result_id:
+        extraction = db.get(ExtractionResult, revision.extraction_result_id)
+        extraction_status = extraction.doc_status if extraction else None
     return [
         LineOut(
             id=line.id,
             line_no=line.line_no,
             revision_id=line.revision_id,
+            mdl_item_id=revision.mdl_item.id if revision.mdl_item else None,
             action=str(line.action),
             status=str(line.status),
+            doc_status=(revision.mdl_item.status if revision.mdl_item and revision.mdl_item.status else extraction_status),
             due_date=line.due_date,
             note=line.note,
             doc_code=revision.mdl_item.doc_code if revision.mdl_item else None,

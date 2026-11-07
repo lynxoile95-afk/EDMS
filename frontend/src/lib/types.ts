@@ -306,10 +306,12 @@ export interface TransmittalLine {
   id: string;
   line_no: number;
   revision_id: string;
+  mdl_item_id?: string | null;
   /** Present on rows returned by /revisions/{id}/transmittals. */
   transmittal_id?: string;
   action: string;
   status: string;
+  doc_status?: string | null;
   due_date: string | null;
   note: string | null;
   doc_code: string | null;
@@ -329,10 +331,23 @@ export interface TransmittalRecipient {
   email: string | null;
 }
 
+export interface DocumentAttachment {
+  id: string;
+  line_id: string;
+  revision_id: string | null;
+  kind: "pdf" | "native";
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  uploaded_at: string;
+  uploaded_by_id: string | null;
+}
+
 export interface TransmittalDetail extends Transmittal {
   lines: TransmittalLine[];
   recipients: TransmittalRecipient[];
   referrals: TransmittalReferral[];
+  attachments: DocumentAttachment[];
   pdf_url: string | null;
   preview_number: string | null;
   stage: TransmittalStage;

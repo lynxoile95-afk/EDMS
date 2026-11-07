@@ -45,7 +45,6 @@ from app.models.enums import (
     TransmittalStatus,
     TransmittalType,
     UploadStatus,
-    FileStatus,
 )
 from app.services import acl, audit
 from app.services.metadata_extraction import ExtractionOutcome, extract_metadata
@@ -468,8 +467,12 @@ def save_rows(
         if row.title:
             mdl_item.title = row.title
             mdl_item.title_norm = normalize_title(row.title)
-        if created_mdl:
-            mdl_item.status = row.doc_status or "Draft"
+        if row.doc_status:
+            # Registration is the source of truth for the document-level status;
+            # persist it for existing MDL rows as well as newly created rows.
+            mdl_item.status = row.doc_status
+        elif created_mdl:
+            mdl_item.status = "Draft"
         if row.discipline_code and mdl_item.discipline_id is None:
             from app.models import Discipline
 

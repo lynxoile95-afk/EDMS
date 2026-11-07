@@ -13,7 +13,6 @@ from app.models import (
     DocumentRevision,
     ExtractionResult,
     MDLItem,
-    Project,
     Sheet,
     SourceFile,
 )
@@ -295,6 +294,10 @@ def review_result(
     result.reviewed_by_id = user.id
     result.reviewed_at = datetime.now(timezone.utc)
     result.review_note = note
+    # Keep the document-level status visible in MDL and on every transmittal line.
+    # The extractor may suggest it, but only registration/review persists it.
+    if result.doc_status:
+        mdl_item.status = result.doc_status
     result.decision = Decision.GREEN if result.decision != Decision.GREEN else result.decision
     db.flush()
 

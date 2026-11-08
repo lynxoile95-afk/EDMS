@@ -1,0 +1,1027 @@
+"""Transmittal endpoints: create, preview, issue, acknowledge, cancel, remind."""
+
+from __future__ import annotations
+
+import hashlib
+import mimetypes
+import os
+import tempfile
+import uuid
+from datetime import datetime, timezone
+from urllib.parse import quote
+
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi.responses import RedirectResponse
+from sqlalchemy import and_, func, or_, select
+
+from app.api.deps import CurrentUser, DbSession, ProjectDep
+from app.core.config import settings
+from app.models import (
+    DocumentRevision,
+    ExtractionResult,
+    Project,
+    Transmittal,
+    TransmittalLine,
+    TransmittalRecipient,
+)
+from app.models.enums import ProjectRole, TransmittalStatus, TransmittalType
+from app.schemas.transmittals import (
+    AcknowledgeRequest,
+    CancelRequest,
+    CompleteRequest,
+    ForwardRequest,
+    IssueRequest,
+    LineOut,
+    RecipientOut,
+    ReferRequest,
+    AttachmentOut,
+    ReferralOut,
+    TransmittalCreate,
+    TransmittalDetail,
+    TransmittalOut,
+)
+from app.services import acl, audit, notification, numbering, routing, transmittal_service
+from app.services.project_settings import merge_settings
+from app.services.storage import build_key, get_storage
+from app.utils.jalali import format_jalali
+
+router = APIRouter(tags=["transmittals"])
+
+
+def _out(transmittal: Transmittal) -> TransmittalOut:
+    acknowledged = sum(
+        1 for r in transmittal.recipients if str(r.ack_status) == "acknowledged"
+    )
+    first_line = transmittal.lines[0] if transmittal.lines else None
+    first_revision = first_line.revision if first_line is not None else None
+    first_mdl_item = first_revision.mdl_item if first_revision is not None else None
+    return TransmittalOut(
+        id=transmittal.id,
+        project_id=transmittal.project_id,
+        access_circle_id=transmittal.access_circle_id,
+        access_circle_name=transmittal.access_circle.name if transmittal.access_circle else None,
+        number=transmittal.number,
+        type=str(transmittal.type),
+        purpose=str(transmittal.purpose),
+        status=str(transmittal.status),
+        from_org=transmittal.from_org,
+        to_org=transmittal.to_org,
+        due_date=transmittal.due_date,
+        issued_at=transmittal.issued_at,
+        remarks=transmittal.remarks,
+        meta={
+            **(transmittal.meta or {}),
+            "due_date_jalali": format_jalali(transmittal.due_date) if transmittal.due_date else None,
+            "issued_at_jalali": format_jalali(transmittal.issued_at) if transmittal.issued_at else None,
+        },
+        stage=str(transmittal.stage or "draft"),
+        created_at=transmittal.created_at,
+        line_count=len(transmittal.lines),
+        recipient_count=len(transmittal.recipients),
+        acknowledged_count=acknowledged,
+        document_code=first_mdl_item.doc_code if first_mdl_item is not None else None,
+        document_title=first_mdl_item.title if first_mdl_item is not None else None,
+        document_type=first_mdl_item.doc_type if first_mdl_item is not None else None,
+        line_action=str(first_line.action) if first_line is not None else None,
+    )
+
+
+def _referral_out(referral) -> ReferralOut:
+    return ReferralOut(
+        id=referral.id,
+        transmittal_id=referral.transmittal_id,
+        from_user_id=referral.from_user_id,
+        from_user_name=referral.from_user.full_name if referral.from_user else None,
+        to_user_id=referral.to_user_id,
+        to_user_name=referral.to_user.full_name if referral.to_user else None,
+        discipline_id=referral.discipline_id,
+        discipline_code=referral.discipline.code if referral.discipline else None,
+        action=str(referral.action),
+        note=referral.note,
+        due_date=referral.due_date,
+        status=str(referral.status),
+        responded_at=referral.responded_at,
+        response_note=referral.response_note,
+        created_at=referral.created_at,
+    )
+
+
+def _attachment_out(raw: dict) -> AttachmentOut:
+    return AttachmentOut(
+        id=raw["id"],
+        line_id=raw["line_id"],
+        revision_id=raw.get("revision_id"),
+        kind=raw["kind"],
+        filename=raw["filename"],
+        content_type=raw.get("content_type") or "application/octet-stream",
+        size_bytes=int(raw.get("size_bytes") or 0),
+        uploaded_at=raw["uploaded_at"],
+        uploaded_by_id=raw.get("uploaded_by_id"),
+    )
+
+
+def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
+    base = _out(transmittal)
+    result_ids = {
+        line.revision.extraction_result_id
+        for line in transmittal.lines
+        if line.revision is not None and line.revision.extraction_result_id is not None
+    }
+    result_statuses = {
+        result.id: result.doc_status
+        for result in db.execute(
+            select(ExtractionResult).where(ExtractionResult.id.in_(result_ids))
+        ).scalars()
+    } if result_ids else {}
+    lines = [
+        LineOut(
+            id=line.id,
+            line_no=line.line_no,
+            revision_id=line.revision_id,
+            mdl_item_id=line.revision.mdl_item.id if line.revision and line.revision.mdl_item else None,
+            action=str(line.action),
+            status=str(line.status),
+            doc_status=(
+                line.revision.mdl_item.status
+                if line.revision and line.revision.mdl_item and line.revision.mdl_item.status
+                else result_statuses.get(line.revision.extraction_result_id)
+                if line.revision and line.revision.extraction_result_id
+                else None
+            ),
+            due_date=line.due_date,
+            note=line.note,
+            doc_code=line.revision.mdl_item.doc_code if line.revision else None,
+            title=line.revision.mdl_item.title if line.revision else None,
+            rev=line.revision.rev if line.revision else None,
+            page_count=line.revision.page_count if line.revision else None,
+            discipline_code=line.discipline_code,
+        )
+        for line in transmittal.lines
+    ]
+    recipients = [
+        RecipientOut(
+            id=recipient.id,
+            user_id=recipient.user_id,
+            action=str(recipient.action),
+            ack_status=str(recipient.ack_status),
+            acknowledged_at=recipient.acknowledged_at,
+            full_name=recipient.user.full_name if recipient.user else None,
+            email=recipient.user.email if recipient.user else None,
+        )
+        for recipient in transmittal.recipients
+    ]
+    try:
+        project = db.get(Project, transmittal.project_id)
+        settings = merge_settings(project.settings if project else None)
+        preview = numbering.peek_temp(db, project, settings=settings) if project else None
+    except Exception:  # noqa: BLE001
+        preview = None
+    pdf_url = None
+    if transmittal.pdf_key:
+        try:
+            pdf_url = get_storage().presigned_url(transmittal.pdf_key)
+        except Exception:  # noqa: BLE001
+            pdf_url = None
+    return TransmittalDetail(
+        **base.model_dump(),
+        lines=lines,
+        recipients=recipients,
+        referrals=[_referral_out(item) for item in transmittal.referrals],
+        attachments=[_attachment_out(item) for item in (transmittal.meta or {}).get("attachments", [])],
+        pdf_url=pdf_url,
+        preview_number=None if transmittal.number else preview,
+        stage_label=routing.STAGE_LABELS.get(str(transmittal.stage)),
+    )
+
+
+@router.get("/projects/{project_id}/transmittals", summary="فهرست برگه‌های ارسال")
+def list_transmittals(
+    project: ProjectDep,
+    db: DbSession,
+    user: CurrentUser,
+    status: str | None = Query(None),
+    purpose: str | None = Query(None),
+    q: str | None = Query(None),
+    mine: bool = Query(False, description="فقط برگه‌هایی که در کارتابل من هستند"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+) -> dict:
+    stmt = select(Transmittal).where(
+        Transmittal.project_id == project.id,
+        acl.transmittal_visibility_clause(db, user),
+    )
+    if mine:
+        # Each desk is defined by the route, not by "everything I can see":
+        #   contractor  → the drafts it still owns
+        #   document control → sheets on its desk (draft / dcc)
+        #   management  → sheets waiting for a referral decision
+        #   discipline  → only the referrals addressed to me
+        clauses = [Transmittal.id.in_(routing.pending_for_user(db, project.id, user.id))]
+        if acl.has_role(db, user, project.id, ProjectRole.SUBMITTER):
+            clauses.append(
+                and_(Transmittal.created_by_id == user.id, Transmittal.stage == "draft")
+            )
+        if acl.has_role(db, user, project.id, ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.SYSTEM_ADMIN):
+            clauses.append(Transmittal.stage.in_(["draft", "dcc"]))
+        if acl.has_role(
+            db,
+            user,
+            project.id,
+            ProjectRole.ENGINEERING_MANAGER,
+            ProjectRole.PROJECT_CONTROL,
+            ProjectRole.PMO,
+            ProjectRole.PROJECT_MANAGER,
+            ProjectRole.SYSTEM_ADMIN,
+        ):
+            clauses.append(Transmittal.stage == "management")
+        stmt = stmt.where(or_(*clauses))
+    if status:
+        stmt = stmt.where(Transmittal.status == status)
+    if purpose:
+        stmt = stmt.where(Transmittal.purpose == purpose)
+    if q:
+        stmt = stmt.where(Transmittal.number.ilike(f"%{q.strip()}%"))
+    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    rows = list(
+        db.execute(stmt.order_by(Transmittal.created_at.desc()).offset((page - 1) * size).limit(size)).scalars()
+    )
+    return {"total": total, "items": [_out(row).model_dump() for row in rows]}
+
+
+@router.post(
+    "/projects/{project_id}/transmittals",
+    response_model=TransmittalDetail,
+    summary="ساخت پیش‌نویس برگه ارسال از مدارک ثبت‌شده",
+)
+def create_transmittal(
+    project: ProjectDep, payload: TransmittalCreate, db: DbSession, user: CurrentUser
+) -> TransmittalDetail:
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
+    acl.validate_circle_for_transmittal(db, user, project.id, payload.access_circle_id)
+    if payload.type == TransmittalType.EXTERNAL.value and not acl.has_external_access(db, user, project.id):
+        raise acl.AccessDenied("صدور ترانسمیتال خارجی فقط برای عضو مجاز به دسترسی خارج از حلقه امکان‌پذیر است.")
+    acl.assert_recipients_allowed(
+        db, user, project.id, payload.extra_recipient_ids, payload.access_circle_id
+    )
+    revisions = list(
+        db.execute(
+            select(DocumentRevision).where(
+                DocumentRevision.id.in_(payload.revision_ids),
+                DocumentRevision.project_id == project.id,
+            )
+        ).scalars()
+    )
+    if len(revisions) != len(set(payload.revision_ids)):
+        raise HTTPException(status_code=422, detail="برخی از مدارک انتخاب‌شده در این پروژه یافت نشدند.")
+
+    drafts = transmittal_service.create_draft_transmittals(
+        db,
+        project=project,
+        revisions=revisions,
+        purpose=payload.purpose,  # type: ignore[arg-type]
+        transmittal_type=TransmittalType(payload.type),
+        actor=user,
+        remarks=payload.remarks,
+        access_circle_id=payload.access_circle_id,
+    )
+    for draft in drafts:
+        existing = {r.user_id for r in draft.recipients}
+        for recipient_id in payload.extra_recipient_ids:
+            if recipient_id not in existing:
+                from app.models.enums import ActionRequired
+
+                db.add(
+                    TransmittalRecipient(
+                        transmittal_id=draft.id,
+                        user_id=recipient_id,
+                        action=ActionRequired.INFO,
+                    )
+                )
+        acl.assert_recipients_allowed(
+            db,
+            user,
+            project.id,
+            [recipient.user_id for recipient in draft.recipients] + payload.extra_recipient_ids,
+            payload.access_circle_id,
+        )
+    db.commit()
+    db.refresh(drafts[0])
+    return _detail(db, drafts[0])
+
+
+# ---------------------------------------------------------------------------
+# Review route: contractor → document control → management → discipline
+# ---------------------------------------------------------------------------
+
+
+def _routing_error(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=422, detail=str(exc))
+
+
+@router.get(
+    "/transmittals/{transmittal_id}/referrals",
+    response_model=list[ReferralOut],
+    summary="گردش مدرک — تاریخچه ارجاع‌ها",
+)
+def list_referrals(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> list[ReferralOut]:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal)
+    return [_referral_out(item) for item in transmittal.referrals]
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/forward",
+    response_model=TransmittalDetail,
+    summary="ارجاع از کنترل اسناد به مدیر مهندسی / مدیر پروژه",
+)
+def forward(
+    transmittal_id: uuid.UUID,
+    payload: ForwardRequest,
+    db: DbSession,
+    user: CurrentUser,
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(
+        db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER]
+    )
+    try:
+        routing.forward_to_management(
+            db,
+            transmittal=transmittal,
+            actor=user,
+            to_user_id=payload.to_user_id,
+            note=payload.note,
+            due_days=payload.due_days,
+        )
+        db.commit()
+    except routing.RoutingError as exc:
+        db.rollback()
+        raise _routing_error(exc) from exc
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/refer",
+    response_model=TransmittalDetail,
+    summary="ارجاع از مدیریت به کارشناس دیسیپلین",
+)
+def refer(
+    transmittal_id: uuid.UUID,
+    payload: ReferRequest,
+    db: DbSession,
+    user: CurrentUser,
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(
+        db,
+        user,
+        transmittal,
+        [ProjectRole.ENGINEERING_MANAGER, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER],
+    )
+    try:
+        routing.refer_to_discipline(
+            db,
+            transmittal=transmittal,
+            actor=user,
+            discipline_id=payload.discipline_id,
+            to_user_id=payload.to_user_id,
+            action=payload.action,
+            note=payload.note,
+            due_days=payload.due_days,
+        )
+        db.commit()
+    except routing.RoutingError as exc:
+        db.rollback()
+        raise _routing_error(exc) from exc
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/referrals/{referral_id}/complete",
+    response_model=TransmittalDetail,
+    summary="پایان بررسی کارشناس دیسیپلین و بازگشت به مدیریت",
+)
+def complete_referral(
+    transmittal_id: uuid.UUID,
+    referral_id: uuid.UUID,
+    payload: CompleteRequest,
+    db: DbSession,
+    user: CurrentUser,
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal)
+    referral = next((item for item in transmittal.referrals if item.id == referral_id), None)
+    if referral is None:
+        raise HTTPException(status_code=404, detail="ارجاع یافت نشد.")
+    if referral.to_user_id != user.id and not acl.has_role(
+        db, user, transmittal.project_id, ProjectRole.ENGINEERING_MANAGER, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER
+    ):
+        raise HTTPException(status_code=403, detail="فقط گیرنده ارجاع می‌تواند آن را ببندد.")
+    try:
+        routing.complete_referral(
+            db, transmittal=transmittal, referral=referral, actor=user, note=payload.note
+        )
+        db.commit()
+    except routing.RoutingError as exc:
+        db.rollback()
+        raise _routing_error(exc) from exc
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
+@router.get("/transmittals/{transmittal_id}", response_model=TransmittalDetail, summary="جزئیات برگه ارسال")
+def get_transmittal(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal)
+    return _detail(db, transmittal)
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/attachments",
+    status_code=201,
+    summary="پیوست PDF یا فایل Native به مدرک",
+)
+async def upload_attachment(
+    transmittal_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    line_id: uuid.UUID = Form(...),
+    kind: str = Form(..., description="pdf یا native"),
+    file: UploadFile = File(...),
+) -> dict:
+    """Store a document attachment beside the transmittal line.
+
+    Attachments intentionally live in the transmittal metadata because they are
+    supplementary files, not registered PDF revisions. The actual bytes still go
+    through the configured local/S3 storage abstraction and every operation is
+    audited.
+    """
+    if kind not in {"pdf", "native"}:
+        raise HTTPException(status_code=422, detail="نوع پیوست باید pdf یا native باشد.")
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    project = acl.require_transmittal(
+        db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
+    )
+    line = db.get(TransmittalLine, line_id)
+    if line is None or line.transmittal_id != transmittal.id:
+        raise HTTPException(status_code=404, detail="ردیف مدرک این برگه ارسال یافت نشد.")
+
+    filename = os.path.basename((file.filename or "attachment").strip())[:500] or "attachment"
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    digest = hashlib.sha256()
+    size = 0
+    head = b""
+    suffix = os.path.splitext(filename)[1] or ".bin"
+    temp_path = ""
+    storage_key = ""
+    try:
+        with tempfile.NamedTemporaryFile(prefix="edms-attachment-", suffix=suffix, delete=False) as temp:
+            temp_path = temp.name
+            while chunk := await file.read(1024 * 1024):
+                if not head:
+                    head = chunk[:8]
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"حجم فایل بیشتر از حد مجاز ({settings.max_upload_mb} مگابایت) است.",
+                    )
+                digest.update(chunk)
+                temp.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=422, detail="فایل پیوست خالی است.")
+        if kind == "pdf" and not head.startswith(b"%PDF-"):
+            raise HTTPException(status_code=422, detail="پیوست PDF معتبر نیست.")
+
+        attachment_id = uuid.uuid4()
+        storage_key = build_key(
+            project.code,
+            "transmittals",
+            str(transmittal.id),
+            "attachments",
+            f"{attachment_id}{suffix.lower()}",
+        )
+        detected_type = mimetypes.guess_type(filename)[0]
+        content_type = file.content_type or detected_type or "application/octet-stream"
+        if content_type == "application/octet-stream" and detected_type:
+            content_type = detected_type
+        get_storage().put_file(storage_key, temp_path, content_type=content_type)
+        attachment = {
+            "id": str(attachment_id),
+            "line_id": str(line.id),
+            "revision_id": str(line.revision_id),
+            "kind": kind,
+            "filename": filename,
+            "content_type": content_type,
+            "size_bytes": size,
+            "sha256": digest.hexdigest(),
+            "storage_key": storage_key,
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "uploaded_by_id": str(user.id),
+        }
+        meta = dict(transmittal.meta or {})
+        attachments = list(meta.get("attachments") or [])
+        attachments.append(attachment)
+        transmittal.meta = {**meta, "attachments": attachments}
+        audit.record(
+            db,
+            action="transmittal.attachment.upload",
+            entity_type="transmittal",
+            entity_id=transmittal.id,
+            actor=user,
+            project_id=project.id,
+            after={"attachment_id": str(attachment_id), "line_id": str(line.id), "kind": kind, "filename": filename},
+        )
+        db.commit()
+        return {"attachment": _attachment_out(attachment).model_dump(mode="json")}
+    except HTTPException:
+        db.rollback()
+        if storage_key:
+            try:
+                get_storage().delete(storage_key)
+            except Exception:
+                pass
+        raise
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        if storage_key:
+            try:
+                get_storage().delete(storage_key)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"ذخیره پیوست ناموفق بود: {exc}") from exc
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+@router.get(
+    "/transmittals/{transmittal_id}/attachments/{attachment_id}/download",
+    summary="دریافت پیوست مدرک",
+)
+def download_attachment(
+    transmittal_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+):
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal)
+    attachment = next(
+        (item for item in (transmittal.meta or {}).get("attachments", []) if str(item.get("id")) == str(attachment_id)),
+        None,
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    audit.record(
+        db,
+        action="transmittal.attachment.download",
+        entity_type="transmittal",
+        entity_id=transmittal.id,
+        actor=user,
+        project_id=transmittal.project_id,
+        after={"attachment_id": str(attachment_id)},
+    )
+    db.commit()
+    return RedirectResponse(
+        url=get_storage().presigned_url(
+            attachment["storage_key"],
+            filename=attachment.get("filename"),
+            expires_seconds=settings.download_link_ttl_seconds,
+        ),
+        status_code=302,
+    )
+
+
+@router.get(
+    "/transmittals/{transmittal_id}/attachments/{attachment_id}/preview",
+    summary="نمایش درون‌برنامه‌ای پیوست مدرک",
+)
+def preview_attachment(
+    transmittal_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+):
+    """Return attachment bytes with an inline disposition for authenticated preview.
+
+    The normal download endpoint deliberately redirects with ``attachment`` so the
+    browser saves the file. PDF.js and media/text previews need the opposite
+    behaviour, and a same-origin response also avoids requiring CORS on a public
+    S3/MinIO endpoint. The ACL and audit trail are the same as for downloads.
+    """
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal)
+    attachment = next(
+        (item for item in (transmittal.meta or {}).get("attachments", []) if str(item.get("id")) == str(attachment_id)),
+        None,
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+
+    storage = get_storage()
+    storage_key = attachment.get("storage_key")
+    if not storage_key or not storage.exists(storage_key):
+        raise HTTPException(status_code=404, detail="فایل پیوست در انبار اسناد پیدا نشد.")
+    try:
+        content = storage.get_bytes(storage_key)
+    except Exception as exc:  # noqa: BLE001 - hide storage implementation details
+        raise HTTPException(status_code=404, detail="فایل پیوست در انبار اسناد قابل دریافت نیست.") from exc
+
+    filename = os.path.basename(attachment.get("filename") or "attachment")
+    detected_type = mimetypes.guess_type(filename)[0]
+    content_type = attachment.get("content_type") or detected_type or "application/octet-stream"
+    if content_type == "application/octet-stream" and detected_type:
+        content_type = detected_type
+    audit.record(
+        db,
+        action="transmittal.attachment.preview",
+        entity_type="transmittal",
+        entity_id=transmittal.id,
+        actor=user,
+        project_id=transmittal.project_id,
+        after={"attachment_id": str(attachment_id), "filename": filename},
+    )
+    db.commit()
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.patch(
+    "/transmittals/{transmittal_id}/attachments/{attachment_id}",
+    response_model=AttachmentOut,
+    summary="ویرایش نام یا جایگزینی پیوست مدرک",
+)
+async def update_attachment(
+    transmittal_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    filename: str = Form(...),
+    kind: str = Form(..., description="pdf یا native"),
+    file: UploadFile | None = File(None),
+) -> AttachmentOut:
+    """Rename an attachment or replace its bytes without losing its audit identity."""
+    if kind not in {"pdf", "native"}:
+        raise HTTPException(status_code=422, detail="نوع پیوست باید pdf یا native باشد.")
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    project = acl.require_transmittal(
+        db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
+    )
+    attachments = list((transmittal.meta or {}).get("attachments") or [])
+    attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+
+    safe_filename = os.path.basename(filename.strip())[:500]
+    if not safe_filename:
+        raise HTTPException(status_code=422, detail="نام فایل پیوست نمی‌تواند خالی باشد.")
+    if file is None and kind != attachment.get("kind"):
+        raise HTTPException(status_code=422, detail="برای تغییر نوع پیوست، فایل جدید همان نوع را انتخاب کنید.")
+    old_storage_key = attachment.get("storage_key")
+    temp_path = ""
+    new_storage_key = old_storage_key
+    new_size = int(attachment.get("size_bytes") or 0)
+    new_sha256 = attachment.get("sha256")
+    new_content_type = attachment.get("content_type") or "application/octet-stream"
+    try:
+        if file is not None:
+            max_bytes = settings.max_upload_mb * 1024 * 1024
+            digest = hashlib.sha256()
+            size = 0
+            head = b""
+            suffix = os.path.splitext(safe_filename)[1] or ".bin"
+            with tempfile.NamedTemporaryFile(prefix="edms-attachment-replace-", suffix=suffix, delete=False) as temp:
+                temp_path = temp.name
+                while chunk := await file.read(1024 * 1024):
+                    if not head:
+                        head = chunk[:8]
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"حجم فایل بیشتر از حد مجاز ({settings.max_upload_mb} مگابایت) است.",
+                        )
+                    digest.update(chunk)
+                    temp.write(chunk)
+            if size == 0:
+                raise HTTPException(status_code=422, detail="فایل پیوست خالی است.")
+            if kind == "pdf" and not head.startswith(b"%PDF-"):
+                raise HTTPException(status_code=422, detail="پیوست PDF معتبر نیست.")
+            new_storage_key = build_key(
+                project.code,
+                "transmittals",
+                str(transmittal.id),
+                "attachments",
+                f"{attachment_id}-{uuid.uuid4()}{suffix.lower()}",
+            )
+            detected_type = mimetypes.guess_type(safe_filename)[0]
+            new_content_type = file.content_type or detected_type or "application/octet-stream"
+            if new_content_type == "application/octet-stream" and detected_type:
+                new_content_type = detected_type
+            get_storage().put_file(new_storage_key, temp_path, content_type=new_content_type)
+            new_size = size
+            new_sha256 = digest.hexdigest()
+
+        updated = {
+            **attachment,
+            "filename": safe_filename,
+            "kind": kind,
+            "content_type": new_content_type,
+            "size_bytes": new_size,
+            "sha256": new_sha256,
+            "storage_key": new_storage_key,
+        }
+        meta = dict(transmittal.meta or {})
+        meta["attachments"] = [updated if str(item.get("id")) == str(attachment_id) else item for item in attachments]
+        transmittal.meta = meta
+        audit.record(
+            db,
+            action="transmittal.attachment.update",
+            entity_type="transmittal",
+            entity_id=transmittal.id,
+            actor=user,
+            project_id=project.id,
+            before={"attachment_id": str(attachment_id), "filename": attachment.get("filename"), "kind": attachment.get("kind")},
+            after={"attachment_id": str(attachment_id), "filename": safe_filename, "kind": kind, "replaced": file is not None},
+        )
+        db.commit()
+        if file is not None and old_storage_key and old_storage_key != new_storage_key:
+            try:
+                get_storage().delete(old_storage_key)
+            except Exception:
+                pass
+        return _attachment_out(updated)
+    except HTTPException:
+        db.rollback()
+        if new_storage_key != old_storage_key:
+            try:
+                get_storage().delete(new_storage_key)
+            except Exception:
+                pass
+        raise
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        if new_storage_key != old_storage_key:
+            try:
+                get_storage().delete(new_storage_key)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"ویرایش پیوست ناموفق بود: {exc}") from exc
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+@router.delete(
+    "/transmittals/{transmittal_id}/attachments/{attachment_id}",
+    response_model=TransmittalDetail,
+    summary="حذف پیوست مدرک",
+)
+def delete_attachment(
+    transmittal_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN])
+    attachments = list((transmittal.meta or {}).get("attachments") or [])
+    attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    try:
+        get_storage().delete(attachment["storage_key"])
+    except Exception:
+        # The DB metadata is still removed; a missing object must not block cleanup.
+        pass
+    meta = dict(transmittal.meta or {})
+    meta["attachments"] = [item for item in attachments if str(item.get("id")) != str(attachment_id)]
+    transmittal.meta = meta
+    audit.record(
+        db,
+        action="transmittal.attachment.delete",
+        entity_type="transmittal",
+        entity_id=transmittal.id,
+        actor=user,
+        project_id=transmittal.project_id,
+        before={"attachment_id": str(attachment_id), "filename": attachment.get("filename")},
+    )
+    db.commit()
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
+@router.delete(
+    "/transmittals/{transmittal_id}",
+    status_code=204,
+    response_model=None,
+    summary="حذف پیش‌نویس برگه ارسال از کارتابل",
+)
+def delete_transmittal(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Response:
+    """Remove an unfinished inbox sheet without deleting registered documents.
+
+    Issued or routed sheets are records in the document-control audit trail and
+    therefore use the existing cancel workflow instead of physical deletion.
+    """
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+
+    acl.require_transmittal(db, user, transmittal)
+    can_manage = acl.has_role(
+        db,
+        user,
+        transmittal.project_id,
+        ProjectRole.DCC,
+        ProjectRole.PROJECT_CONTROL,
+        ProjectRole.PMO,
+        ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
+    )
+    if transmittal.created_by_id != user.id and not can_manage:
+        raise HTTPException(status_code=403, detail="فقط سازنده یا مسئول کنترل برگه می‌تواند پیش‌نویس را حذف کند.")
+    if str(transmittal.status) != str(TransmittalStatus.DRAFT):
+        raise HTTPException(
+            status_code=409,
+            detail="برگه‌های صادرشده یا در گردش حذف نمی‌شوند؛ برای آن‌ها از عملیات «لغو» استفاده کنید.",
+        )
+
+    before = {
+        "number": transmittal.number,
+        "status": str(transmittal.status),
+        "stage": str(transmittal.stage),
+        "line_count": len(transmittal.lines),
+        "recipient_count": len(transmittal.recipients),
+    }
+    audit.record(
+        db,
+        action="transmittal.delete",
+        entity_type="transmittal",
+        entity_id=transmittal.id,
+        actor=user,
+        project_id=transmittal.project_id,
+        before=before,
+    )
+    db.delete(transmittal)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/issue",
+    response_model=TransmittalDetail,
+    summary="صدور نهایی (تخصیص شماره، تولید PDF، ارسال اعلان)",
+)
+def issue_transmittal(
+    transmittal_id: uuid.UUID, payload: IssueRequest, db: DbSession, user: CurrentUser
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
+    if payload.remarks:
+        transmittal.remarks = payload.remarks
+    try:
+        transmittal_service.issue_transmittal(
+            db, transmittal=transmittal, actor=user, storage=get_storage()
+        )
+        # the sheet now waits on document control, not on the contractor
+        routing.mark_issued(db, transmittal)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - PDF/storage failure must roll back
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"صدور برگه ارسال ناموفق بود: {exc}") from exc
+
+    if payload.notify:
+        try:
+            from app.workers.tasks import deliver_notifications
+
+            deliver_notifications.delay()
+        except Exception:  # noqa: BLE001
+            pass
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
+@router.post("/transmittals/{transmittal_id}/acknowledge", response_model=TransmittalDetail)
+def acknowledge(
+    transmittal_id: uuid.UUID, payload: AcknowledgeRequest, db: DbSession, user: CurrentUser
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal)
+    try:
+        transmittal_service.acknowledge(db, transmittal=transmittal, user=user, note=payload.note)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _detail(db, transmittal)
+
+
+@router.post("/transmittals/{transmittal_id}/cancel", response_model=TransmittalDetail)
+def cancel(
+    transmittal_id: uuid.UUID, payload: CancelRequest, db: DbSession, user: CurrentUser
+) -> TransmittalDetail:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
+    try:
+        transmittal_service.cancel_transmittal(db, transmittal=transmittal, actor=user, reason=payload.reason)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _detail(db, transmittal)
+
+
+@router.get("/transmittals/{transmittal_id}/pdf", summary="دریافت PDF برگه ارسال")
+def download_pdf(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser):
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None or not transmittal.pdf_key:
+        raise HTTPException(status_code=404, detail="فایل PDF برای این برگه ارسال موجود نیست.")
+    acl.require_transmittal(db, user, transmittal)
+    url = get_storage().presigned_url(
+        transmittal.pdf_key, filename=f"{transmittal.number or 'draft'}.pdf"
+    )
+    audit.record(
+        db, action="transmittal.download", entity_type="transmittal", entity_id=transmittal.id,
+        actor=user, project_id=transmittal.project_id,
+    )
+    db.commit()
+    return RedirectResponse(url=url, status_code=302)
+
+
+@router.post("/transmittals/{transmittal_id}/remind", summary="ارسال یادآور به گیرندگان")
+def remind(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> dict:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
+    if transmittal.status not in {TransmittalStatus.ISSUED, TransmittalStatus.PARTIALLY_ACKNOWLEDGED}:
+        raise HTTPException(status_code=422, detail="یادآور فقط برای برگه‌های صادرشده ارسال می‌شود.")
+    sent = 0
+    for recipient in transmittal.recipients:
+        if str(recipient.ack_status) != "pending":
+            continue
+        notification.queue(
+            db,
+            user=recipient.user,
+            template="transmittal.reminder",
+            context={
+                "number": transmittal.number,
+                "due_date": format_jalali(transmittal.due_date),
+                "link": f"{settings_public_base()}/transmittals/{transmittal.id}",
+            },
+            project_id=transmittal.project_id,
+            entity_type="transmittal",
+            entity_id=str(transmittal.id),
+            dedupe_key=f"remind:{transmittal.id}:{recipient.user_id}:{datetime.now(timezone.utc):%Y%m%d}",
+        )
+        sent += 1
+    audit.record(
+        db, action="transmittal.remind", entity_type="transmittal", entity_id=transmittal.id,
+        actor=user, project_id=transmittal.project_id, after={"count": sent},
+    )
+    db.commit()
+    return {"queued": sent}
+
+
+def settings_public_base() -> str:
+    from app.core.config import settings
+
+    return settings.public_base_url

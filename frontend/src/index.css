@@ -1,0 +1,907 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   EDMS classic enterprise skin
+   ----------------------------------------------------------------------------
+   The visual language follows the organisation's existing document-control
+   system: green masthead, silver right-hand menu, dense bordered tables with a
+   slate header row, dark-blue form section bars and Windows-style dialogs.
+   All of it is plain CSS so it renders identically without webfonts.
+   ========================================================================== */
+
+@font-face {
+  font-family: "Vazirmatn";
+  src: local("Vazirmatn"), local("Vazirmatn-Regular");
+  font-display: swap;
+}
+
+:root {
+  --band-1: #cfdc8f;
+  --band-2: #6f8f4f;
+  --masthead-1: #fbfcfd;
+  --masthead-2: #e4eaf0;
+  --title: #17427a;
+  --nav-1: #7d9aa6;
+  --nav-2: #4a6773;
+  --nav-3: #37505b;
+  --sidebar-1: #f4f6f9;
+  --sidebar-2: #dde2ea;
+  --sidebar-3: #c9d0da;
+  --navy: #1f3864;
+  --panel-border: #9aa8b4;
+  --head-1: #42596b;
+  --head-2: #2c3f4d;
+  --section-bar-1: #2f6ea5;
+  --section-bar-2: #1d4b74;
+  --grid-line: #c3ccd6;
+  --zebra: #f2f6fa;
+  --xp-face-1: #fdfdfd;
+  --xp-face-2: #dfe4ea;
+  --xp-border: #8d98a3;
+}
+
+@layer base {
+  html {
+    direction: rtl;
+  }
+  body {
+    margin: 0;
+    background: #dfe3e8;
+    color: #23303a;
+    font-family: Tahoma, "B Nazanin", "Vazirmatn", "Segoe UI", sans-serif;
+    font-size: 11.5px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    margin: 0;
+  }
+  ::selection {
+    background: #b9cfe6;
+  }
+  :focus-visible {
+    outline: 1px dotted #1f4e79;
+    outline-offset: 1px;
+  }
+}
+
+@layer components {
+  /* ---------- chrome ---------- */
+  .app-frame {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #ffffff;
+  }
+  .flag-band {
+    height: 5px;
+    background: linear-gradient(90deg, #239f40 0%, #239f40 33%, #ffffff 33%, #ffffff 66%, #da0000 66%);
+  }
+  .masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 6px 14px;
+    background: linear-gradient(180deg, var(--masthead-1), var(--masthead-2));
+    border-bottom: 1px solid #b9c3cd;
+  }
+  .masthead-title {
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--title);
+    letter-spacing: -0.2px;
+  }
+  .masthead-sub {
+    font-size: 9.5px;
+    color: #6b7a88;
+    direction: ltr;
+    text-align: left;
+  }
+  .masthead-logo {
+    width: 46px;
+    height: 46px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, #1f4e79, #2f6ea5);
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+    border: 1px solid #17385a;
+  }
+  .top-band {
+    height: 6px;
+    background: linear-gradient(90deg, var(--band-1), #b7c96f 45%, var(--band-2));
+    border-bottom: 1px solid #5d7940;
+  }
+
+  .topnav {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    background: linear-gradient(180deg, var(--nav-1), var(--nav-2) 55%, var(--nav-3));
+    border-bottom: 1px solid #2b414b;
+    color: #eaf2f6;
+  }
+  .topnav-links {
+    display: flex;
+  }
+  .topnav-link {
+    padding: 5px 14px;
+    font-size: 11px;
+    color: #eef5f8;
+    border-right: 1px solid rgba(255, 255, 255, 0.16);
+    background: transparent;
+    cursor: pointer;
+  }
+  .topnav-link:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  .topnav-link.is-active {
+    background: linear-gradient(180deg, #93b0bb, #5d7c88);
+    color: #10222b;
+    font-weight: 700;
+  }
+  .topnav-user {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-inline: 12px;
+    font-size: 10.5px;
+    background: linear-gradient(180deg, #a8bcc4, #7e97a1);
+    color: #12232c;
+    border-right: 1px solid rgba(255, 255, 255, 0.35);
+  }
+
+  .breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    font-size: 10.5px;
+    color: #dbe7ee;
+    background: linear-gradient(180deg, #4d6b78, #3a545f);
+    border-bottom: 1px solid #2b414b;
+  }
+
+  /* ---------- shell with right-hand menu ---------- */
+  .shell {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    gap: 0;
+  }
+  .shell-main {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px 18px;
+    background: #f7f9fb;
+  }
+  .menu-rail {
+    width: 190px;
+    flex-shrink: 0;
+    background: linear-gradient(180deg, var(--sidebar-1), var(--sidebar-2) 60%, var(--sidebar-3));
+    border-inline-start: 1px solid #aeb8c3;
+    padding: 4px;
+  }
+  .menu-group-title {
+    margin: 6px 0 3px;
+    padding: 3px 6px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #33475b;
+    background: linear-gradient(180deg, #eef2f6, #d3dae2);
+    border: 1px solid #b6c0ca;
+    text-align: center;
+  }
+  .menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    width: 100%;
+    padding: 4px 7px;
+    margin-bottom: 2px;
+    font-size: 10.5px;
+    color: var(--navy);
+    text-align: right;
+    background: linear-gradient(180deg, #fdfefe, #eaeef4);
+    border: 1px solid #c4ccd6;
+    cursor: pointer;
+  }
+  .menu-item:hover {
+    background: linear-gradient(180deg, #ffffff, #dbe8f5);
+    border-color: #8fa9c4;
+  }
+  .menu-item.is-active {
+    background: linear-gradient(180deg, #dce9f7, #b9cfe6);
+    border-color: #7d9cba;
+    font-weight: 700;
+  }
+  .menu-item-count {
+    min-width: 16px;
+    padding: 0 4px;
+    font-size: 9.5px;
+    color: #fff;
+    background: #b3403a;
+    border: 1px solid #8c2e29;
+    text-align: center;
+  }
+
+  /* ---------- panels ---------- */
+  .card {
+    margin-bottom: 8px;
+    background: #fff;
+    border: 1px solid #6d7b87;
+    box-shadow: 2px 3px 8px rgba(0, 0, 0, 0.22);
+  }
+  /* A card that carries a header is a window: same title bar as .window-title. */
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    min-height: 23px;
+    height: auto;
+    padding: 3px 4px;
+    background: linear-gradient(180deg, #f5f7f9, #d8dee5);
+    border-bottom: 1px solid #a9b2bb;
+  }
+  .card-header-content {
+    min-width: 0;
+    flex: 1;
+    text-align: center;
+  }
+  .card-header h2,
+  .card-header-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.25;
+    color: #1f3864;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-header-subtitle {
+    margin-top: 2px;
+    overflow: hidden;
+    font-size: 10px;
+    font-weight: 400;
+    line-height: 1.3;
+    color: #5c6b78;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+  }
+  /* Compact four-column KPI strip used above the personal inbox. */
+  .dashboard-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 3px;
+    margin-bottom: 4px;
+  }
+  .dashboard-kpi-grid > div {
+    min-width: 0;
+    margin-bottom: 0;
+    padding: 3px 6px;
+  }
+  .dashboard-kpi-grid > div > p:first-child {
+    overflow: hidden;
+    font-size: 9.5px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dashboard-kpi-grid > div > p:nth-child(2) {
+    margin-top: 0;
+    font-size: 13px;
+    line-height: 1.2;
+  }
+  .dashboard-kpi-grid > div > p:nth-child(3) {
+    margin-top: 0;
+    overflow: hidden;
+    font-size: 8.5px;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  @media (max-width: 640px) {
+    .dashboard-kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  /* Main windows of a page end with the reference system's green strip. */
+  .card.is-main::after {
+    content: "";
+    display: block;
+    height: 13px;
+    background: linear-gradient(180deg, #5aa34a, #2c6a24);
+    border-top: 1px solid #1e4d18;
+  }
+  .section-bar {
+    padding: 3px 8px;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    background: linear-gradient(180deg, #2f5d86, #1d3f60);
+    border: 1px solid #16324c;
+    border-bottom: none;
+  }
+
+  /* ---------- buttons (classic) ---------- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 21px;
+    padding: 1px 9px;
+    font-family: inherit;
+    font-size: 10.5px;
+    color: #1e2b36;
+    background: linear-gradient(180deg, var(--xp-face-1), var(--xp-face-2));
+    border: 1px solid var(--xp-border);
+    border-radius: 2px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:hover {
+    background: linear-gradient(180deg, #ffffff, #cfd9e3);
+  }
+  .btn:active {
+    background: linear-gradient(180deg, #cfd9e3, #eef3f8);
+    padding-top: 2px;
+  }
+  .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    color: #6b7681;
+  }
+  .btn-primary {
+    @apply btn;
+    color: #fff;
+    background: linear-gradient(180deg, #3f7db3, #24567e);
+    border-color: #1b4467;
+    font-weight: 700;
+  }
+  .btn-primary:hover {
+    background: linear-gradient(180deg, #4c8dc4, #2b628f);
+  }
+  .btn-secondary {
+    @apply btn;
+  }
+  .btn-danger {
+    @apply btn;
+    color: #fff;
+    background: linear-gradient(180deg, #c25a52, #97342d);
+    border-color: #7d2822;
+    font-weight: 700;
+  }
+  .btn-ghost {
+    @apply btn;
+    background: transparent;
+    border-color: transparent;
+    color: #1f4e79;
+  }
+  .btn-ghost:hover {
+    background: #e8eff6;
+    border-color: #b8c9d9;
+  }
+  .btn-sm {
+    min-height: 18px;
+    padding: 0 6px;
+    font-size: 10px;
+  }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 3px;
+    background: linear-gradient(180deg, #fdfdfd, #e9edf2);
+    border: 1px solid #a9b2bb;
+    border-top: none;
+  }
+
+  /* ---------- form controls ---------- */
+  .input {
+    width: 100%;
+    min-height: 21px;
+    padding: 1px 5px;
+    font-family: inherit;
+    font-size: 11px;
+    color: #101c26;
+    background: #fff;
+    border: 1px solid #7d8b98;
+    border-radius: 0;
+    box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.06);
+  }
+  .input:focus {
+    border-color: #1f4e79;
+    box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.04), 0 0 0 1px #a8c4de;
+    outline: none;
+  }
+  .input:disabled,
+  .input[readonly] {
+    background: #f1f3f5;
+    color: #4a5761;
+  }
+  .label {
+    display: block;
+    margin-bottom: 2px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #345;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0 5px;
+    font-size: 9.5px;
+    font-weight: 700;
+    line-height: 15px;
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    border-radius: 2px;
+    background: #eef2f6;
+    color: #23303a;
+  }
+
+  /* ---------- data grid ---------- */
+  .table-base {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5px;
+    background: #fff;
+  }
+  .table-base th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 3px 5px;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    text-align: right;
+    white-space: nowrap;
+    background: linear-gradient(180deg, #2f4d63, #1d3446);
+    border: 1px solid #16283a;
+  }
+  .table-base td {
+    padding: 2px 5px;
+    text-align: right;
+    vertical-align: middle;
+    border: 1px solid var(--grid-line);
+    color: #1d2a33;
+  }
+  .table-base tbody tr:nth-child(even) td {
+    background: var(--zebra);
+  }
+  .table-base tbody tr:hover td {
+    background: #e4eefa;
+  }
+  .table-base tbody tr.is-selected td {
+    background: #d3e3f5;
+  }
+  .table-base td.cell-center,
+  .table-base th.cell-center {
+    text-align: center;
+  }
+  .table-base .row-actions {
+    display: flex;
+    gap: 3px;
+    justify-content: center;
+  }
+
+  /* ==========================================================================
+     Windows, ribbons and field grids — the reference system's own language.
+     Plain CSS so it renders identically without webfonts.
+     ========================================================================== */
+
+  /* ---------- window chrome ---------- */
+  .window {
+    margin-bottom: 8px;
+    background: #f0eee1;
+    border: 1px solid #6d7b87;
+    box-shadow: 2px 3px 8px rgba(0, 0, 0, 0.22);
+  }
+  .window.is-dialog {
+    max-width: 1120px;
+    margin: 0 auto;
+  }
+  .window-title {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 23px;
+    padding: 0 3px;
+    background: linear-gradient(180deg, #f5f7f9, #d8dee5);
+    border-bottom: 1px solid #a9b2bb;
+  }
+  .window-title .wt-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #1f3864;
+  }
+  .wt-btn {
+    display: grid;
+    place-items: center;
+    width: 17px;
+    height: 15px;
+    font-size: 9px;
+    font-weight: 700;
+    color: #33475b;
+    background: linear-gradient(180deg, #fdfefe, #cfd6de);
+    border: 1px solid #9099a3;
+    cursor: pointer;
+  }
+  .wt-btn:hover {
+    background: linear-gradient(180deg, #ffffff, #dfe7ef);
+  }
+  .wt-btn.is-close {
+    color: #8c2e29;
+  }
+  .window-body {
+    padding: 3px;
+    background: #f0eee1;
+  }
+  .window-strip {
+    height: 13px;
+    margin-top: 3px;
+    background: linear-gradient(180deg, #5aa34a, #2c6a24);
+    border: 1px solid #1e4d18;
+  }
+  .window-footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 4px;
+    background: linear-gradient(180deg, #f3f5f8, #dfe4ea);
+    border: 1px solid #a9b2bb;
+    border-top: none;
+  }
+
+  /* ---------- ribbon (icon toolbar with Persian captions) ---------- */
+  .ribbon {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 1px;
+    padding: 4px 3px;
+    background: linear-gradient(180deg, #fdfdfd, #e9edf2);
+    border: 1px solid #a9b2bb;
+    border-top: none;
+  }
+  .ribbon-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    min-width: 60px;
+    padding: 2px 3px;
+    font-family: inherit;
+    font-size: 8.5px;
+    line-height: 1.2;
+    color: #1f3864;
+    text-align: center;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  .ribbon-btn:hover:not(:disabled) {
+    background: linear-gradient(180deg, #ffffff, #dbe7f3);
+    border-color: #8aa8c4;
+  }
+  .ribbon-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+  .ribbon-btn svg {
+    width: 21px;
+    height: 21px;
+  }
+  .ribbon-btn.is-danger {
+    color: #a8342d;
+  }
+  .ribbon-sep {
+    width: 1px;
+    align-self: stretch;
+    margin: 0 3px;
+    background: #c3ccd6;
+  }
+
+  /* ---------- small square icon button (inside grids) ---------- */
+  .icon-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    color: #1f3864;
+    background: linear-gradient(180deg, #ffffff, #e1e6ed);
+    border: 1px solid #9aa8b4;
+    cursor: pointer;
+  }
+  .icon-btn:hover {
+    background: linear-gradient(180deg, #fffdf0, #ffe9a8);
+    border-color: #c9a227;
+  }
+  .icon-btn svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  /* ---------- field grid (khaki labels, white values) ---------- */
+  .field-grid {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr) 104px minmax(0, 1fr);
+    background: #fff;
+    border-top: 1px solid #a8a284;
+    border-inline-start: 1px solid #a8a284;
+  }
+  .field-grid.is-3col {
+    grid-template-columns: 96px minmax(0, 1fr) 96px minmax(0, 1fr) 96px minmax(0, 1fr);
+  }
+  .fg-label {
+    display: flex;
+    align-items: center;
+    padding: 2px 5px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #20365c;
+    white-space: nowrap;
+    background: linear-gradient(180deg, #e8e4ca, #d7d1ad);
+    border-inline-end: 1px solid #a8a284;
+    border-bottom: 1px solid #a8a284;
+  }
+  .fg-value {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    min-height: 20px;
+    padding: 1px 5px;
+    font-size: 10.5px;
+    color: #11202c;
+    background: #fff;
+    border-inline-end: 1px solid #a8a284;
+    border-bottom: 1px solid #a8a284;
+    overflow: hidden;
+  }
+  .fg-value.span-full {
+    grid-column: 2 / -1;
+  }
+  .fg-value.is-muted {
+    color: #6b7784;
+  }
+  .fg-value .input {
+    min-height: 18px;
+    padding: 0 3px;
+    font-size: 10.5px;
+    background: #fff;
+    border: 1px solid #c0c7cf;
+  }
+
+  /* ---------- navy tabs (reference tab strip) ---------- */
+  .tabstrip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 3px 3px 0;
+    background: linear-gradient(180deg, #3c5666, #263c48);
+    border: 1px solid #1d2f38;
+    border-bottom: none;
+  }
+  .tab {
+    min-height: 20px;
+    padding: 2px 13px;
+    font-family: inherit;
+    font-size: 10.5px;
+    color: #eaf1f5;
+    background: linear-gradient(180deg, #4a6773, #33474f);
+    border: 1px solid #22343c;
+    border-bottom: none;
+    cursor: pointer;
+  }
+  .tab:hover {
+    background: linear-gradient(180deg, #5b7d8b, #3d5763);
+  }
+  .tab.is-active {
+    color: #12324a;
+    font-weight: 700;
+    background: linear-gradient(180deg, #f4f8fb, #dde7ef);
+  }
+
+  /* ---------- grouped band inside a grid ---------- */
+  .group-band {
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+    background: linear-gradient(180deg, #2f5d86, #1d3f60);
+    border: 1px solid #16324c;
+  }
+
+  /* ---------- helpers ---------- */  /* ---------- helpers ---------- */
+  .ltr {
+    direction: ltr;
+    text-align: left;
+    unicode-bidi: isolate;
+  }
+  /* Key/value table — same khaki label + white value as the field grid, so a
+     form built either way looks identical (the screenshots draw both the same). */
+  .kv-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5px;
+    background: #fff;
+  }
+  .kv-table th {
+    width: 118px;
+    padding: 2px 5px;
+    text-align: right;
+    font-weight: 700;
+    color: #20365c;
+    background: linear-gradient(180deg, #e8e4ca, #d7d1ad);
+    border: 1px solid #a8a284;
+    white-space: nowrap;
+  }
+  .kv-table td {
+    padding: 2px 5px;
+    border: 1px solid #a8a284;
+    background: #fff;
+    color: #11202c;
+  }
+  .kv-table .colspan-fill {
+    background: #fff;
+  }
+  .status-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.25);
+    vertical-align: middle;
+  }
+  .strip-green {
+    height: 10px;
+    background: linear-gradient(180deg, #3f8f45, #1f6330);
+    border: 1px solid #1a5327;
+  }
+}
+
+/* PDF.js canvas container */
+.pdf-page canvas {
+  max-width: 100%;
+  height: auto !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* ============================================================================
+   Transmittal registration screen — drop area, editable grid, side preview
+   ========================================================================== */
+.reg-drop {
+  border: 2px dashed #8ea4b6;
+  background: repeating-linear-gradient(45deg, #f7fafc, #f7fafc 8px, #eef4f9 8px, #eef4f9 16px);
+  padding: 12px 10px;
+  text-align: center;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.reg-drop:hover,
+.reg-drop.is-over {
+  border-color: #1f4e79;
+  background: #e8f1fa;
+}
+
+.reg-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #c3ccd6;
+  background: #fff;
+  padding: 2px 5px;
+}
+.reg-progress-track {
+  flex: 1 1 auto;
+  height: 9px;
+  background: #dde5ee;
+  border: 1px solid #b9c3cd;
+  overflow: hidden;
+}
+.reg-progress-bar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(180deg, #4b8fd1, #1f5c96);
+  transition: width 240ms ease;
+}
+.reg-progress-bar.is-done {
+  background: linear-gradient(180deg, #64af5c, #2f7c34);
+}
+.reg-progress-bar.is-failed {
+  background: linear-gradient(180deg, #d97a72, #a63b30);
+}
+
+.reg-table td {
+  padding: 1px 3px;
+}
+.reg-table td.reg-cell.is-review {
+  background: #fdf3cd !important;
+  box-shadow: inset 0 0 0 1px #e6c15b;
+}
+.reg-table td.reg-cell.is-reviewed {
+  background: #eef2f6 !important;
+}
+
+.reg-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0 3px;
+  font-size: 10.5px;
+  line-height: 17px;
+  color: #14232e;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+  font-family: inherit;
+}
+.reg-input:hover:not(:disabled) {
+  border-color: #b9c9d8;
+  background: #fff;
+}
+.reg-input:focus {
+  outline: none;
+  border-color: #1f4e79;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(31, 78, 121, 0.25);
+}
+.reg-input:disabled {
+  color: #33454f;
+  cursor: not-allowed;
+}
+.reg-input.font-mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.reg-conf {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+/* the drawing preview keeps the first page readable without eating the grid */
+.reg-preview {
+  max-height: 520px;
+  overflow: auto;
+  border: 1px solid #b9c3cd;
+  background: #fff;
+}
+.reg-preview .pdf-page canvas {
+  max-width: 100%;
+}

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useProject } from "@/lib/project";
-import type { MDLItem, ProjectMember, TransmittalDetail } from "@/lib/types";
+import { useAuth } from "@/lib/auth";
+import type { AccessCircle, MDLItem, ProjectMember, TransmittalDetail } from "@/lib/types";
 import { Button, Card, CardHeader, EmptyState, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
 import { PURPOSE_LABELS, persianDigits } from "@/lib/format";
 
@@ -24,15 +25,18 @@ function messageOf(error: unknown): string {
 
 export function ManualTransmittalPage() {
   const { project, isDcc } = useProject();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [items, setItems] = useState<MDLItem[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [circles, setCircles] = useState<AccessCircle[]>([]);
   const [selected, setSelected] = useState<Record<string, ManualLine>>({});
   const [purpose, setPurpose] = useState("IFR");
   const [type, setType] = useState("internal");
   const [fromOrg, setFromOrg] = useState("");
   const [toOrg, setToOrg] = useState("");
   const [remarks, setRemarks] = useState("");
+  const [accessCircleId, setAccessCircleId] = useState("");
   const [recipientIds, setRecipientIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -44,12 +48,15 @@ export function ManualTransmittalPage() {
     setLoading(true);
     setError(null);
     try {
-      const [mdl, roster] = await Promise.all([
+      const [mdl, roster, projectCircles] = await Promise.all([
         api.get<{ items: MDLItem[]; total: number }>(`/projects/${project.id}/mdl/items?size=200`),
         api.get<ProjectMember[]>(`/projects/${project.id}/members`),
+        api.get<AccessCircle[]>(`/projects/${project.id}/circles`),
       ]);
       setItems(mdl.items);
       setMembers(roster.filter((member) => member.is_active));
+      setCircles(projectCircles);
+      if (!accessCircleId && projectCircles.length === 1) setAccessCircleId(projectCircles[0].id);
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -134,6 +141,10 @@ export function ManualTransmittalPage() {
       setError("حداقل یک گیرنده از اعضای پروژه انتخاب کنید.");
       return;
     }
+    if (circles.length > 0 && !accessCircleId && !user?.is_superuser) {
+      setError("برای جلوگیری از دسترسی ناخواسته، حلقه دسترسی ترانسمیتال را انتخاب کنید.");
+      return;
+    }
     for (const item of selectedItems) {
       const line = selected[item.id];
       if (!line.revision.trim()) {
@@ -156,6 +167,7 @@ export function ManualTransmittalPage() {
         from_org: fromOrg.trim() || null,
         to_org: toOrg.trim() || null,
         remarks: remarks.trim() || null,
+        access_circle_id: accessCircleId || null,
         extra_recipient_ids: recipientIds,
       });
       navigate(`/transmittals/${created.id}`);
@@ -292,6 +304,14 @@ export function ManualTransmittalPage() {
                 <Select value={type} onChange={(event) => setType(event.target.value)}>
                   <option value="internal">داخلی — Internal</option>
                   <option value="external">خارجی — External</option>
+                </Select>
+              </Field>
+              <Field label="حلقه دسترسی *" hint="اعضای این حلقه فقط همین ترانسمیتال را می‌بینند.">
+                <Select value={accessCircleId} onChange={(event) => setAccessCircleId(event.target.value)}>
+                  <option value="">{user?.is_superuser ? "بدون حلقه / دسترسی پروژه‌ای" : "انتخاب حلقه…"}</option>
+                  {circles.map((circle) => (
+                    <option key={circle.id} value={circle.id}>{circle.code} — {circle.name}</option>
+                  ))}
                 </Select>
               </Field>
               <Field label="فرستنده / پیمانکار">

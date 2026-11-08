@@ -41,6 +41,7 @@ class ManualTransmittalCreate(BaseModel):
     from_org: str | None = Field(default=None, max_length=255)
     to_org: str | None = Field(default=None, max_length=255)
     remarks: str | None = Field(default=None, max_length=4000)
+    access_circle_id: uuid.UUID | None = None
     extra_recipient_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
@@ -62,7 +63,13 @@ def create_manual_transmittal(
     revision record and can later be superseded by a PDF-backed revision through
     the normal AI or registration workflow.
     """
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
+    acl.validate_circle_for_transmittal(db, user, project.id, payload.access_circle_id)
+    if payload.type == TransmittalType.EXTERNAL.value and not acl.has_external_access(db, user, project.id):
+        raise acl.AccessDenied("صدور ترانسمیتال خارجی فقط برای عضو مجاز به دسترسی خارج از حلقه امکان‌پذیر است.")
+    acl.assert_recipients_allowed(
+        db, user, project.id, payload.extra_recipient_ids, payload.access_circle_id
+    )
 
     item_ids = [row.mdl_item_id for row in payload.rows]
     if len(item_ids) != len(set(item_ids)):
@@ -140,6 +147,7 @@ def create_manual_transmittal(
             transmittal_type=TransmittalType(payload.type),
             actor=user,
             remarks=payload.remarks,
+            access_circle_id=payload.access_circle_id,
             # The manual screen has one explicit "create" action. Keep all
             # selected rows in that one sheet; DDM still determines actions and
             # recipients inside the group.
@@ -173,6 +181,13 @@ def create_manual_transmittal(
                 "creation_mode": "manual",
                 "manual_revision_count": len(revisions),
             }
+            acl.assert_recipients_allowed(
+                db,
+                user,
+                project.id,
+                [recipient.user_id for recipient in draft.recipients] + payload.extra_recipient_ids,
+                payload.access_circle_id,
+            )
 
         db.commit()
     except HTTPException:

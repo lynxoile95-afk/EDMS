@@ -20,7 +20,6 @@ from datetime import date, datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models import (
     CommentList,
     DocumentRevision,
@@ -151,16 +150,22 @@ def plan_groups(
 
 
 def _idempotency_key(
-    project: Project, purpose: PurposeOfIssue, recipient_ids: set[uuid.UUID], revision_ids: list[uuid.UUID]
+    project: Project,
+    purpose: PurposeOfIssue,
+    recipient_ids: set[uuid.UUID],
+    revision_ids: list[uuid.UUID],
+    access_circle_id: uuid.UUID | None = None,
 ) -> str:
-    raw = "|".join(
+    parts = [str(project.id), str(purpose)]
+    if access_circle_id is not None:
+        parts.append(str(access_circle_id))
+    parts.extend(
         [
-            str(project.id),
-            str(purpose),
             ",".join(sorted(str(r) for r in recipient_ids)),
             ",".join(sorted(str(r) for r in revision_ids)),
         ]
     )
+    raw = "|".join(parts)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:64]
 
 
@@ -175,6 +180,7 @@ def create_draft_transmittals(
     session_id: uuid.UUID | None = None,
     remarks: str | None = None,
     settings_override: dict | None = None,
+    access_circle_id: uuid.UUID | None = None,
 ) -> list[Transmittal]:
     """Create one DRAFT transmittal per group (idempotent)."""
     if not revisions:
@@ -185,7 +191,9 @@ def create_draft_transmittals(
 
     for plan in plans:
         revision_ids = [r.id for r in plan.revisions]
-        key = _idempotency_key(project, purpose, plan.recipient_ids, revision_ids)
+        key = _idempotency_key(
+            project, purpose, plan.recipient_ids, revision_ids, access_circle_id
+        )
         existing = db.execute(
             select(Transmittal).where(Transmittal.idempotency_key == key)
         ).scalar_one_or_none()
@@ -201,6 +209,7 @@ def create_draft_transmittals(
         due = add_working_days(date.today(), max(plan.due_days, 1))
         transmittal = Transmittal(
             project_id=project.id,
+            access_circle_id=access_circle_id,
             type=transmittal_type,
             purpose=purpose,
             status=status,
@@ -236,9 +245,8 @@ def create_draft_transmittals(
                 )
             )
         for recipient in plan.recipients:
-            db.add(
+            transmittal.recipients.append(
                 TransmittalRecipient(
-                    transmittal_id=transmittal.id,
                     user_id=recipient.user_id,
                     action=recipient.action,
                 )

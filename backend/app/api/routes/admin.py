@@ -5,17 +5,29 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.security import hash_password
 from app.models import AuditLog, Project, User
 from pydantic import BaseModel, Field
 
-from app.schemas.auth import UserCreate, UserOut
+from app.schemas.auth import UserCreate, UserOut, UserUpdate
 from app.services import acl, audit
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _identity_conflict(db, *, email: str, national_id: str | None, mobile: str | None, exclude_id=None) -> User | None:
+    conditions = [User.email == email.lower()]
+    if national_id:
+        conditions.append(User.national_id == national_id)
+    if mobile:
+        conditions.append(User.mobile == mobile)
+    stmt = select(User).where(or_(*conditions))
+    if exclude_id is not None:
+        stmt = stmt.where(User.id != exclude_id)
+    return db.execute(stmt).scalars().first()
 
 
 @router.get("/users", response_model=list[UserOut], summary="فهرست کاربران")
@@ -33,11 +45,25 @@ def list_users(
 @router.post("/users", response_model=UserOut, status_code=201, summary="ایجاد کاربر")
 def create_user(payload: UserCreate, db: DbSession, user: CurrentUser) -> UserOut:
     acl.assert_admin(user)
-    if db.execute(select(User).where(User.email == payload.email.lower())).scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="این ایمیل قبلاً ثبت شده است.")
+    conflict = _identity_conflict(
+        db,
+        email=str(payload.email),
+        national_id=payload.national_id,
+        mobile=payload.mobile,
+    )
+    if conflict is not None:
+        if conflict.email == str(payload.email).lower():
+            detail = "این ایمیل قبلاً ثبت شده است."
+        elif conflict.national_id == payload.national_id:
+            detail = "این کد ملی قبلاً برای کاربر دیگری ثبت شده است."
+        else:
+            detail = "این شماره موبایل قبلاً برای کاربر دیگری ثبت شده است."
+        raise HTTPException(status_code=409, detail=detail)
     new_user = User(
-        email=payload.email.lower(),
+        email=str(payload.email).lower(),
         full_name=payload.full_name,
+        national_id=payload.national_id,
+        mobile=payload.mobile,
         hashed_password=hash_password(payload.password),
         is_superuser=payload.is_superuser,
         locale=payload.locale,
@@ -51,6 +77,54 @@ def create_user(payload: UserCreate, db: DbSession, user: CurrentUser) -> UserOu
     )
     db.commit()
     return UserOut.model_validate(new_user)
+
+
+@router.patch("/users/{user_id}", response_model=UserOut, summary="ویرایش مشخصات کاربر")
+def update_user(user_id: uuid.UUID, payload: UserUpdate, db: DbSession, user: CurrentUser) -> UserOut:
+    acl.assert_admin(user)
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="کاربر یافت نشد.")
+
+    updates = payload.model_dump(exclude_unset=True)
+    candidate_email = target.email
+    candidate_national_id = updates.get("national_id", target.national_id)
+    candidate_mobile = updates.get("mobile", target.mobile)
+    conflict = _identity_conflict(
+        db,
+        email=candidate_email,
+        national_id=candidate_national_id,
+        mobile=candidate_mobile,
+        exclude_id=target.id,
+    )
+    if conflict is not None:
+        if conflict.national_id == candidate_national_id:
+            raise HTTPException(status_code=409, detail="این کد ملی قبلاً ثبت شده است.")
+        raise HTTPException(status_code=409, detail="این شماره موبایل قبلاً ثبت شده است.")
+
+    before = {
+        "full_name": target.full_name,
+        "national_id": target.national_id,
+        "mobile": target.mobile,
+        "is_superuser": target.is_superuser,
+    }
+    if "password" in updates:
+        target.hashed_password = hash_password(updates.pop("password")) if updates["password"] else target.hashed_password
+        updates.pop("password", None)
+    for field, value in updates.items():
+        setattr(target, field, value)
+    audit.record(
+        db,
+        action="user.update",
+        entity_type="user",
+        entity_id=target.id,
+        actor=user,
+        before=before,
+        after={key: value for key, value in updates.items() if key != "password"},
+    )
+    db.commit()
+    db.refresh(target)
+    return UserOut.model_validate(target)
 
 
 @router.patch("/users/{user_id}/active", response_model=UserOut, summary="فعال/غیرفعال کردن کاربر")

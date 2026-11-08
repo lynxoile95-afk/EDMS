@@ -53,6 +53,7 @@ class TransmittalCreate(BaseModel):
     purpose: str = Field(default="IFR", pattern=PURPOSE_PATTERN)
     type: str = Field(default="internal", pattern=r"^(internal|external)$")
     remarks: str | None = None
+    access_circle_id: uuid.UUID | None = None
     extra_recipient_ids: list[uuid.UUID] = []
 
 
@@ -99,6 +100,8 @@ class CompleteRequest(BaseModel):
 class TransmittalOut(ORMModel):
     id: uuid.UUID
     project_id: uuid.UUID
+    access_circle_id: uuid.UUID | None = None
+    access_circle_name: str | None = None
     number: str | None = None
     type: str
     purpose: str

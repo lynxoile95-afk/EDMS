@@ -25,9 +25,9 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Discipline, Project, ProjectMember, Transmittal, TransmittalReferral, User
+from app.models import Discipline, ProjectMember, Transmittal, TransmittalReferral, User
 from app.models.enums import ActionRequired, ProjectRole, ReferralStatus, TransmittalStage
-from app.services import audit, notification
+from app.services import acl, audit, notification
 
 
 class RoutingError(ValueError):
@@ -130,11 +130,18 @@ def forward_to_management(
         if recipient is None:
             raise RoutingError("کاربر مقصد یافت نشد.")
     else:
-        recipient = _project_manager_of(db, transmittal.project_id, ProjectRole.ENGINEERING_MANAGER) or (
-            _project_manager_of(db, transmittal.project_id, ProjectRole.PROJECT_MANAGER)
+        recipient = (
+            _project_manager_of(db, transmittal.project_id, ProjectRole.ENGINEERING_MANAGER)
+            or _project_manager_of(db, transmittal.project_id, ProjectRole.PROJECT_CONTROL)
+            or _project_manager_of(db, transmittal.project_id, ProjectRole.PMO)
+            or _project_manager_of(db, transmittal.project_id, ProjectRole.PROJECT_MANAGER)
         )
     if recipient is None:
         raise RoutingError("مدیر مهندسی یا مدیر پروژه برای این پروژه تعریف نشده است.")
+    try:
+        acl.assert_can_route_to(db, actor, recipient, transmittal)
+    except acl.AccessDenied as exc:
+        raise RoutingError(exc.detail) from exc
 
     _close_pending(db, transmittal, response="به مدیریت ارجاع شد")
 
@@ -207,6 +214,10 @@ def refer_to_discipline(
             )
     else:
         raise RoutingError("برای ارجاع، یک دیسیپلین یا کاربر مقصد انتخاب کنید.")
+    try:
+        acl.assert_can_route_to(db, actor, recipient, transmittal)
+    except acl.AccessDenied as exc:
+        raise RoutingError(exc.detail) from exc
 
     _close_pending(db, transmittal, response="ارجاع مجدد به دیسیپلین")
 
@@ -269,8 +280,11 @@ def complete_referral(
     referral.response_note = note
     transmittal.stage = str(TransmittalStage.MANAGEMENT)
 
-    manager = _project_manager_of(db, transmittal.project_id, ProjectRole.ENGINEERING_MANAGER) or (
-        _project_manager_of(db, transmittal.project_id, ProjectRole.PROJECT_MANAGER)
+    manager = (
+        _project_manager_of(db, transmittal.project_id, ProjectRole.ENGINEERING_MANAGER)
+        or _project_manager_of(db, transmittal.project_id, ProjectRole.PROJECT_CONTROL)
+        or _project_manager_of(db, transmittal.project_id, ProjectRole.PMO)
+        or _project_manager_of(db, transmittal.project_id, ProjectRole.PROJECT_MANAGER)
     )
     if manager is not None:
         notification.queue(

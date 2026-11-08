@@ -58,6 +58,8 @@ def _out(transmittal: Transmittal) -> TransmittalOut:
     return TransmittalOut(
         id=transmittal.id,
         project_id=transmittal.project_id,
+        access_circle_id=transmittal.access_circle_id,
+        access_circle_name=transmittal.access_circle.name if transmittal.access_circle else None,
         number=transmittal.number,
         type=str(transmittal.type),
         purpose=str(transmittal.purpose),
@@ -204,7 +206,10 @@ def list_transmittals(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ) -> dict:
-    stmt = select(Transmittal).where(Transmittal.project_id == project.id)
+    stmt = select(Transmittal).where(
+        Transmittal.project_id == project.id,
+        acl.transmittal_visibility_clause(db, user),
+    )
     if mine:
         # Each desk is defined by the route, not by "everything I can see":
         #   contractor  → the drafts it still owns
@@ -216,13 +221,15 @@ def list_transmittals(
             clauses.append(
                 and_(Transmittal.created_by_id == user.id, Transmittal.stage == "draft")
             )
-        if acl.has_role(db, user, project.id, ProjectRole.DCC, ProjectRole.SYSTEM_ADMIN):
+        if acl.has_role(db, user, project.id, ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.SYSTEM_ADMIN):
             clauses.append(Transmittal.stage.in_(["draft", "dcc"]))
         if acl.has_role(
             db,
             user,
             project.id,
             ProjectRole.ENGINEERING_MANAGER,
+            ProjectRole.PROJECT_CONTROL,
+            ProjectRole.PMO,
             ProjectRole.PROJECT_MANAGER,
             ProjectRole.SYSTEM_ADMIN,
         ):
@@ -249,7 +256,13 @@ def list_transmittals(
 def create_transmittal(
     project: ProjectDep, payload: TransmittalCreate, db: DbSession, user: CurrentUser
 ) -> TransmittalDetail:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
+    acl.validate_circle_for_transmittal(db, user, project.id, payload.access_circle_id)
+    if payload.type == TransmittalType.EXTERNAL.value and not acl.has_external_access(db, user, project.id):
+        raise acl.AccessDenied("صدور ترانسمیتال خارجی فقط برای عضو مجاز به دسترسی خارج از حلقه امکان‌پذیر است.")
+    acl.assert_recipients_allowed(
+        db, user, project.id, payload.extra_recipient_ids, payload.access_circle_id
+    )
     revisions = list(
         db.execute(
             select(DocumentRevision).where(
@@ -269,6 +282,7 @@ def create_transmittal(
         transmittal_type=TransmittalType(payload.type),
         actor=user,
         remarks=payload.remarks,
+        access_circle_id=payload.access_circle_id,
     )
     for draft in drafts:
         existing = {r.user_id for r in draft.recipients}
@@ -283,6 +297,13 @@ def create_transmittal(
                         action=ActionRequired.INFO,
                     )
                 )
+        acl.assert_recipients_allowed(
+            db,
+            user,
+            project.id,
+            [recipient.user_id for recipient in draft.recipients] + payload.extra_recipient_ids,
+            payload.access_circle_id,
+        )
     db.commit()
     db.refresh(drafts[0])
     return _detail(db, drafts[0])
@@ -306,7 +327,7 @@ def list_referrals(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) 
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(db, user, transmittal.project_id)
+    acl.require_transmittal(db, user, transmittal)
     return [_referral_out(item) for item in transmittal.referrals]
 
 
@@ -324,8 +345,8 @@ def forward(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(
-        db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER]
+    acl.require_transmittal(
+        db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER]
     )
     try:
         routing.forward_to_management(
@@ -358,11 +379,11 @@ def refer(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(
+    acl.require_transmittal(
         db,
         user,
-        transmittal.project_id,
-        [ProjectRole.ENGINEERING_MANAGER, ProjectRole.PROJECT_MANAGER],
+        transmittal,
+        [ProjectRole.ENGINEERING_MANAGER, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER],
     )
     try:
         routing.refer_to_discipline(
@@ -398,12 +419,12 @@ def complete_referral(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(db, user, transmittal.project_id)
+    acl.require_transmittal(db, user, transmittal)
     referral = next((item for item in transmittal.referrals if item.id == referral_id), None)
     if referral is None:
         raise HTTPException(status_code=404, detail="ارجاع یافت نشد.")
     if referral.to_user_id != user.id and not acl.has_role(
-        db, user, transmittal.project_id, ProjectRole.ENGINEERING_MANAGER, ProjectRole.PROJECT_MANAGER
+        db, user, transmittal.project_id, ProjectRole.ENGINEERING_MANAGER, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER
     ):
         raise HTTPException(status_code=403, detail="فقط گیرنده ارجاع می‌تواند آن را ببندد.")
     try:
@@ -423,7 +444,7 @@ def get_transmittal(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser)
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(db, user, transmittal.project_id)
+    acl.require_transmittal(db, user, transmittal)
     return _detail(db, transmittal)
 
 
@@ -452,8 +473,8 @@ async def upload_attachment(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    project = acl.require_project(
-        db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
+    project = acl.require_transmittal(
+        db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
     )
     line = db.get(TransmittalLine, line_id)
     if line is None or line.transmittal_id != transmittal.id:
@@ -561,7 +582,7 @@ def download_attachment(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(db, user, transmittal.project_id)
+    acl.require_transmittal(db, user, transmittal)
     attachment = next(
         (item for item in (transmittal.meta or {}).get("attachments", []) if str(item.get("id")) == str(attachment_id)),
         None,
@@ -608,7 +629,7 @@ def preview_attachment(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(db, user, transmittal.project_id)
+    acl.require_transmittal(db, user, transmittal)
     attachment = next(
         (item for item in (transmittal.meta or {}).get("attachments", []) if str(item.get("id")) == str(attachment_id)),
         None,
@@ -670,8 +691,8 @@ async def update_attachment(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    project = acl.require_project(
-        db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
+    project = acl.require_transmittal(
+        db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
     )
     attachments = list((transmittal.meta or {}).get("attachments") or [])
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
@@ -792,7 +813,7 @@ def delete_attachment(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN])
+    acl.require_transmittal(db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN])
     attachments = list((transmittal.meta or {}).get("attachments") or [])
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
@@ -835,12 +856,14 @@ def delete_transmittal(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUs
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
 
-    acl.require_project(db, user, transmittal.project_id)
+    acl.require_transmittal(db, user, transmittal)
     can_manage = acl.has_role(
         db,
         user,
         transmittal.project_id,
         ProjectRole.DCC,
+        ProjectRole.PROJECT_CONTROL,
+        ProjectRole.PMO,
         ProjectRole.PROJECT_MANAGER,
         ProjectRole.SYSTEM_ADMIN,
     )
@@ -884,7 +907,7 @@ def issue_transmittal(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_transmittal(db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     if payload.remarks:
         transmittal.remarks = payload.remarks
     try:
@@ -919,7 +942,7 @@ def acknowledge(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(db, user, transmittal.project_id)
+    acl.require_transmittal(db, user, transmittal)
     try:
         transmittal_service.acknowledge(db, transmittal=transmittal, user=user, note=payload.note)
         db.commit()
@@ -936,7 +959,7 @@ def cancel(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_transmittal(db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     try:
         transmittal_service.cancel_transmittal(db, transmittal=transmittal, actor=user, reason=payload.reason)
         db.commit()
@@ -951,7 +974,7 @@ def download_pdf(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser):
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None or not transmittal.pdf_key:
         raise HTTPException(status_code=404, detail="فایل PDF برای این برگه ارسال موجود نیست.")
-    acl.require_project(db, user, transmittal.project_id)
+    acl.require_transmittal(db, user, transmittal)
     url = get_storage().presigned_url(
         transmittal.pdf_key, filename=f"{transmittal.number or 'draft'}.pdf"
     )
@@ -968,7 +991,7 @@ def remind(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> dict:
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_project(db, user, transmittal.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_transmittal(db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     if transmittal.status not in {TransmittalStatus.ISSUED, TransmittalStatus.PARTIALLY_ACKNOWLEDGED}:
         raise HTTPException(status_code=422, detail="یادآور فقط برای برگه‌های صادرشده ارسال می‌شود.")
     sent = 0

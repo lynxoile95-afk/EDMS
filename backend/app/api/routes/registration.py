@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, DbSession, ProjectDep
 from app.models import RegistrationRow, UploadSession
-from app.models.enums import PurposeOfIssue
 from app.services import acl, ingest, registration
 from app.services.metadata_extraction import extract_metadata
 from app.services.pdf_utils import inspect_pdf

@@ -95,6 +95,7 @@ class ReviewAction(BaseModel):
     create_transmittal: bool = False
     purpose: str | None = None
     transmittal_type: str = Field(default="internal", pattern=r"^(internal|external)$")
+    access_circle_id: uuid.UUID | None = None
     recipient_ids: list[uuid.UUID] | None = None
     override_issues: bool = False
 

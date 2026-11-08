@@ -154,7 +154,15 @@ export function Layout() {
           <span className="status-dot bg-[#7fd18c]" />
           <span className="font-bold">{user?.full_name}</span>
           <span className="text-[9.5px] text-[#243842]">
-            ({project?.member_role === "dcc" ? "کنترل مدارک" : user?.is_superuser ? "مدیر سیستم" : "کاربر"})
+            ({project?.member_role === "dcc"
+              ? "کنترل مدارک"
+              : project?.member_role === "project_control"
+                ? "کنترل پروژه"
+                : project?.member_role === "pmo"
+                  ? "واحد PMO"
+                  : user?.is_superuser
+                    ? "مدیر سیستم"
+                    : "کاربر"})
           </span>
           <button
             className="btn btn-sm"

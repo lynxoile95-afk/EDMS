@@ -36,6 +36,8 @@ class MemberOut(BaseModel):
     user_id: uuid.UUID
     full_name: str
     email: str
+    national_id: str | None = None
+    mobile: str | None = None
     role: str
     discipline_id: uuid.UUID | None = None
     discipline_code: str | None = None

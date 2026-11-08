@@ -11,7 +11,6 @@ from app.api.deps import CurrentUser, DbSession, ProjectDep
 from app.models import (
     Discipline,
     DocumentRevision,
-    ProjectMember,
     MDLItem,
     Project,
     ProjectMember,
@@ -20,7 +19,7 @@ from app.models import (
     User,
 )
 from app.models.enums import ProjectRole
-from app.schemas.auth import MemberCreate, MemberOut
+from app.schemas.auth import MemberCreate
 from app.schemas.projects import (
     LookupCreate,
     LookupOut,
@@ -44,11 +43,28 @@ def _role_of(db, user: User, project_id: uuid.UUID) -> str | None:
     roles = acl.roles_in(db, user, project_id)
     if not roles:
         return None
-    ordered = ["dcc", "project_manager", "reviewer", "submitter", "system_admin"]
+    ordered = ["dcc", "project_control", "pmo", "project_manager", "engineering_manager", "reviewer", "submitter", "system_admin"]
     for role in ordered:
         if role in roles:
             return role
     return sorted(roles)[0]
+
+
+def _member_out(db, row: ProjectMember) -> MemberOut:
+    person = row.user
+    return MemberOut(
+        id=row.id,
+        user_id=row.user_id,
+        full_name=person.full_name if person else "—",
+        email=person.email if person else "—",
+        national_id=person.national_id if person else None,
+        mobile=person.mobile if person else None,
+        role=str(row.role),
+        discipline_id=row.discipline_id,
+        discipline_code=row.discipline.code if row.discipline else None,
+        discipline_name=row.discipline.name if row.discipline else None,
+        is_active=person.is_active if person else False,
+    )
 
 
 @router.get("", response_model=list[ProjectSummary], summary="پروژه‌های قابل دسترس")
@@ -106,7 +122,7 @@ def get_project_endpoint(project: ProjectDep) -> ProjectOut:
 
 @router.patch("/{project_id}", response_model=ProjectOut, summary="ویرایش پروژه")
 def update_project(project: ProjectDep, payload: ProjectUpdate, db: DbSession, user: CurrentUser) -> ProjectOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     before = {"name": project.name, "client_name": project.client_name}
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(project, field, value)
@@ -127,7 +143,7 @@ def get_settings(project: ProjectDep) -> dict:
 def update_settings(
     project: ProjectDep, payload: ProjectSettingsUpdate, db: DbSession, user: CurrentUser
 ) -> ProjectOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     before = dict(project.settings or {})
     project.settings = merge_settings(payload.settings)
     audit.record(
@@ -151,7 +167,7 @@ def list_disciplines(project: ProjectDep, db: DbSession) -> list[LookupOut]:
 
 @router.post("/{project_id}/disciplines", response_model=LookupOut, status_code=201)
 def create_discipline(project: ProjectDep, payload: LookupCreate, db: DbSession, user: CurrentUser) -> LookupOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     code = payload.code.strip().upper()
     if db.execute(
         select(Discipline).where(Discipline.project_id == project.id, Discipline.code == code)
@@ -168,27 +184,16 @@ def create_discipline(project: ProjectDep, payload: LookupCreate, db: DbSession,
     response_model=list[MemberOut],
     summary="اعضای پروژه با نقش و دیسیپلین",
 )
-def list_members(project: ProjectDep, db: DbSession) -> list[MemberOut]:
-    """The roster the referral dialog needs: each discipline's engineer by name."""
-    rows = db.execute(
-        select(ProjectMember)
-        .where(ProjectMember.project_id == project.id)
-        .order_by(ProjectMember.role, ProjectMember.created_at)
-    ).scalars()
-    return [
-        MemberOut(
-            id=row.id,
-            user_id=row.user_id,
-            full_name=row.user.full_name if row.user else "—",
-            email=row.user.email if row.user else "—",
-            role=str(row.role),
-            discipline_id=row.discipline_id,
-            discipline_code=row.discipline.code if row.discipline else None,
-            discipline_name=row.discipline.name if row.discipline else None,
-            is_active=row.user.is_active if row.user else True,
-        )
-        for row in rows
-    ]
+def list_members(project: ProjectDep, db: DbSession, user: CurrentUser) -> list[MemberOut]:
+    """The referral roster, narrowed to the caller's access circles."""
+    stmt = select(ProjectMember).where(ProjectMember.project_id == project.id)
+    allowed = acl.visible_user_ids(db, user, project.id)
+    if allowed is not None:
+        if not allowed:
+            return []
+        stmt = stmt.where(ProjectMember.user_id.in_(allowed))
+    rows = db.execute(stmt.order_by(ProjectMember.role, ProjectMember.created_at)).scalars()
+    return [_member_out(db, row) for row in rows]
 
 
 @router.get("/{project_id}/units", response_model=list[LookupOut])
@@ -201,7 +206,7 @@ def list_units(project: ProjectDep, db: DbSession) -> list[LookupOut]:
 
 @router.post("/{project_id}/units", response_model=LookupOut, status_code=201)
 def create_unit(project: ProjectDep, payload: LookupCreate, db: DbSession, user: CurrentUser) -> LookupOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     code = payload.code.strip().upper()
     if db.execute(select(Unit).where(Unit.project_id == project.id, Unit.code == code)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="این کد یونیت قبلاً ثبت شده است.")
@@ -218,7 +223,7 @@ def create_unit(project: ProjectDep, payload: LookupCreate, db: DbSession, user:
 def add_member(
     project: ProjectDep, payload: MemberCreate, db: DbSession, user: CurrentUser
 ) -> MemberOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     target = db.get(User, payload.user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="کاربر یافت نشد.")
@@ -235,7 +240,7 @@ def add_member(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return MemberOut.model_validate(existing)
+        return _member_out(db, existing)
     member = ProjectMember(
         project_id=project.id, user_id=payload.user_id, role=role, discipline_id=payload.discipline_id
     )
@@ -246,14 +251,14 @@ def add_member(
     )
     db.commit()
     db.refresh(member)
-    return MemberOut.model_validate(member)
+    return _member_out(db, member)
 
 
 @router.delete("/{project_id}/members/{member_id}", status_code=204, response_model=None)
 def remove_member(
     project: ProjectDep, member_id: uuid.UUID, db: DbSession, user: CurrentUser
 ) -> None:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     member = db.get(ProjectMember, member_id)
     if member is None or member.project_id != project.id:
         raise HTTPException(status_code=404, detail="عضو یافت نشد.")
@@ -282,7 +287,7 @@ def list_templates(project: ProjectDep, db: DbSession) -> list[TitleBlockTemplat
 def create_template(
     project: ProjectDep, payload: TitleBlockTemplateCreate, db: DbSession, user: CurrentUser
 ) -> TitleBlockTemplateOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     template = TitleBlockTemplate(
         project_id=project.id,
         name=payload.name,
@@ -310,7 +315,7 @@ def update_template(
     db: DbSession,
     user: CurrentUser,
 ) -> TitleBlockTemplateOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     template = db.get(TitleBlockTemplate, template_id)
     if template is None or template.project_id != project.id:
         raise HTTPException(status_code=404, detail="قالب یافت نشد.")

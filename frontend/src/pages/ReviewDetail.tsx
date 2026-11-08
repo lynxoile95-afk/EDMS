@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import clsx from "clsx";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { ExtractionResultDetail, MatchCandidate, ReviewAction, ReviewOutcome } from "@/lib/types";
+import type { AccessCircle, ExtractionResultDetail, MatchCandidate, ReviewAction, ReviewOutcome } from "@/lib/types";
 import { Badge, Button, Card, CardHeader, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
 import { ConfidenceBadge, DecisionBadge } from "@/components/DecisionBadge";
 import { PdfViewer } from "@/components/PdfViewer";
@@ -21,7 +21,7 @@ const FIELD_ROWS: { key: keyof ExtractionResultDetail; label: string; ltr?: bool
 
 export function ReviewDetail() {
   const { resultId } = useParams<{ resultId: string }>();
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
   const navigate = useNavigate();
 
   const [result, setResult] = useState<ExtractionResultDetail | null>(null);
@@ -31,6 +31,8 @@ export function ReviewDetail() {
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [selectedItem, setSelectedItem] = useState<string>("");
+  const [circles, setCircles] = useState<AccessCircle[]>([]);
+  const [accessCircleId, setAccessCircleId] = useState("");
   const [rev, setRev] = useState("");
   const [title, setTitle] = useState("");
   const [createTransmittal, setCreateTransmittal] = useState(true);
@@ -50,6 +52,13 @@ export function ReviewDetail() {
       setRev(data.rev ?? "");
       setTitle(data.title ?? "");
       setNotes(data.review_note ?? "");
+      try {
+        const projectCircles = await api.get<AccessCircle[]>(`/projects/${data.project_id}/circles`);
+        setCircles(projectCircles);
+        if (projectCircles.length === 1) setAccessCircleId(projectCircles[0].id);
+      } catch {
+        setCircles([]);
+      }
       try {
         setFileUrl(await api.blobUrl(`/files/source-files/${data.source_file_id}`));
         setPreviewError(null);
@@ -93,6 +102,12 @@ export function ReviewDetail() {
       payload.title = title || null;
       payload.create_transmittal = createTransmittal;
       payload.purpose = purpose;
+      payload.access_circle_id = accessCircleId || null;
+      if (createTransmittal && circles.length > 0 && !accessCircleId && !user?.is_superuser) {
+        setActionError("برای ساخت برگه ارسال باید حلقه دسترسی را انتخاب کنید.");
+        setBusy(false);
+        return;
+      }
     }
     try {
       const outcome = await api.post<ReviewOutcome>(`/extraction-results/${result.id}/review`, payload);
@@ -113,7 +128,8 @@ export function ReviewDetail() {
   if (!result) return null;
 
   const decided = result.review_status !== "pending";
-  const canDecide = hasRole("dcc") || hasRole("project_manager") || hasRole("system_admin");
+  const canDecide =
+    hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("project_manager") || hasRole("system_admin");
   const blockingIssues = result.issues.filter((issue) => issue.severity === "error" && issue.status === "open");
   const titleBlockBBox =
     (result.payload as { fields?: Record<string, { bbox?: number[] }> })?.fields?.doc_code?.bbox ?? null;
@@ -276,7 +292,7 @@ export function ReviewDetail() {
             </label>
           ) : null}
 
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-5">
             <Field label="کد مدرک انتخابی (MDL)">
               <Select value={selectedItem} onChange={(event) => setSelectedItem(event.target.value)} disabled={decided}>
                 <option value="">— انتخاب کنید —</option>
@@ -299,6 +315,14 @@ export function ReviewDetail() {
                   <option key={value} value={value}>
                     {label}
                   </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="حلقه دسترسی" hint="اعضای بیرون این حلقه، این برگه را نمی‌بینند.">
+              <Select value={accessCircleId} onChange={(event) => setAccessCircleId(event.target.value)} disabled={decided}>
+                <option value="">{user?.is_superuser ? "بدون حلقه / پروژه‌ای" : "انتخاب حلقه…"}</option>
+                {circles.map((circle) => (
+                  <option key={circle.id} value={circle.id}>{circle.code} — {circle.name}</option>
                 ))}
               </Select>
             </Field>

@@ -163,7 +163,7 @@ export function CommentList() {
                       ثبت پاسخ
                     </Button>
                   ) : null}
-                  {comment.status === "answered" && (hasRole("reviewer") || hasRole("dcc")) ? (
+                  {comment.status === "answered" && (hasRole("reviewer") || hasRole("dcc") || hasRole("project_control") || hasRole("pmo")) ? (
                     closing?.id === comment.id ? (
                       <span className="flex items-center gap-1">
                         <select
@@ -215,7 +215,7 @@ export function CommentList() {
         )}
       </Card>
 
-      {hasRole("reviewer") || hasRole("dcc") ? (
+      {hasRole("reviewer") || hasRole("dcc") || hasRole("project_control") || hasRole("pmo") ? (
         <Card>
           <CardHeader title="Comment Registration — ثبت نظر جدید" subtitle="کارشناس رشته یا کنترل مدارک" />
           <div className="section-bar">Comment Information — اطلاعات نظر</div>

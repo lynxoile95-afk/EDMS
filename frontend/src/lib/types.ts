@@ -4,6 +4,8 @@ export type Role =
   | "submitter"
   | "reviewer"
   | "dcc"
+  | "project_control"
+  | "pmo"
   | "project_manager"
   | "engineering_manager"
   | "system_admin";
@@ -37,11 +39,54 @@ export interface ProjectMember {
   user_id: string;
   full_name: string;
   email: string;
+  national_id: string | null;
+  mobile: string | null;
   role: Role;
   discipline_id: string | null;
   discipline_code: string | null;
   discipline_name: string | null;
   is_active: boolean;
+}
+
+export interface SystemUser {
+  id: string;
+  email: string;
+  full_name: string;
+  national_id: string | null;
+  mobile: string | null;
+  is_active: boolean;
+  is_superuser: boolean;
+  locale: string;
+  auth_provider: string;
+  last_login_at: string | null;
+  memberships: Membership[];
+}
+
+export interface CircleMember {
+  id: string;
+  circle_id: string;
+  user_id: string;
+  full_name: string;
+  email: string;
+  national_id: string | null;
+  mobile: string | null;
+  roles: Role[];
+  can_access_external: boolean;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AccessCircle {
+  id: string;
+  project_id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  member_count: number;
+  external_member_count: number;
+  members: CircleMember[];
 }
 
 export interface Membership {
@@ -54,6 +99,8 @@ export interface User {
   id: string;
   email: string;
   full_name: string;
+  national_id: string | null;
+  mobile: string | null;
   is_active: boolean;
   is_superuser: boolean;
   locale: string;
@@ -255,6 +302,7 @@ export interface ReviewAction {
   create_transmittal?: boolean;
   purpose?: string;
   transmittal_type?: string;
+  access_circle_id?: string | null;
   recipient_ids?: string[];
   override_issues?: boolean;
 }
@@ -280,6 +328,8 @@ export type TransmittalStatus =
 export interface Transmittal {
   id: string;
   project_id: string;
+  access_circle_id: string | null;
+  access_circle_name: string | null;
   number: string | null;
   type: "internal" | "external";
   purpose: string;

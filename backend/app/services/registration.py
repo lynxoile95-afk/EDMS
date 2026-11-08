@@ -563,7 +563,7 @@ def settings_for(project: Project) -> dict:
 
 def require_writer(db: Session, user: User, project: Project) -> None:
     """Registration writes the register, so it is document-control work."""
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
 
 
 def materialise(source: SourceFile) -> tuple[str, "object"]:

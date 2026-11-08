@@ -24,6 +24,8 @@ class ProjectRole(StrEnum):
     SUBMITTER = "submitter"
     REVIEWER = "reviewer"
     DCC = "dcc"
+    PROJECT_CONTROL = "project_control"
+    PMO = "pmo"
     PROJECT_MANAGER = "project_manager"
     ENGINEERING_MANAGER = "engineering_manager"
     SYSTEM_ADMIN = "system_admin"

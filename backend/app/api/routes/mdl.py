@@ -12,8 +12,8 @@ from fastapi.responses import Response
 from sqlalchemy import func, or_, select
 
 from app.api.deps import CurrentUser, DbSession, ProjectDep
-from app.models import DocumentRevision, Discipline, MDLImportBatch, MDLItem, ProjectMember, Unit
-from app.models.enums import ProjectRole, Severity
+from app.models import DocumentRevision, Discipline, MDLImportBatch, MDLItem, Unit
+from app.models.enums import ProjectRole
 from app.schemas.mdl import (
     MDLItemCreate,
     MDLImportBatchOut,
@@ -90,7 +90,7 @@ async def preview_mdl(
     file: UploadFile = File(...),
     sheet_name: str | None = Form(None),
 ) -> MDLPreviewOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL])
     if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=422, detail="فقط فایل اکسل (xlsx) پذیرفته می‌شود.")
     path = await _save_temp(file)
@@ -111,7 +111,7 @@ async def import_mdl(
     file: UploadFile = File(...),
     config: str = Form(..., description="JSON مطابق MDLImportRequest"),
 ) -> MDLImportReport:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL])
     try:
         request = MDLImportRequest(**json.loads(config))
     except (json.JSONDecodeError, ValueError) as exc:
@@ -196,7 +196,7 @@ def update_item(
     db: DbSession,
     user: CurrentUser,
 ) -> MDLItemOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL])
     item = db.get(MDLItem, item_id)
     if item is None or item.project_id != project.id:
         raise HTTPException(status_code=404, detail="ردیف MDL یافت نشد.")
@@ -255,7 +255,7 @@ def create_item(
     discipline/unit codes must already exist, so a hand-typed row can never point at
     a lookup the project does not have.
     """
-    acl.require_project(db, user, project.id, [ProjectRole.DCC])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL])
     doc_code = payload.doc_code.strip().upper()
     cfg = merge_settings(project.settings)
     if not is_valid_code(normalize_code(doc_code), cfg["doc_code_pattern"]):
@@ -367,7 +367,7 @@ def create_item(
     summary="حذف ردیف MDL (فقط کارشناس کنترل اسناد و تنها بدون بازنگری)",
 )
 def delete_item(project: ProjectDep, item_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Response:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL])
     item = db.get(MDLItem, item_id)
     if item is None or item.project_id != project.id:
         raise HTTPException(status_code=404, detail="ردیف MDL یافت نشد.")

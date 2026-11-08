@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models.core import AccessCircle
 
 from sqlalchemy import (
     Boolean,
@@ -94,6 +98,10 @@ class Transmittal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    #: Optional collaboration boundary. NULL keeps legacy project-wide sheets visible.
+    access_circle_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("access_circles.id", ondelete="SET NULL"), index=True
+    )
     number: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     seq: Mapped[int | None] = mapped_column(Integer)
     type: Mapped[TransmittalType] = mapped_column(String(16), default=TransmittalType.INTERNAL)
@@ -120,6 +128,7 @@ class Transmittal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: stage of the review route (see TransmittalStage); status stays the sheet's own state
     stage: Mapped[str] = mapped_column(String(16), default="draft", server_default="draft", index=True)
 
+    access_circle: Mapped["AccessCircle | None"] = relationship(lazy="joined")
     lines: Mapped[list["TransmittalLine"]] = relationship(
         back_populates="transmittal", cascade="all, delete-orphan", lazy="selectin",
         order_by="TransmittalLine.line_no",

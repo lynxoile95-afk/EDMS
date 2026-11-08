@@ -1,6 +1,8 @@
 """SQLAlchemy models. Importing this package registers all mappers."""
 
 from app.models.core import (
+    AccessCircle,
+    AccessCircleMember,
     Discipline,
     Project,
     ProjectMember,
@@ -37,6 +39,8 @@ from app.models.transmittal import (
 
 __all__ = [
     "RegistrationRow",
+    "AccessCircle",
+    "AccessCircleMember",
     "Discipline",
     "Project",
     "ProjectMember",

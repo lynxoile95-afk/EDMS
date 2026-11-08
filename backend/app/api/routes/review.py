@@ -59,7 +59,7 @@ def review_queue(
     size: int = Query(20, ge=1, le=100),
 ) -> dict:
     acl.require_project(
-        db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER, ProjectRole.REVIEWER]
+        db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.REVIEWER]
     )
     stmt = select(ExtractionResult).where(ExtractionResult.project_id == project.id)
     if decision:
@@ -164,7 +164,7 @@ def review_result(
     if result is None:
         raise HTTPException(status_code=404, detail="نتیجه استخراج یافت نشد.")
     project = acl.require_project(
-        db, user, result.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER]
+        db, user, result.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER]
     )
     if result.review_status != ReviewStatus.PENDING:
         raise HTTPException(status_code=409, detail="این مورد قبلاً بررسی شده است.")
@@ -303,6 +303,16 @@ def review_result(
 
     if payload.create_transmittal:
         purpose = PurposeOfIssue(payload.purpose or "IFR")
+        acl.validate_circle_for_transmittal(db, user, project.id, payload.access_circle_id)
+        if payload.transmittal_type == TransmittalType.EXTERNAL.value and not acl.has_external_access(
+            db, user, project.id
+        ):
+            raise acl.AccessDenied(
+                "صدور ترانسمیتال خارجی فقط برای عضو مجاز به دسترسی خارج از حلقه امکان‌پذیر است."
+            )
+        acl.assert_recipients_allowed(
+            db, user, project.id, payload.recipient_ids or [], payload.access_circle_id
+        )
         drafts = transmittal_service.create_draft_transmittals(
             db,
             project=project,
@@ -313,9 +323,10 @@ def review_result(
             session_id=result.session_id,
             remarks=note or None,
             settings_override=cfg,
+            access_circle_id=payload.access_circle_id,
         )
-        if payload.recipient_ids:
-            for draft in drafts:
+        for draft in drafts:
+            if payload.recipient_ids:
                 existing = {r.user_id for r in draft.recipients}
                 for recipient_id in payload.recipient_ids:
                     if recipient_id not in existing:
@@ -329,6 +340,13 @@ def review_result(
                                 action=ActionRequired.REVIEW,
                             )
                         )
+            acl.assert_recipients_allowed(
+                db,
+                user,
+                project.id,
+                [recipient.user_id for recipient in draft.recipients] + (payload.recipient_ids or []),
+                payload.access_circle_id,
+            )
         db.flush()
         transmittal_ids = [draft.id for draft in drafts]
 
@@ -372,7 +390,7 @@ def settings_public_url() -> str:
 def bulk_review(
     project: ProjectDep, payload: BulkReviewRequest, db: DbSession, user: CurrentUser
 ) -> dict:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     processed, skipped = [], []
     for result_id in payload.result_ids:
         result = db.get(ExtractionResult, result_id)
@@ -405,7 +423,7 @@ def reprocess(result_id: uuid.UUID, db: DbSession, user: CurrentUser) -> dict:
     if result is None:
         raise HTTPException(status_code=404, detail="نتیجه یافت نشد.")
     acl.require_project(
-        db, user, result.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
+        db, user, result.project_id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
     )
     from app.workers.tasks import reprocess_result
 

@@ -147,7 +147,8 @@ export function TransmittalDetail() {
   if (error) return <ErrorBox message={error} onRetry={() => void load()} />;
   if (!data) return null;
 
-  const canManage = hasRole("dcc") || hasRole("project_manager") || hasRole("system_admin");
+  const canManage =
+    hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("project_manager") || hasRole("system_admin");
   const issued = ["issued", "partially_acknowledged", "acknowledged", "closed"].includes(data.status);
   const allComments = Object.values(comments).flat().flatMap((list) => list.comments);
   const meta = data.meta as Record<string, string | undefined>;
@@ -166,8 +167,9 @@ export function TransmittalDetail() {
 
   // --- review route -------------------------------------------------------
   const stage = data.stage ?? "draft";
-  const isDcc = hasRole("dcc");
-  const isManagement = hasRole("engineering_manager") || hasRole("project_manager");
+  const isDcc = hasRole("dcc") || hasRole("project_control") || hasRole("pmo");
+  const isManagement =
+    hasRole("engineering_manager") || hasRole("project_control") || hasRole("pmo") || hasRole("project_manager");
   const canForward = isDcc && ["dcc", "draft"].includes(stage);
   const canRefer = isManagement && stage === "management";
   const pendingReferrals = (data.referrals ?? []).filter((item) => item.status === "pending");
@@ -196,6 +198,8 @@ export function TransmittalDetail() {
     await loadMembers();
     const manager =
       members.find((member) => member.role === "engineering_manager") ??
+      members.find((member) => member.role === "project_control") ??
+      members.find((member) => member.role === "pmo") ??
       members.find((member) => member.role === "project_manager");
     setForwardForm((form) => ({ ...form, to_user_id: form.to_user_id || manager?.user_id || "" }));
     setForwardOpen(true);
@@ -260,7 +264,7 @@ export function TransmittalDetail() {
     }
   };
 
-  const canEditDocuments = hasRole("dcc") || hasRole("system_admin");
+  const canEditDocuments = hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("system_admin");
   const canManageAttachments = canManage;
 
   const openFlowForLine = (line?: TransmittalLine) => {
@@ -1608,12 +1612,12 @@ export function TransmittalDetail() {
               value={forwardForm.to_user_id}
               onChange={(event) => setForwardForm({ ...forwardForm, to_user_id: event.target.value })}
             >
-              <option value="">— پیش‌فرض: مدیر مهندسی —</option>
+              <option value="">— پیش‌فرض: مدیر مهندسی / PMO —</option>
               {members
-                .filter((member) => ["engineering_manager", "project_manager"].includes(member.role))
+                .filter((member) => ["engineering_manager", "project_control", "pmo", "project_manager"].includes(member.role))
                 .map((member) => (
                   <option key={member.user_id} value={member.user_id}>
-                    {member.role === "engineering_manager" ? "مدیر مهندسی" : "مدیر پروژه"} —{" "}
+                    {member.role === "engineering_manager" ? "مدیر مهندسی" : member.role === "project_control" ? "کنترل پروژه" : member.role === "pmo" ? "واحد PMO" : "مدیر پروژه"} —{" "}
                     {member.full_name}
                   </option>
                 ))}

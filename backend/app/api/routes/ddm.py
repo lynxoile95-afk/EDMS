@@ -63,7 +63,7 @@ def list_rules(project: ProjectDep, db: DbSession, user: CurrentUser) -> list[DD
 
 @router.post("/rules", response_model=DDMRuleOut, status_code=201, summary="افزودن قاعده DDM")
 def create_rule(project: ProjectDep, payload: DDMRuleCreate, db: DbSession, user: CurrentUser) -> DDMRuleOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     if not payload.recipients:
         raise HTTPException(status_code=422, detail="قاعده بدون گیرنده معتبر نیست.")
     rule = DDMRule(
@@ -94,7 +94,7 @@ def create_rule(project: ProjectDep, payload: DDMRuleCreate, db: DbSession, user
 def update_rule(
     project: ProjectDep, rule_id: uuid.UUID, payload: DDMRuleCreate, db: DbSession, user: CurrentUser
 ) -> DDMRuleOut:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     rule = db.get(DDMRule, rule_id)
     if rule is None or rule.project_id != project.id:
         raise HTTPException(status_code=404, detail="قاعده یافت نشد.")
@@ -112,7 +112,7 @@ def update_rule(
 
 @router.delete("/rules/{rule_id}", status_code=204, response_model=None, summary="حذف قاعده DDM")
 def delete_rule(project: ProjectDep, rule_id: uuid.UUID, db: DbSession, user: CurrentUser) -> None:
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_MANAGER])
+    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     rule = db.get(DDMRule, rule_id)
     if rule is None or rule.project_id != project.id:
         raise HTTPException(status_code=404, detail="قاعده یافت نشد.")

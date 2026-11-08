@@ -47,6 +47,11 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: Iranian national identifier and mobile are kept as strings to preserve leading zeroes.
+    #: They are nullable only for legacy rows created before identity data became mandatory;
+    #: all new accounts are validated as required by ``UserCreate``.
+    national_id: Mapped[str | None] = mapped_column(String(10), unique=True, index=True)
+    mobile: Mapped[str | None] = mapped_column(String(32), unique=True, index=True)
     hashed_password: Mapped[str | None] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
@@ -56,6 +61,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     memberships: Mapped[list["ProjectMember"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", lazy="selectin"
+    )
+    circle_memberships: Mapped[list["AccessCircleMember"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -77,6 +85,53 @@ class ProjectMember(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     user: Mapped[User] = relationship(back_populates="memberships", lazy="joined")
     project: Mapped[Project] = relationship(lazy="joined")
     discipline: Mapped["Discipline | None"] = relationship(lazy="joined")
+
+
+class AccessCircle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A project-scoped group that defines a private collaboration boundary.
+
+    A user may belong to several circles, but external visibility is deliberately
+    granted on the membership row. This makes the common rule explicit: everyone
+    in a circle can collaborate with the circle, while at most one member may be
+    allowed to see and route work outside it.
+    """
+
+    __tablename__ = "access_circles"
+    __table_args__ = (
+        UniqueConstraint("project_id", "code", name="uq_access_circle_project_code"),
+        Index("ix_access_circle_project_active", "project_id", "is_active"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+    project: Mapped["Project"] = relationship(lazy="joined")
+    created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_id], lazy="joined")
+    members: Mapped[list["AccessCircleMember"]] = relationship(
+        back_populates="circle", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class AccessCircleMember(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Membership of a person in a project access circle."""
+
+    __tablename__ = "access_circle_members"
+    __table_args__ = (
+        UniqueConstraint("circle_id", "user_id", name="uq_access_circle_member"),
+        Index("ix_access_circle_member_user", "user_id", "circle_id"),
+    )
+
+    circle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("access_circles.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    #: Only this explicit flag opens the member's view/routing outside the circle.
+    can_access_external: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+    circle: Mapped[AccessCircle] = relationship(back_populates="members", lazy="joined")
+    user: Mapped[User] = relationship(back_populates="circle_memberships", lazy="joined")
 
 
 class Discipline(UUIDPrimaryKeyMixin, TimestampMixin, Base):

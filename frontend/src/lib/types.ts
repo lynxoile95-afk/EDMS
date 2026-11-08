@@ -1,6 +1,6 @@
 /** API contracts (snake_case mirrors the backend Pydantic schemas). */
 
-export type Role =
+export type BuiltInRole =
   | "submitter"
   | "reviewer"
   | "dcc"
@@ -9,6 +9,9 @@ export type Role =
   | "project_manager"
   | "engineering_manager"
   | "system_admin";
+
+/** Built-in route keys plus project-specific free-text role titles. */
+export type Role = BuiltInRole | (string & {});
 
 /** Where a transmittal sits on the contractor → DCC → management → discipline route. */
 export type TransmittalStage = "draft" | "dcc" | "management" | "discipline" | "closed";

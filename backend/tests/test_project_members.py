@@ -57,3 +57,28 @@ def test_add_member_accepts_new_typed_discipline(client, project, users):
     body = response.json()
     assert body["discipline_name"] == "ایمنی فرایند"
     assert body["discipline_code"].startswith("CUSTOM-")
+
+
+def test_member_accepts_free_text_role_and_normalizes_known_role_label(client, project, users):
+    admin = auth_headers(client, "admin@edms-test.com")
+    member = next(
+        item for item in client.get(f"/api/v1/projects/{project.id}/members", headers=admin).json()
+        if item["email"] == "reviewer@edms-test.com"
+    )
+    free_text_role = "کارشناس کنترل کیفیت و هماهنگی مدارک پروژه"
+
+    custom = client.patch(
+        f"/api/v1/projects/{project.id}/members/{member['id']}",
+        headers=admin,
+        json={"role": free_text_role, "discipline_id": None, "discipline_name": None},
+    )
+    assert custom.status_code == 200, custom.text
+    assert custom.json()["role"] == free_text_role
+
+    known_label = client.patch(
+        f"/api/v1/projects/{project.id}/members/{member['id']}",
+        headers=admin,
+        json={"role": "کارشناس DCC", "discipline_id": None, "discipline_name": None},
+    )
+    assert known_label.status_code == 200, known_label.text
+    assert known_label.json()["role"] == "dcc"

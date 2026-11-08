@@ -19,7 +19,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from app.models.enums import ProjectRole
 
 
 class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -79,7 +78,9 @@ class ProjectMember(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    role: Mapped[ProjectRole] = mapped_column(String(32), nullable=False)
+    # Built-in workflow roles use ProjectRole values, while the administration UI
+    # also permits a project-specific free-text title (for example, "کارشناس DCC").
+    role: Mapped[str] = mapped_column(String(255), nullable=False)
     discipline_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("disciplines.id", ondelete="SET NULL"))
 
     user: Mapped[User] = relationship(back_populates="memberships", lazy="joined")

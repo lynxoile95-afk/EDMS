@@ -47,6 +47,8 @@ const ROLE_ALIASES: Record<string, Role> = {
   "کارشناس کنترل مدارک": "dcc",
   "کارشناس کنترل اسناد": "dcc",
   "کنترل مدارک": "dcc",
+  "کنترل اسناد": "dcc",
+  "کارشناس dcc": "dcc",
   "کارشناس دیسیپلین": "reviewer",
   "کارشناس رشته": "reviewer",
   "واحد pmo": "pmo",
@@ -232,10 +234,12 @@ export function Team() {
     );
   };
   const roleForValue = (value: string): Role | null => {
-    const normalized = value.trim().toLowerCase().replace(/\u200c/g, " ").replace(/\s+/g, " ");
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const normalized = trimmed.toLowerCase().replace(/\u200c/g, " ").replace(/\s+/g, " ");
     return ROLE_ALIASES[normalized] ?? ROLE_OPTIONS.find(
       (item) => item.value === normalized || item.label.toLowerCase() === normalized,
-    )?.value ?? null;
+    )?.value ?? trimmed;
   };
   const disciplineForValue = (value: string) => {
     const normalized = value.trim().toLowerCase();

@@ -125,13 +125,13 @@ class PasswordChange(BaseModel):
 
 class MemberCreate(BaseModel):
     user_id: uuid.UUID
-    role: str
+    role: str = Field(min_length=1, max_length=255)
     discipline_id: uuid.UUID | None = None
     discipline_name: str | None = Field(default=None, max_length=255)
 
 
 class MemberUpdate(BaseModel):
-    role: str
+    role: str = Field(min_length=1, max_length=255)
     discipline_id: uuid.UUID | None = None
     discipline_name: str | None = Field(default=None, max_length=255)
 

@@ -39,6 +39,39 @@ from app.services.project_settings import merge_settings
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+_ROLE_ALIASES = {
+    "کارشناس کنترل پروژه": ProjectRole.PROJECT_CONTROL.value,
+    "کنترل پروژه": ProjectRole.PROJECT_CONTROL.value,
+    "کارشناس کنترل مدارک": ProjectRole.DCC.value,
+    "کارشناس کنترل اسناد": ProjectRole.DCC.value,
+    "کنترل مدارک": ProjectRole.DCC.value,
+    "کنترل اسناد": ProjectRole.DCC.value,
+    "کارشناس dcc": ProjectRole.DCC.value,
+    "کارشناس دیسیپلین": ProjectRole.REVIEWER.value,
+    "کارشناس رشته": ProjectRole.REVIEWER.value,
+    "واحد pmo": ProjectRole.PMO.value,
+    "کارشناس pmo": ProjectRole.PMO.value,
+    "مدیر پروژه": ProjectRole.PROJECT_MANAGER.value,
+    "مدیر مهندسی": ProjectRole.ENGINEERING_MANAGER.value,
+    "مدیر سیستم": ProjectRole.SYSTEM_ADMIN.value,
+    "پیمانکار": ProjectRole.SUBMITTER.value,
+}
+
+
+def _resolve_member_role(value: str) -> str:
+    """Accept built-in or project-specific free-text role titles.
+
+    Known Persian labels are normalized to the canonical workflow key so the
+    existing routing and ACL behaviour remains intact. Any other non-empty title
+    is retained verbatim (after trimming) as a project-specific role label.
+    """
+    role = value.strip()
+    if not role:
+        raise HTTPException(status_code=422, detail="نقش پروژه نمی‌تواند خالی باشد.")
+    normalized = " ".join(role.replace("\u200c", " ").casefold().split())
+    return _ROLE_ALIASES.get(normalized, role)
+
+
 def _role_of(db, user: User, project_id: uuid.UUID) -> str | None:
     roles = acl.roles_in(db, user, project_id)
     if not roles:
@@ -268,10 +301,7 @@ def add_member(
     target = db.get(User, payload.user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="کاربر یافت نشد.")
-    try:
-        role = ProjectRole(payload.role)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="نقش نامعتبر است.") from exc
+    role = _resolve_member_role(payload.role)
     discipline = _resolve_member_discipline(
         db,
         project.id,
@@ -302,7 +332,7 @@ def add_member(
         project_id=project.id,
         after={
             "user": target.email,
-            "role": role.value,
+            "role": role,
             "discipline_id": str(discipline_id) if discipline_id else None,
             "discipline_name": discipline.name if discipline else None,
         },
@@ -329,10 +359,7 @@ def update_member(
     member = db.get(ProjectMember, member_id)
     if member is None or member.project_id != project.id:
         raise HTTPException(status_code=404, detail="عضویت پروژه یافت نشد.")
-    try:
-        role = ProjectRole(payload.role)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="نقش پروژه نامعتبر است.") from exc
+    role = _resolve_member_role(payload.role)
 
     discipline = _resolve_member_discipline(
         db,
@@ -365,7 +392,7 @@ def update_member(
         actor=user,
         project_id=project.id,
         before=before,
-        after={"role": role.value, "discipline_id": str(discipline_id) if discipline_id else None, "discipline_name": discipline.name if discipline else None},
+        after={"role": role, "discipline_id": str(discipline_id) if discipline_id else None, "discipline_name": discipline.name if discipline else None},
     )
     db.commit()
     db.refresh(member)

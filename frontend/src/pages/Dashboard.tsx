@@ -34,6 +34,7 @@ const REFERRAL_ACTION_LABELS: Record<string, string> = {
   approve: "For Follow Up",
   info: "For Information",
   for_construction: "For Construction",
+  return_to_sender: "بازگشت به فرستنده",
 };
 
 type InboxOperation = "for_construction" | "info" | "review";
@@ -60,6 +61,7 @@ interface InboxRow {
   fresh: boolean;
   entityId?: string;
   transmittalId?: string;
+  manualWorkflow: boolean;
   canDelete: boolean;
 }
 
@@ -75,6 +77,7 @@ export function Dashboard() {
   const [checkedRows, setCheckedRows] = useState<Set<string>>(new Set());
   const [flow, setFlow] = useState<TransmittalDetail | null>(null);
   const [flowBusy, setFlowBusy] = useState(false);
+  const [issueBusy, setIssueBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [unreadEntities, setUnreadEntities] = useState<Set<string>>(new Set());
@@ -132,6 +135,7 @@ export function Dashboard() {
       href: `/review/${item.id}`,
       fresh: false,
       entityId: item.id,
+      manualWorkflow: false,
       canDelete: false,
     }));
 
@@ -154,6 +158,7 @@ export function Dashboard() {
       fresh: false,
       entityId: item.id,
       transmittalId: item.id,
+      manualWorkflow: item.manual_workflow,
       // Hard deletion is intentionally limited to drafts; issued sheets remain
       // in the audit trail and use the separate, permission-checked cancel flow.
       canDelete: item.status === "draft",
@@ -216,6 +221,22 @@ export function Dashboard() {
       await load();
     } catch (err) {
       setNotice(err instanceof ApiError ? err.detail : "ثبت تأییدیه ناموفق بود.");
+    }
+  };
+
+  const issueDraft = async (row: InboxRow | null = current) => {
+    if (!row?.transmittalId || !row.manualWorkflow || row.status !== "draft") return;
+    if (!window.confirm("پیش‌نویس پس از صدور نهایی شماره رسمی می‌گیرد و صادر می‌شود. ادامه می‌دهید؟")) return;
+    setIssueBusy(true);
+    setNotice(null);
+    try {
+      await api.post(`/transmittals/${row.transmittalId}/issue`, { notify: true });
+      setNotice("ترانسمیتال با موفقیت صادر شد.");
+      await load();
+    } catch (err) {
+      setNotice(err instanceof ApiError ? err.detail : "صدور نهایی ترانسمیتال ناموفق بود.");
+    } finally {
+      setIssueBusy(false);
     }
   };
 
@@ -434,10 +455,17 @@ export function Dashboard() {
                       <input
                         type="checkbox"
                         className="h-3.5 w-3.5 accent-[#1f4e79]"
-                        checked={checkedRows.has(row.key)}
-                        aria-label={`انتخاب ردیف ${index + 1}`}
+                        checked={row.manualWorkflow && row.status === "draft" ? false : checkedRows.has(row.key)}
+                        aria-label={
+                          row.manualWorkflow && row.status === "draft"
+                            ? "صدور نهایی ترانسمیتال"
+                            : `انتخاب ردیف ${index + 1}`
+                        }
+                        title={row.manualWorkflow && row.status === "draft" ? "صدور نهایی ترانسمیتال" : "انتخاب ردیف"}
                         onClick={(event) => event.stopPropagation()}
-                        onChange={() => toggleRow(row)}
+                        onChange={() =>
+                          row.manualWorkflow && row.status === "draft" ? void issueDraft(row) : toggleRow(row)
+                        }
                       />
                     </td>
                     <td className="cell-center">
@@ -513,6 +541,9 @@ export function Dashboard() {
                             <div className="border-t border-[#c3ccd6]" />
                             {[
                               { label: "مشاهده مدرک", run: () => navigate(row.href) },
+                              ...(row.manualWorkflow && row.status === "draft"
+                                ? [{ label: "صدور نهایی ترانسمیتال", run: () => void issueDraft(row), disabled: issueBusy }]
+                                : []),
                               {
                                 label: "تأییدیه دریافت",
                                 run: () => void acknowledge(row),
@@ -572,6 +603,16 @@ export function Dashboard() {
               disabled: !current,
               onClick: () => current && navigate(current.href),
             },
+            ...(current?.manualWorkflow && current.status === "draft"
+              ? [
+                  {
+                    label: "صدور نهایی ترانسمیتال",
+                    icon: <IconPrint />,
+                    disabled: issueBusy,
+                    onClick: () => void issueDraft(),
+                  },
+                ]
+              : []),
             {
               label: "تأییدیه دریافت",
               icon: <IconMail />,

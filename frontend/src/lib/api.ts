@@ -30,13 +30,19 @@ export class ApiError extends Error {
   /** A human-readable detail, including structured conflict payloads. */
   get detail(): string {
     const detail = this.payload?.detail;
+    const validationErrors = this.payload?.errors?.map((error) => `${error.field}: ${error.message}`).join(" | ");
+    if (validationErrors) {
+      // The API keeps the Persian summary for compatibility, but field-level
+      // validation is the actionable part and must not be hidden behind it.
+      if (typeof detail === "string" && detail !== "داده‌های ورودی معتبر نیستند.") {
+        return `${detail} | ${validationErrors}`;
+      }
+      return validationErrors;
+    }
     if (typeof detail === "string") return detail;
     if (detail?.message) {
       const issues = detail.issues?.map((issue) => `${issue.rule_code}: ${issue.message_fa}`).join(" | ");
       return issues ? `${detail.message} (${issues})` : detail.message;
-    }
-    if (this.payload?.errors?.length) {
-      return this.payload.errors.map((error) => `${error.field}: ${error.message}`).join(" | ");
     }
     return this.message;
   }

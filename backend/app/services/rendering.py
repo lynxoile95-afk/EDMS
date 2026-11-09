@@ -126,7 +126,12 @@ PURPOSE_FA = {
     "RTC": "پاسخ به نظرات",
     "ASB": "چون‌ساخت (As-Built)",
 }
-TYPE_FA = {"internal": "داخلی", "external": "خارجی"}
+TYPE_FA = {
+    "OT": "ترانسمیتال مهندسی - OT",
+    "OS": "ترانسمیتال نهایی - OS",
+    "internal": "داخلی",
+    "external": "خارجی",
+}
 ACTION_FA = {
     "review": "بررسی",
     "approve": "تأیید",

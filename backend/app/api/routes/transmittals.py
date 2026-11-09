@@ -7,7 +7,7 @@ import mimetypes
 import os
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
@@ -20,11 +20,20 @@ from app.models import (
     DocumentRevision,
     ExtractionResult,
     Project,
+    ProjectMember,
     Transmittal,
     TransmittalLine,
     TransmittalRecipient,
+    TransmittalReferral,
+    User,
 )
-from app.models.enums import ProjectRole, TransmittalStatus, TransmittalType
+from app.models.enums import (
+    ActionRequired,
+    ProjectRole,
+    ReferralStatus,
+    TransmittalStatus,
+    TransmittalType,
+)
 from app.schemas.transmittals import (
     AcknowledgeRequest,
     CancelRequest,
@@ -32,7 +41,9 @@ from app.schemas.transmittals import (
     ForwardRequest,
     IssueRequest,
     LineOut,
+    PersonnelReferralItem,
     RecipientOut,
+    ReferPersonnelRequest,
     ReferRequest,
     AttachmentOut,
     ReferralOut,
@@ -67,7 +78,15 @@ def _out(transmittal: Transmittal) -> TransmittalOut:
         from_org=transmittal.from_org,
         to_org=transmittal.to_org,
         due_date=transmittal.due_date,
+        issue_date=transmittal.issue_date,
         issued_at=transmittal.issued_at,
+        created_by_id=transmittal.created_by_id,
+        created_by_name=transmittal.created_by.full_name if transmittal.created_by else None,
+        issued_by_id=transmittal.issued_by_id,
+        issued_by_name=transmittal.issued_by.full_name if transmittal.issued_by else None,
+        final_approver_id=transmittal.final_approver_id,
+        final_approver_name=transmittal.final_approver.full_name if transmittal.final_approver else None,
+        manual_workflow=bool(transmittal.manual_workflow),
         remarks=transmittal.remarks,
         meta={
             **(transmittal.meta or {}),
@@ -142,11 +161,14 @@ def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
             action=str(line.action),
             status=str(line.status),
             doc_status=(
-                line.revision.mdl_item.status
-                if line.revision and line.revision.mdl_item and line.revision.mdl_item.status
-                else result_statuses.get(line.revision.extraction_result_id)
-                if line.revision and line.revision.extraction_result_id
-                else None
+                line.doc_status
+                or (
+                    line.revision.mdl_item.status
+                    if line.revision and line.revision.mdl_item and line.revision.mdl_item.status
+                    else result_statuses.get(line.revision.extraction_result_id)
+                    if line.revision and line.revision.extraction_result_id
+                    else None
+                )
             ),
             due_date=line.due_date,
             note=line.note,
@@ -221,6 +243,11 @@ def list_transmittals(
             clauses.append(
                 and_(Transmittal.created_by_id == user.id, Transmittal.stage == "draft")
             )
+        # A manual creator keeps the sheet in their own desk after final issue so
+        # the separate «ارجاع مدرک» operation remains available there.
+        clauses.append(
+            and_(Transmittal.manual_workflow.is_(True), Transmittal.created_by_id == user.id)
+        )
         if acl.has_role(db, user, project.id, ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.SYSTEM_ADMIN):
             clauses.append(Transmittal.stage.in_(["draft", "dcc"]))
         if acl.has_role(
@@ -449,6 +476,161 @@ def get_transmittal(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser)
 
 
 @router.post(
+    "/transmittals/{transmittal_id}/refer-people",
+    response_model=TransmittalDetail,
+    summary="ارجاع ترانسمیتال دستی به پرسنل انتخاب‌شده",
+)
+def refer_people(
+    transmittal_id: uuid.UUID,
+    payload: ReferPersonnelRequest,
+    db: DbSession,
+    user: CurrentUser,
+) -> TransmittalDetail:
+    """Send an issued manual transmittal to selected project personnel.
+
+    This is intentionally separate from the existing management-to-discipline
+    route: the manual creator selects project members directly from the roster.
+    Multiple selected people receive independent referral rows and notifications.
+    """
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal)
+
+    can_manage = acl.has_role(
+        db,
+        user,
+        transmittal.project_id,
+        ProjectRole.DCC,
+        ProjectRole.PROJECT_CONTROL,
+        ProjectRole.PMO,
+        ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
+    )
+    if not transmittal.manual_workflow or (transmittal.created_by_id != user.id and not can_manage):
+        raise HTTPException(
+            status_code=403,
+            detail="ارجاع مدرک فقط برای ایجادکننده ترانسمیتال دستی مجاز است.",
+        )
+    if str(transmittal.status) not in {
+        str(TransmittalStatus.ISSUED),
+        str(TransmittalStatus.PARTIALLY_ACKNOWLEDGED),
+        str(TransmittalStatus.ACKNOWLEDGED),
+        str(TransmittalStatus.CLOSED),
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="ارجاع مدرک پس از صدور نهایی ترانسمیتال امکان‌پذیر است.",
+        )
+
+    referral_specs = payload.people or [
+        PersonnelReferralItem(
+            user_id=user_id,
+            action=ActionRequired.REVIEW,
+            note=payload.note,
+        )
+        for user_id in (payload.user_ids or [])
+    ]
+    if not referral_specs:
+        raise HTTPException(status_code=422, detail="حداقل یک عضو فعال پروژه را انتخاب کنید.")
+    if payload.people and len({item.user_id for item in payload.people}) != len(payload.people):
+        raise HTTPException(status_code=422, detail="هر عضو پروژه فقط یک‌بار قابل انتخاب است.")
+
+    target_ids = {item.user_id for item in referral_specs}
+    members = list(
+        db.execute(
+            select(ProjectMember)
+            .join(User, User.id == ProjectMember.user_id)
+            .where(
+                ProjectMember.project_id == transmittal.project_id,
+                ProjectMember.user_id.in_(target_ids),
+                User.is_active.is_(True),
+            )
+        ).scalars()
+    )
+    active_members = {member.user_id: member for member in members}
+    if set(active_members) != target_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="همه افراد انتخاب‌شده باید عضو فعال همین پروژه باشند.",
+        )
+
+    existing_pending = {
+        referral.to_user_id
+        for referral in transmittal.referrals
+        if str(referral.status) == str(ReferralStatus.PENDING)
+    }
+    due_date = date.today() + timedelta(days=payload.due_days)
+    created_count = 0
+    created_people: list[dict[str, str | None]] = []
+    for spec in referral_specs:
+        member = active_members[spec.user_id]
+        if member.user_id in existing_pending:
+            continue
+        target = member.user
+        if target is None:
+            continue
+        acl.assert_can_route_to(db, user, target, transmittal)
+        referral = TransmittalReferral(
+            transmittal_id=transmittal.id,
+            from_user_id=user.id,
+            to_user_id=target.id,
+            discipline_id=member.discipline_id,
+            action=str(spec.action),
+            note=spec.note,
+            due_date=due_date,
+            status=str(ReferralStatus.PENDING),
+        )
+        db.add(referral)
+        db.flush()
+
+        if not any(recipient.user_id == target.id for recipient in transmittal.recipients):
+            transmittal.recipients.append(
+                TransmittalRecipient(
+                    user_id=target.id,
+                    action=spec.action,
+                )
+            )
+
+        notification.queue(
+            db,
+            user=target,
+            template="transmittal.referred",
+            context={
+                "number": transmittal.number or "پیش‌نویس",
+                "project": transmittal.meta.get("project_name", ""),
+                "from": user.full_name,
+                "action_fa": "ارجاع مدرک",
+                "note": spec.note or "—",
+                "link": f"{settings.public_base_url}/transmittals/{transmittal.id}",
+            },
+            project_id=transmittal.project_id,
+            entity_type="transmittal",
+            entity_id=str(transmittal.id),
+            dedupe_key=f"manual-referral:{referral.id}:{target.id}",
+        )
+        created_people.append(
+            {"user_id": str(target.id), "action": str(spec.action), "note": spec.note}
+        )
+        created_count += 1
+
+    if created_count:
+        transmittal.stage = "discipline"
+    audit.record(
+        db,
+        action="transmittal.manual_refer",
+        entity_type="transmittal",
+        entity_id=transmittal.id,
+        actor=user,
+        project_id=transmittal.project_id,
+        after={"people": created_people, "created": created_count},
+    )
+    db.commit()
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
+@router.post(
     "/transmittals/{transmittal_id}/attachments",
     status_code=201,
     summary="پیوست PDF یا فایل Native به مدرک",
@@ -473,9 +655,26 @@ async def upload_attachment(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    project = acl.require_transmittal(
-        db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
+    project = acl.require_transmittal(db, user, transmittal)
+    can_manage = acl.has_role(
+        db,
+        user,
+        transmittal.project_id,
+        ProjectRole.DCC,
+        ProjectRole.PROJECT_CONTROL,
+        ProjectRole.PMO,
+        ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
     )
+    is_manual_owner = (
+        transmittal.manual_workflow
+        and transmittal.created_by_id == user.id
+        and str(transmittal.status) == str(TransmittalStatus.DRAFT)
+    )
+    if not can_manage and not is_manual_owner:
+        raise acl.AccessDenied("فقط ایجادکننده پیش‌نویس یا مسئول کنترل می‌تواند پیوست بارگذاری کند.")
+    if transmittal.manual_workflow and kind != "pdf":
+        raise HTTPException(status_code=422, detail="در ترانسمیتال دستی فقط فایل PDF پذیرفته می‌شود.")
     line = db.get(TransmittalLine, line_id)
     if line is None or line.transmittal_id != transmittal.id:
         raise HTTPException(status_code=404, detail="ردیف مدرک این برگه ارسال یافت نشد.")
@@ -691,9 +890,26 @@ async def update_attachment(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    project = acl.require_transmittal(
-        db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN]
+    project = acl.require_transmittal(db, user, transmittal)
+    can_manage = acl.has_role(
+        db,
+        user,
+        transmittal.project_id,
+        ProjectRole.DCC,
+        ProjectRole.PROJECT_CONTROL,
+        ProjectRole.PMO,
+        ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
     )
+    is_manual_owner = (
+        transmittal.manual_workflow
+        and transmittal.created_by_id == user.id
+        and str(transmittal.status) == str(TransmittalStatus.DRAFT)
+    )
+    if not can_manage and not is_manual_owner:
+        raise acl.AccessDenied("فقط ایجادکننده پیش‌نویس یا مسئول کنترل می‌تواند پیوست را ویرایش کند.")
+    if transmittal.manual_workflow and kind != "pdf":
+        raise HTTPException(status_code=422, detail="در ترانسمیتال دستی فقط فایل PDF پذیرفته می‌شود.")
     attachments = list((transmittal.meta or {}).get("attachments") or [])
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
@@ -813,7 +1029,24 @@ def delete_attachment(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_transmittal(db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER, ProjectRole.SYSTEM_ADMIN])
+    acl.require_transmittal(db, user, transmittal)
+    can_manage = acl.has_role(
+        db,
+        user,
+        transmittal.project_id,
+        ProjectRole.DCC,
+        ProjectRole.PROJECT_CONTROL,
+        ProjectRole.PMO,
+        ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
+    )
+    is_manual_owner = (
+        transmittal.manual_workflow
+        and transmittal.created_by_id == user.id
+        and str(transmittal.status) == str(TransmittalStatus.DRAFT)
+    )
+    if not can_manage and not is_manual_owner:
+        raise acl.AccessDenied("فقط ایجادکننده پیش‌نویس یا مسئول کنترل می‌تواند پیوست را حذف کند.")
     attachments = list((transmittal.meta or {}).get("attachments") or [])
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
@@ -907,7 +1140,19 @@ def issue_transmittal(
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
-    acl.require_transmittal(db, user, transmittal, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
+    acl.require_transmittal(db, user, transmittal)
+    can_manage = acl.has_role(
+        db,
+        user,
+        transmittal.project_id,
+        ProjectRole.DCC,
+        ProjectRole.PROJECT_CONTROL,
+        ProjectRole.PMO,
+        ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
+    )
+    if not can_manage and not (transmittal.manual_workflow and transmittal.created_by_id == user.id):
+        raise acl.AccessDenied("صدور نهایی فقط برای ایجادکننده ترانسمیتال دستی یا مسئول کنترل مجاز است.")
     if payload.remarks:
         transmittal.remarks = payload.remarks
     try:

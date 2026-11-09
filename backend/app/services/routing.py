@@ -48,6 +48,7 @@ ACTION_LABELS_FA = {
     ActionRequired.APPROVE: "تأیید",
     ActionRequired.INFO: "اطلاع",
     ActionRequired.FOR_CONSTRUCTION: "اجرا",
+    ActionRequired.RETURN_TO_SENDER: "بازگشت به فرستنده",
 }
 
 

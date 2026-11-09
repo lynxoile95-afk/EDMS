@@ -39,12 +39,28 @@ import {
   REFERRAL_STATUS_LABELS,
   STAGE_LABELS,
   STATUS_LABELS,
+  TRANSMITTAL_TYPE_LABELS,
   docStatusOption,
   fileSize,
   jalali,
   jalaliDateTime,
   persianDigits,
 } from "@/lib/format";
+
+type PersonnelReferralAction = "review" | "approve" | "info" | "for_construction" | "return_to_sender";
+
+const PERSONNEL_REFERRAL_ACTIONS: Array<{ value: PersonnelReferralAction; label: string }> = [
+  { value: "review", label: "For Review and Action — بررسی و اقدام" },
+  { value: "approve", label: "For Follow Up — پیگیری" },
+  { value: "info", label: "For Information — جهت اطلاع" },
+  { value: "for_construction", label: "For Construction — جهت اجرا" },
+  { value: "return_to_sender", label: "بازگشت به فرستنده" },
+];
+
+interface PersonnelReferralDraft {
+  action: PersonnelReferralAction;
+  note: string;
+}
 
 export function TransmittalDetail() {
   const { transmittalId } = useParams<{ transmittalId: string }>();
@@ -66,6 +82,12 @@ export function TransmittalDetail() {
   const [referError, setReferError] = useState<string | null>(null);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [forwardForm, setForwardForm] = useState({ to_user_id: "", note: "", due_days: "7" });
+  const [personnelReferOpen, setPersonnelReferOpen] = useState(false);
+  const [personnelQuery, setPersonnelQuery] = useState("");
+  const [personnelIds, setPersonnelIds] = useState<string[]>([]);
+  const [personnelDrafts, setPersonnelDrafts] = useState<Record<string, PersonnelReferralDraft>>({});
+  const [personnelReferError, setPersonnelReferError] = useState<string | null>(null);
+  const [personnelReferBusy, setPersonnelReferBusy] = useState(false);
   const [flowLine, setFlowLine] = useState<TransmittalLine | null>(null);
   const [attachmentLineId, setAttachmentLineId] = useState<string | null>(null);
   const [attachmentKind, setAttachmentKind] = useState<"pdf" | "native">("pdf");
@@ -150,6 +172,9 @@ export function TransmittalDetail() {
   const canManage =
     hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("project_manager") || hasRole("system_admin");
   const issued = ["issued", "partially_acknowledged", "acknowledged", "closed"].includes(data.status);
+  const isManualOwner = data.manual_workflow && data.created_by_id === user?.id;
+  const canFinalIssue = canManage || isManualOwner;
+  const canReferPeople = canManage || isManualOwner;
   const allComments = Object.values(comments).flat().flatMap((list) => list.comments);
   const meta = data.meta as Record<string, string | undefined>;
   const commentsRows = data.lines.flatMap((line) =>
@@ -176,31 +201,34 @@ export function TransmittalDetail() {
   /** A referral only the assignee may close — the API enforces the same rule. */
   const myReferral = pendingReferrals.find((item) => item.to_user_id === user?.id);
 
-  const loadMembers = async () => {
-    if (members.length) return;
+  const loadMembers = async (): Promise<ProjectMember[]> => {
+    if (members.length) return members;
     try {
-      setMembers(await api.get<ProjectMember[]>(`/projects/${data.project_id}/members`));
+      const roster = await api.get<ProjectMember[]>(`/projects/${data.project_id}/members`);
+      setMembers(roster);
+      return roster;
     } catch {
       setMembers([]);
+      return [];
     }
   };
 
   const openRefer = async () => {
     setReferError(null);
-    await loadMembers();
-    const first = members.find((member) => member.role === "reviewer" && member.discipline_id);
+    const roster = await loadMembers();
+    const first = roster.find((member) => member.role === "reviewer" && member.discipline_id);
     setReferForm((form) => ({ ...form, discipline_id: form.discipline_id || first?.discipline_id || "" }));
     setReferOpen(true);
   };
 
   const openForward = async () => {
     setReferError(null);
-    await loadMembers();
+    const roster = await loadMembers();
     const manager =
-      members.find((member) => member.role === "engineering_manager") ??
-      members.find((member) => member.role === "project_control") ??
-      members.find((member) => member.role === "pmo") ??
-      members.find((member) => member.role === "project_manager");
+      roster.find((member) => member.role === "engineering_manager") ??
+      roster.find((member) => member.role === "project_control") ??
+      roster.find((member) => member.role === "pmo") ??
+      roster.find((member) => member.role === "project_manager");
     setForwardForm((form) => ({ ...form, to_user_id: form.to_user_id || manager?.user_id || "" }));
     setForwardOpen(true);
   };
@@ -248,6 +276,74 @@ export function TransmittalDetail() {
     }
   };
 
+  const openPersonnelRefer = async () => {
+    setPersonnelReferError(null);
+    setPersonnelQuery("");
+    setPersonnelIds([]);
+    setPersonnelDrafts({});
+    try {
+      const roster = await loadMembers();
+      setMembers(roster.filter((member) => member.is_active));
+      setPersonnelReferOpen(true);
+    } catch (err) {
+      setPersonnelReferError(err instanceof ApiError ? err.detail : "دریافت فهرست پرسنل ناموفق بود.");
+    }
+  };
+
+  const togglePersonnel = (userId: string) => {
+    if (personnelIds.includes(userId)) {
+      setPersonnelIds((current) => current.filter((id) => id !== userId));
+      setPersonnelDrafts((drafts) => {
+        const next = { ...drafts };
+        delete next[userId];
+        return next;
+      });
+      return;
+    }
+    setPersonnelIds((current) => [...current, userId]);
+    setPersonnelDrafts((drafts) => ({
+      ...drafts,
+      [userId]: { action: "review", note: "" },
+    }));
+  };
+
+  const updatePersonnelDraft = (userId: string, patch: Partial<PersonnelReferralDraft>) => {
+    setPersonnelDrafts((drafts) => ({
+      ...drafts,
+      [userId]: { ...(drafts[userId] ?? { action: "review", note: "" }), ...patch },
+    }));
+  };
+
+  const submitPersonnelRefer = async () => {
+    if (!personnelIds.length) {
+      setPersonnelReferError("حداقل یک نفر از پرسنل پروژه را انتخاب کنید.");
+      return;
+    }
+    setPersonnelReferBusy(true);
+    setPersonnelReferError(null);
+    try {
+      await api.post(`/transmittals/${data.id}/refer-people`, {
+        // Keep user_ids for older API instances while the current backend uses
+        // people[] for each person's independent action and note.
+        user_ids: personnelIds,
+        people: personnelIds.map((userId) => ({
+          user_id: userId,
+          action: personnelDrafts[userId]?.action ?? "review",
+          note: personnelDrafts[userId]?.note.trim() || null,
+        })),
+        due_days: 14,
+      });
+      setPersonnelReferOpen(false);
+      setPersonnelIds([]);
+      setPersonnelDrafts({});
+      await load();
+    } catch (err) {
+      setPersonnelReferError(err instanceof ApiError ? err.detail : "ارجاع مدرک ناموفق بود.");
+    } finally {
+      setPersonnelReferBusy(false);
+    }
+  };
+
   const completeMyReferral = async (referral: TransmittalReferral) => {
     const note = window.prompt("نتیجه بررسی خود را وارد کنید (اختیاری):") ?? undefined;
     setBusy(true);
@@ -265,7 +361,7 @@ export function TransmittalDetail() {
   };
 
   const canEditDocuments = hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("system_admin");
-  const canManageAttachments = canManage;
+  const canManageAttachments = canManage || (isManualOwner && !issued);
 
   const openFlowForLine = (line?: TransmittalLine) => {
     setFlowLine(line ?? null);
@@ -430,6 +526,22 @@ export function TransmittalDetail() {
   const disciplinesWithEngineer = members.filter(
     (member) => member.role === "reviewer" && member.discipline_id,
   );
+  const personnelOptions = Array.from(
+    new Map(
+      members
+        .filter((member) => member.is_active)
+        .map((member) => [member.user_id, member]),
+    ).values(),
+  );
+  const filteredPersonnel = personnelOptions.filter((member) => {
+    const needle = personnelQuery.trim().toLowerCase();
+    if (!needle) return true;
+    return [member.full_name, member.email, member.discipline_name ?? "", member.discipline_code ?? ""]
+      .join(" ")
+      .toLowerCase()
+      .includes(needle);
+  });
+  const selectedPersonnel = personnelOptions.filter((member) => personnelIds.includes(member.user_id));
 
   return (
     <div>
@@ -455,7 +567,7 @@ export function TransmittalDetail() {
               <StatusLamp tone={issued ? "green" : "yellow"} />
               <span className="text-[10px] text-[#33475b]">
                 {STATUS_LABELS[data.status] ?? data.status} ·{" "}
-                {data.type === "external" ? "Engineering — [OT]" : "Site — [OS]"}
+                {TRANSMITTAL_TYPE_LABELS[data.type] ?? data.type}
               </span>
               {/* review route: where the sheet is right now */}
               <span
@@ -470,7 +582,7 @@ export function TransmittalDetail() {
             {[
               ["Transmittal Identity:", data.id.slice(0, 8).toUpperCase()],
               ["Transmittal No.:", data.number ?? data.preview_number ?? "—"],
-              ["Date:", meta.issued_at_jalali ?? (data.issued_at ? jalali(data.issued_at) : "—")],
+              ["Date:", data.issue_date ? jalali(data.issue_date) : meta.issued_at_jalali ?? (data.issued_at ? jalali(data.issued_at) : "—")],
               ["Registration Time:", data.issued_at ? jalaliDateTime(data.issued_at) : "—"],
               ["Revision Time:", data.due_date ? jalali(data.due_date) : "—"],
             ].map(([label, value]) => (
@@ -501,6 +613,7 @@ export function TransmittalDetail() {
             —
           </FField>
           <FField label="Issued by:">{meta.issued_by ?? "—"}</FField>
+          <FField label="تأییدکننده نهایی:">{data.final_approver_name ?? "—"}</FField>
           <FField label="From:">{data.from_org ?? meta.issued_by ?? "—"}</FField>
           <FField label="Coordinator/Originator:">{meta.ddm_rule ?? "—"}</FField>
           <FField label="Status:">{STATUS_LABELS[data.status] ?? data.status}</FField>
@@ -791,7 +904,8 @@ export function TransmittalDetail() {
                     label: "صدور نهایی",
                     icon: <IconAdd />,
                     groupStart: true,
-                    disabled: busy,
+                    disabled: busy || !canFinalIssue,
+                    title: canFinalIssue ? "صدور نهایی ترانسمیتال" : "فقط ایجادکننده یا مسئول کنترل مجاز است",
                     onClick: () =>
                       void act(
                         `/transmittals/${data.id}/issue`,
@@ -800,6 +914,18 @@ export function TransmittalDetail() {
                       ),
                   },
                 ]),
+            ...(issued && canReferPeople
+              ? [
+                  {
+                    label: "ارجاع به پرسنل",
+                    icon: <IconArrow />,
+                    groupStart: true,
+                    disabled: busy,
+                    title: "ارجاع مدرک به یک یا چند عضو فعال پروژه",
+                    onClick: () => void openPersonnelRefer(),
+                  },
+                ]
+              : []),
             {
               label: "ابطال",
               icon: <IconDelete />,
@@ -1582,6 +1708,139 @@ export function TransmittalDetail() {
           هر دیسیپلین یک کارشناس دارد: برق، سیویل، معماری و تاسیسات. اگر برای دیسیپلین
           انتخاب‌شده کارشناسی تعریف نشده باشد، سامانه ارجاع را نمی‌پذیرد.
         </p>
+      </Modal>
+
+      {/* ---------- ارجاع پس از صدور به چند عضو فعال پروژه ---------- */}
+      <Modal
+        open={personnelReferOpen}
+        title="ارجاع مدرک به پرسنل پروژه"
+        onClose={() => setPersonnelReferOpen(false)}
+        width="max-w-2xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button className="btn-sm" onClick={() => setPersonnelReferOpen(false)}>
+              انصراف
+            </Button>
+            <Button
+              className="btn-sm btn-primary"
+              disabled={personnelReferBusy || personnelIds.length === 0}
+              onClick={() => void submitPersonnelRefer()}
+            >
+              {personnelReferBusy ? "در حال ثبت…" : "ثبت ارجاع"}
+            </Button>
+          </div>
+        }
+      >
+        {personnelReferError ? <ErrorBox message={personnelReferError} /> : null}
+        <div className="mb-2 border border-[#a8a284] bg-[#fffdf3] px-2 py-1.5 text-[10px] leading-5 text-[#5c4b18]">
+          این عملیات فقط پس از صدور نهایی انجام می‌شود. یک یا چند عضو فعال همین پروژه را انتخاب کنید؛ هر نفر ارجاع مستقل و اعلان جداگانه دریافت می‌کند.
+        </div>
+        <FieldGrid>
+          <FField label="برگه ارسال:">
+            <span className="ltr">{data.number ?? data.preview_number ?? "Draft"}</span>
+          </FField>
+          <FField label="افراد انتخاب‌شده:">
+            <span>{persianDigits(personnelIds.length)} نفر</span>
+          </FField>
+          <FField label="جست‌وجوی پرسنل:" full>
+            <input
+              className="input"
+              value={personnelQuery}
+              placeholder="نام، رایانامه یا دیسیپلین…"
+              onChange={(event) => setPersonnelQuery(event.target.value)}
+            />
+          </FField>
+          <FField label="انتخاب پرسنل و تنظیم ارجاع:" full>
+            <div className="grid grid-cols-2 gap-1.5" aria-label="انتخاب اعضا و تنظیم ارجاع">
+              <section className="min-w-0 border border-[#c3ccd6] bg-white">
+                <div className="border-b border-[#c3ccd6] bg-[#eef3f8] px-2 py-1 text-[10px] font-bold text-[#1f3864]">
+                  اعضای فعال پروژه ({persianDigits(personnelOptions.length)})
+                </div>
+                <div className="max-h-72 overflow-auto">
+                  {filteredPersonnel.length === 0 ? (
+                    <p className="px-2 py-4 text-center text-[10px] text-[#5c6b78]">عضو فعالی با این جست‌وجو پیدا نشد.</p>
+                  ) : (
+                    filteredPersonnel.map((member) => (
+                      <label
+                        key={member.user_id}
+                        className="flex cursor-pointer items-center gap-2 border-b border-[#e6e1c8] px-2 py-1.5 text-[10px] last:border-b-0 hover:bg-[#f7f8f2]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={personnelIds.includes(member.user_id)}
+                          onChange={() => togglePersonnel(member.user_id)}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-bold text-[#20365c]">{member.full_name}</span>
+                          <span className="block truncate text-[9px] text-[#5c6b78]">{member.discipline_name ?? member.discipline_code ?? "عضو پروژه"} · {member.email}</span>
+                        </span>
+                        {personnelIds.includes(member.user_id) ? <span className="text-[9px] font-bold text-[#3f8f45]">انتخاب‌شده</span> : null}
+                      </label>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              <section className="min-w-0 border border-[#c3ccd6] bg-white">
+                <div className="border-b border-[#c3ccd6] bg-[#eef3f8] px-2 py-1 text-[10px] font-bold text-[#1f3864]">
+                  افراد انتخاب‌شده ({persianDigits(personnelIds.length)})
+                </div>
+                <div className="max-h-72 overflow-auto">
+                  {selectedPersonnel.length === 0 ? (
+                    <p className="px-2 py-4 text-center text-[10px] text-[#5c6b78]">
+                      ابتدا یک یا چند نفر را از فهرست اعضای فعال پروژه انتخاب کنید.
+                    </p>
+                  ) : (
+                    selectedPersonnel.map((member) => {
+                      const draft = personnelDrafts[member.user_id] ?? { action: "review" as PersonnelReferralAction, note: "" };
+                      return (
+                        <div key={member.user_id} className="border-b border-[#e6e1c8] px-2 py-1.5 last:border-b-0">
+                          <div className="mb-1 flex items-center gap-2">
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[10px] font-bold text-[#20365c]">{member.full_name}</span>
+                              <span className="block truncate text-[9px] text-[#5c6b78]">{member.discipline_name ?? member.discipline_code ?? "عضو پروژه"} · {member.email}</span>
+                            </span>
+                            <button
+                              type="button"
+                              className="shrink-0 text-[9px] font-bold text-[#97282b] underline"
+                              onClick={() => togglePersonnel(member.user_id)}
+                            >
+                              حذف
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] gap-1.5">
+                            <label className="block">
+                              <span className="mb-0.5 block text-[9px] font-bold text-[#5c6b78]">عملیات ارجاع</span>
+                              <select
+                                className="input"
+                                value={draft.action}
+                                onChange={(event) => updatePersonnelDraft(member.user_id, { action: event.target.value as PersonnelReferralAction })}
+                              >
+                                {PERSONNEL_REFERRAL_ACTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="block">
+                              <span className="mb-0.5 block text-[9px] font-bold text-[#5c6b78]">هامش کوتاه برای این شخص</span>
+                              <input
+                                className="input"
+                                maxLength={500}
+                                value={draft.note}
+                                placeholder="مثلاً: بررسی و اعلام نظر تا پایان هفته"
+                                onChange={(event) => updatePersonnelDraft(member.user_id, { note: event.target.value })}
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </section>
+            </div>
+          </FField>
+        </FieldGrid>
       </Modal>
 
       {/* ---------- ارسال به مدیریت (کارشناس کنترل اسناد) ---------- */}

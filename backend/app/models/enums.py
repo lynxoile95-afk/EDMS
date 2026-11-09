@@ -137,6 +137,16 @@ class AVStatus(StrEnum):
 
 
 class TransmittalType(StrEnum):
+    """Transmittal form types.
+
+    ``OT`` and ``OS`` are the current manual-transmittal vocabulary.  The
+    internal/external values remain valid for older AI and registration flows so
+    existing records and integrations continue to load without a data rewrite.
+    """
+
+    ENGINEERING_OT = "OT"
+    FINAL_OS = "OS"
+    # Legacy values used by the original upload and registration workflows.
     INTERNAL = "internal"
     EXTERNAL = "external"
 
@@ -180,6 +190,7 @@ class ActionRequired(StrEnum):
     APPROVE = "approve"
     INFO = "info"
     FOR_CONSTRUCTION = "for_construction"
+    RETURN_TO_SENDER = "return_to_sender"
 
 
 class AcknowledgementStatus(StrEnum):

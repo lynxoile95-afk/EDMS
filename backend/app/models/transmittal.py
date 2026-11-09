@@ -7,7 +7,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.models.core import AccessCircle
+    from app.models.core import AccessCircle, User
 
 from sqlalchemy import (
     Boolean,
@@ -112,8 +112,13 @@ class Transmittal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     sender_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     issued_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    final_approver_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: The date selected on the manual form; ``issued_at`` remains the audit timestamp.
+    issue_date: Mapped[date | None] = mapped_column(Date)
     due_date: Mapped[date | None] = mapped_column(Date)
+    #: Manual sheets remain visible to their creator after final issue for referral.
+    manual_workflow: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), index=True)
     remarks: Mapped[str | None] = mapped_column(Text)
     pdf_key: Mapped[str | None] = mapped_column(String(1024))
     pdf_sha256: Mapped[str | None] = mapped_column(String(64))
@@ -129,6 +134,15 @@ class Transmittal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     stage: Mapped[str] = mapped_column(String(16), default="draft", server_default="draft", index=True)
 
     access_circle: Mapped["AccessCircle | None"] = relationship(lazy="joined")
+    created_by: Mapped["User | None"] = relationship(
+        foreign_keys=[created_by_id], lazy="joined"
+    )
+    issued_by: Mapped["User | None"] = relationship(
+        foreign_keys=[issued_by_id], lazy="joined"
+    )
+    final_approver: Mapped["User | None"] = relationship(
+        foreign_keys=[final_approver_id], lazy="joined"
+    )
     lines: Mapped[list["TransmittalLine"]] = relationship(
         back_populates="transmittal", cascade="all, delete-orphan", lazy="selectin",
         order_by="TransmittalLine.line_no",
@@ -155,6 +169,8 @@ class TransmittalLine(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     action: Mapped[ActionRequired] = mapped_column(String(24), default=ActionRequired.REVIEW)
     due_date: Mapped[date | None] = mapped_column(Date)
     status: Mapped[TransmittalLineStatus] = mapped_column(String(16), default=TransmittalLineStatus.DRAFT)
+    #: Manual transmittals keep the coordinator's explicit per-document status.
+    doc_status: Mapped[str | None] = mapped_column(String(64))
     note: Mapped[str | None] = mapped_column(Text)
     discipline_code: Mapped[str | None] = mapped_column(String(32))
 

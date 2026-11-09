@@ -1,28 +1,31 @@
 """Manual transmittal registration without AI extraction.
 
-The manual path deliberately uses the same document register, revision lifecycle,
-DDM resolution and transmittal renderer as the AI path.  The only difference is
-that the operator supplies the MDL rows and revision values instead of accepting
-metadata extracted from a PDF.
+The manual route uses the authoritative MDL rows and creates a real draft.  The
+creator can then review that draft from the personal inbox, issue it, and refer
+it to one or more active project members.  Legacy access-circle and explicit
+recipient fields are still accepted for older API clients, but the current UI
+no longer presents those controls.
 """
 
 from __future__ import annotations
 
 import hashlib
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, ProjectDep
 from app.api.routes.transmittals import _detail
-from app.models import DocumentRevision, MDLItem, ProjectMember, TransmittalRecipient
+from app.models import DocumentRevision, MDLItem, ProjectMember, TransmittalRecipient, User
 from app.models.enums import ActionRequired, ProjectRole, PurposeOfIssue, TransmittalType
-from app.schemas.transmittals import TransmittalDetail
+from app.schemas.transmittals import MANUAL_DOC_STATUS_PATTERN, TransmittalDetail
 from app.services import acl, transmittal_service
 from app.services.documents import register_revision
 from app.services.normalization import normalize_rev
+from app.utils.jalali import parse_date
 
 router = APIRouter(tags=["transmittals"])
 
@@ -32,17 +35,49 @@ class ManualTransmittalLine(BaseModel):
     revision: str = Field(default="A", min_length=1, max_length=16)
     page_count: int = Field(default=1, ge=1, le=10000)
     note: str | None = Field(default=None, max_length=2000)
+    doc_status: str = Field(default="No Comment", pattern=MANUAL_DOC_STATUS_PATTERN)
 
 
 class ManualTransmittalCreate(BaseModel):
     rows: list[ManualTransmittalLine] = Field(min_length=1)
     purpose: str = Field(default="IFR", pattern=r"^(IFR|IFA|IFC|IFI|IFE|IFP|IPC|RTC|ASB)$")
-    type: str = Field(default="internal", pattern=r"^(internal|external)$")
+    # OT/OS are the current manual vocabulary. The two legacy values remain
+    # accepted so already-integrated clients do not break during migration.
+    type: str = Field(default="internal", pattern=r"^(OT|OS|internal|external)$")
+    issue_date: date = Field(default_factory=date.today)
+    final_approver_id: uuid.UUID | None = None
     from_org: str | None = Field(default=None, max_length=255)
     to_org: str | None = Field(default=None, max_length=255)
     remarks: str | None = Field(default=None, max_length=4000)
+    # Backward-compatible fields. The current manual screen intentionally does
+    # not send these values; routing after issue uses the referral action below.
     access_circle_id: uuid.UUID | None = None
     extra_recipient_ids: list[uuid.UUID] = Field(default_factory=list)
+
+    @field_validator("issue_date", mode="before")
+    @classmethod
+    def parse_issue_date(cls, value):
+        if isinstance(value, date):
+            return value
+        parsed = parse_date(str(value))
+        if parsed is None:
+            raise ValueError("تاریخ صدور را به صورت شمسی مانند ۱۴۰۵/۰۸/۰۲ وارد کنید.")
+        return parsed
+
+
+def _active_project_member(
+    db, project_id: uuid.UUID, user_id: uuid.UUID
+) -> ProjectMember | None:
+    return db.execute(
+        select(ProjectMember)
+        .join(User, User.id == ProjectMember.user_id)
+        .where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+            User.is_active.is_(True),
+        )
+        .limit(1)
+    ).scalars().first()
 
 
 @router.post(
@@ -57,44 +92,80 @@ def create_manual_transmittal(
     db: DbSession,
     user: CurrentUser,
 ) -> TransmittalDetail:
-    """Create manual revisions when necessary, then create one DDM-aware draft.
+    """Create one manual draft from the selected MDL rows.
 
-    A manual revision has no source PDF by design.  It remains an append-only
-    revision record and can later be superseded by a PDF-backed revision through
-    the normal AI or registration workflow.
+    The click on this form is deliberately a draft operation.  Number allocation,
+    PDF generation and notifications only happen later through the explicit final
+    issue action in the creator's inbox.
     """
-    acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
-    acl.validate_circle_for_transmittal(db, user, project.id, payload.access_circle_id)
-    if payload.type == TransmittalType.EXTERNAL.value and not acl.has_external_access(db, user, project.id):
-        raise acl.AccessDenied("صدور ترانسمیتال خارجی فقط برای عضو مجاز به دسترسی خارج از حلقه امکان‌پذیر است.")
-    acl.assert_recipients_allowed(
-        db, user, project.id, payload.extra_recipient_ids, payload.access_circle_id
+    acl.require_project(
+        db,
+        user,
+        project.id,
+        [
+            ProjectRole.DCC,
+            ProjectRole.PROJECT_CONTROL,
+            ProjectRole.PMO,
+            ProjectRole.PROJECT_MANAGER,
+        ],
     )
+
+    # These checks only serve legacy clients.  The current OT/OS manual form has
+    # no access-circle field and does not ask the operator to select recipients.
+    acl.validate_circle_for_transmittal(db, user, project.id, payload.access_circle_id)
+    if payload.type == TransmittalType.EXTERNAL.value and not acl.has_external_access(
+        db, user, project.id
+    ):
+        raise acl.AccessDenied(
+            "صدور ترانسمیتال خارجی فقط برای عضو مجاز به دسترسی خارج از حلقه امکان‌پذیر است."
+        )
+
+    if (
+        payload.type in {TransmittalType.ENGINEERING_OT.value, TransmittalType.FINAL_OS.value}
+        and payload.final_approver_id is None
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="برای ترانسمیتال دستی OT/OS انتخاب تأییدکننده نهایی الزامی است.",
+        )
+    if payload.final_approver_id is not None and _active_project_member(
+        db, project.id, payload.final_approver_id
+    ) is None:
+        raise HTTPException(
+            status_code=422,
+            detail="تأییدکننده نهایی باید یکی از اعضای فعال همین پروژه باشد.",
+        )
+
+    if payload.extra_recipient_ids:
+        acl.assert_recipients_allowed(
+            db,
+            user,
+            project.id,
+            payload.extra_recipient_ids,
+            payload.access_circle_id,
+        )
 
     item_ids = [row.mdl_item_id for row in payload.rows]
     if len(item_ids) != len(set(item_ids)):
-        raise HTTPException(status_code=422, detail="یک مدرک در ترانسمیتال دستی بیش از یک‌بار انتخاب شده است.")
+        raise HTTPException(
+            status_code=422,
+            detail="یک مدرک در ترانسمیتال دستی بیش از یک‌بار انتخاب شده است.",
+        )
 
     items = list(
         db.execute(
-            select(MDLItem).where(MDLItem.project_id == project.id, MDLItem.id.in_(item_ids))
+            select(MDLItem).where(
+                MDLItem.project_id == project.id,
+                MDLItem.id.in_(item_ids),
+            )
         ).scalars()
     )
     items_by_id = {item.id: item for item in items}
     if len(items_by_id) != len(item_ids):
-        raise HTTPException(status_code=422, detail="یکی از مدارک انتخاب‌شده متعلق به این پروژه نیست.")
-
-    if payload.extra_recipient_ids:
-        member_ids = set(
-            db.execute(
-                select(ProjectMember.user_id).where(
-                    ProjectMember.project_id == project.id,
-                    ProjectMember.user_id.in_(payload.extra_recipient_ids),
-                )
-            ).scalars()
+        raise HTTPException(
+            status_code=422,
+            detail="یکی از مدارک انتخاب‌شده متعلق به این پروژه نیست.",
         )
-        if member_ids != set(payload.extra_recipient_ids):
-            raise HTTPException(status_code=422, detail="همه گیرندگان باید عضو همین پروژه باشند.")
 
     revisions: list[DocumentRevision] = []
     try:
@@ -120,7 +191,9 @@ def create_manual_transmittal(
                 revision = current
             else:
                 file_hash = hashlib.sha256(
-                    f"manual-transmittal|{project.id}|{item.id}|{revision_token}".encode("utf-8")
+                    f"manual-transmittal|{project.id}|{item.id}|{revision_token}".encode(
+                        "utf-8"
+                    )
                 ).hexdigest()
                 revision = register_revision(
                     db,
@@ -132,9 +205,6 @@ def create_manual_transmittal(
                     page_count=row.page_count,
                     actor=user,
                     notes=row.note or "بازنگری ثبت‌شده از مسیر ترانسمیتال دستی",
-                    # MDL may already carry a current revision text even when no
-                    # revision record exists yet; the first manual registration is
-                    # allowed to materialise that value as a revision row.
                     allow_equal_revision=current is None,
                 )
             revisions.append(revision)
@@ -148,22 +218,34 @@ def create_manual_transmittal(
             actor=user,
             remarks=payload.remarks,
             access_circle_id=payload.access_circle_id,
-            # The manual screen has one explicit "create" action. Keep all
-            # selected rows in that one sheet; DDM still determines actions and
-            # recipients inside the group.
             settings_override={"grouping_strategy": "one_per_session"},
         )
         if not drafts:
             raise HTTPException(status_code=422, detail="ترانسمیتال دستی ایجاد نشد.")
 
-        # DDM supplies the normal recipients. The manually selected recipients
-        # supplement it, which is important for a vendor, MC or client observer
-        # not represented by a DDM rule yet.
         for draft in drafts:
-            if payload.from_org is not None:
-                draft.from_org = payload.from_org.strip() or None
-            if payload.to_org is not None:
-                draft.to_org = payload.to_org.strip() or None
+            draft.manual_workflow = True
+            draft.issue_date = payload.issue_date
+            draft.final_approver_id = payload.final_approver_id
+            draft.meta = {
+                **(draft.meta or {}),
+                "creation_mode": "manual",
+                "manual_revision_count": len(revisions),
+                "manual_doc_status_options": [
+                    "Commented",
+                    "No Comment",
+                    "Approve As Note",
+                ],
+            }
+
+            lines_by_revision = {line.revision_id: line for line in draft.lines}
+            for row, revision in zip(payload.rows, revisions, strict=True):
+                line = lines_by_revision.get(revision.id)
+                if line is not None:
+                    line.doc_status = row.doc_status
+
+            # Legacy clients may still add explicit recipients. The current UI
+            # leaves this empty and performs personnel referral after final issue.
             existing_recipient_ids = {recipient.user_id for recipient in draft.recipients}
             for recipient_id in payload.extra_recipient_ids:
                 if recipient_id in existing_recipient_ids:
@@ -176,16 +258,13 @@ def create_manual_transmittal(
                     )
                 )
                 existing_recipient_ids.add(recipient_id)
-            draft.meta = {
-                **(draft.meta or {}),
-                "creation_mode": "manual",
-                "manual_revision_count": len(revisions),
-            }
+
             acl.assert_recipients_allowed(
                 db,
                 user,
                 project.id,
-                [recipient.user_id for recipient in draft.recipients] + payload.extra_recipient_ids,
+                [recipient.user_id for recipient in draft.recipients]
+                + payload.extra_recipient_ids,
                 payload.access_circle_id,
             )
 

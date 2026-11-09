@@ -3,10 +3,13 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from app.models.enums import ActionRequired, CommentDisposition, PURPOSE_PATTERN
 from pydantic import BaseModel, Field
 
+from app.models.enums import ActionRequired, CommentDisposition, PURPOSE_PATTERN
 from app.schemas.common import ORMModel
+
+
+MANUAL_DOC_STATUS_PATTERN = r"^(Commented|No Comment|Approve As Note)$"
 
 
 class RecipientOut(ORMModel):
@@ -93,6 +96,28 @@ class ReferRequest(BaseModel):
     due_days: int = Field(default=14, ge=1, le=120)
 
 
+class PersonnelReferralItem(BaseModel):
+    """One selected project member and that person's individual referral data."""
+
+    user_id: uuid.UUID
+    action: ActionRequired = ActionRequired.REVIEW
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class ReferPersonnelRequest(BaseModel):
+    """Manual creator → active project members with per-person instructions.
+
+    ``user_ids`` and the global ``note`` remain accepted for older clients. New
+    clients should send ``people`` so each selected person can have a distinct
+    referral operation and margin note.
+    """
+
+    people: list[PersonnelReferralItem] | None = None
+    user_ids: list[uuid.UUID] | None = None
+    note: str | None = Field(default=None, max_length=2000)
+    due_days: int = Field(default=14, ge=1, le=120)
+
+
 class CompleteRequest(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
@@ -109,7 +134,15 @@ class TransmittalOut(ORMModel):
     from_org: str | None = None
     to_org: str | None = None
     due_date: date | None = None
+    issue_date: date | None = None
     issued_at: datetime | None = None
+    created_by_id: uuid.UUID | None = None
+    created_by_name: str | None = None
+    issued_by_id: uuid.UUID | None = None
+    issued_by_name: str | None = None
+    final_approver_id: uuid.UUID | None = None
+    final_approver_name: str | None = None
+    manual_workflow: bool = False
     remarks: str | None = None
     meta: dict = {}
     stage: str = "draft"

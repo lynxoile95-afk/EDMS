@@ -291,13 +291,17 @@ def _build_pdf_context(project: Project, transmittal: Transmittal, preparer: Use
         to_org=transmittal.to_org or project.client_name or "",
         purpose=str(transmittal.purpose),
         transmittal_type=str(transmittal.type),
-        issue_date=transmittal.issued_at,
+        issue_date=transmittal.issue_date or transmittal.issued_at,
         due_date=transmittal.due_date,
         recipients=recipients,
         lines=lines,
         remarks=transmittal.remarks,
         prepared_by=preparer.full_name if preparer else None,
-        approved_by=preparer.full_name if preparer else None,
+        approved_by=(
+            transmittal.final_approver.full_name
+            if transmittal.final_approver is not None
+            else preparer.full_name if preparer else None
+        ),
         transmittal_id=str(transmittal.id),
     )
 
@@ -315,7 +319,7 @@ def issue_transmittal(
         raise ValueError(f"Transmittal در وضعیت «{transmittal.status}» قابل صدور نیست.")
     if not transmittal.lines:
         raise ValueError("Transmittal بدون مدرک قابل صدور نیست.")
-    if not transmittal.recipients:
+    if not transmittal.recipients and not transmittal.manual_workflow:
         raise ValueError("Transmittal بدون گیرنده قابل صدور نیست؛ ابتدا DDM یا گیرندگان را تعیین کنید.")
 
     project = db.get(Project, transmittal.project_id)
@@ -327,6 +331,7 @@ def issue_transmittal(
     transmittal.seq = seq
     transmittal.status = TransmittalStatus.ISSUED
     transmittal.issued_at = datetime.now(timezone.utc)
+    transmittal.issue_date = transmittal.issue_date or transmittal.issued_at.date()
     transmittal.issued_by_id = actor.id
 
     for line in transmittal.lines:
@@ -355,6 +360,7 @@ def issue_transmittal(
         **(transmittal.meta or {}),
         "issued_by": actor.full_name,
         "issued_at": transmittal.issued_at.isoformat(),
+        "issue_date": transmittal.issue_date.isoformat() if transmittal.issue_date else None,
     }
     db.flush()
 

@@ -131,6 +131,13 @@ export const STATUS_LABELS: Record<string, string> = {
   cancelled_session: "لغو‌شده",
 };
 
+export const TRANSMITTAL_TYPE_LABELS: Record<string, string> = {
+  OT: "ترانسمیتال مهندسی - OT",
+  OS: "ترانسمیتال نهایی - OS",
+  internal: "داخلی",
+  external: "خارجی",
+};
+
 export const PURPOSE_LABELS: Record<string, string> = {
   IFR: "ارسال برای بررسی (IFR)",
   IFA: "ارسال برای تأیید (IFA)",
@@ -149,6 +156,7 @@ export const REFERRAL_LABELS: Record<string, string> = {
   approve: "For Follow Up",
   info: "For Information",
   for_construction: "For Information",
+  return_to_sender: "بازگشت به فرستنده",
 };
 
 /** Where the sheet sits on contractor → DCC → management → discipline. */
@@ -180,6 +188,7 @@ export const ACTION_LABELS: Record<string, string> = {
   approve: "تأیید",
   info: "اطلاع",
   for_construction: "اجرا",
+  return_to_sender: "بازگشت به فرستنده",
 };
 
 export const RULE_LABELS: Record<string, string> = {

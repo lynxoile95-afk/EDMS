@@ -2,15 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useProject } from "@/lib/project";
-import { useAuth } from "@/lib/auth";
-import type { AccessCircle, MDLItem, ProjectMember, TransmittalDetail } from "@/lib/types";
+import type { MDLItem, ProjectMember, TransmittalDetail } from "@/lib/types";
 import { Button, Card, CardHeader, EmptyState, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
-import { PURPOSE_LABELS, persianDigits } from "@/lib/format";
+import { PURPOSE_LABELS, jalali, persianDigits } from "@/lib/format";
 
 interface ManualLine {
   revision: string;
   page_count: string;
   note: string;
+  doc_status: string;
 }
 
 interface ProjectParty {
@@ -19,44 +19,45 @@ interface ProjectParty {
   responsibility?: string;
 }
 
+const DOC_STATUS_OPTIONS = ["Commented", "No Comment", "Approve As Note"] as const;
+
+type ManualTransmittalType = "OT" | "OS";
+
 function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.detail : "ثبت ترانسمیتال دستی ناموفق بود.";
 }
 
 export function ManualTransmittalPage() {
   const { project, isDcc } = useProject();
-  const { user } = useAuth();
   const navigate = useNavigate();
   const [items, setItems] = useState<MDLItem[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
-  const [circles, setCircles] = useState<AccessCircle[]>([]);
   const [selected, setSelected] = useState<Record<string, ManualLine>>({});
+  const [attachments, setAttachments] = useState<Record<string, File[]>>({});
   const [purpose, setPurpose] = useState("IFR");
-  const [type, setType] = useState("internal");
+  const [type, setType] = useState<ManualTransmittalType>("OT");
+  const [issueDate, setIssueDate] = useState(() => jalali(new Date()));
+  const [finalApproverId, setFinalApproverId] = useState("");
   const [fromOrg, setFromOrg] = useState("");
   const [toOrg, setToOrg] = useState("");
   const [remarks, setRemarks] = useState("");
-  const [accessCircleId, setAccessCircleId] = useState("");
-  const [recipientIds, setRecipientIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draftId, setDraftId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!project) return;
     setLoading(true);
     setError(null);
     try {
-      const [mdl, roster, projectCircles] = await Promise.all([
+      const [mdl, roster] = await Promise.all([
         api.get<{ items: MDLItem[]; total: number }>(`/projects/${project.id}/mdl/items?size=200`),
         api.get<ProjectMember[]>(`/projects/${project.id}/members`),
-        api.get<AccessCircle[]>(`/projects/${project.id}/circles`),
       ]);
       setItems(mdl.items);
       setMembers(roster.filter((member) => member.is_active));
-      setCircles(projectCircles);
-      if (!accessCircleId && projectCircles.length === 1) setAccessCircleId(projectCircles[0].id);
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -98,6 +99,13 @@ export function ManualTransmittalPage() {
   }, [items, query]);
 
   const selectedItems = items.filter((item) => Boolean(selected[item.id]));
+  const approverOptions = useMemo(() => {
+    const unique = new Map<string, ProjectMember>();
+    members.forEach((member) => {
+      if (!unique.has(member.user_id)) unique.set(member.user_id, member);
+    });
+    return Array.from(unique.values());
+  }, [members]);
 
   const toggleItem = (item: MDLItem) => {
     setSelected((current) => {
@@ -112,6 +120,7 @@ export function ManualTransmittalPage() {
           revision: item.current_rev ?? "A",
           page_count: String(item.page_count ?? 1),
           note: "",
+          doc_status: "No Comment",
         },
       };
     });
@@ -124,25 +133,23 @@ export function ManualTransmittalPage() {
     }));
   };
 
-  const toggleRecipient = (userId: string) => {
-    setRecipientIds((current) =>
-      current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId],
-    );
+  const updateAttachments = (itemId: string, files: FileList | null) => {
+    setAttachments((current) => ({
+      ...current,
+      [itemId]: files ? Array.from(files) : [],
+    }));
   };
 
   const submit = async () => {
     if (!project) return;
     setError(null);
+    setDraftId(null);
     if (selectedItems.length === 0) {
       setError("حداقل یک مدرک از MDL را انتخاب کنید.");
       return;
     }
-    if (recipientIds.length === 0) {
-      setError("حداقل یک گیرنده از اعضای پروژه انتخاب کنید.");
-      return;
-    }
-    if (circles.length > 0 && !accessCircleId && !user?.is_superuser) {
-      setError("برای جلوگیری از دسترسی ناخواسته، حلقه دسترسی ترانسمیتال را انتخاب کنید.");
+    if (!finalApproverId) {
+      setError("تأیید کننده نهایی ترانسمیتال را انتخاب کنید.");
       return;
     }
     for (const item of selectedItems) {
@@ -161,15 +168,31 @@ export function ManualTransmittalPage() {
           revision: selected[item.id].revision.trim(),
           page_count: Math.max(1, Number(selected[item.id].page_count) || 1),
           note: selected[item.id].note.trim() || null,
+          doc_status: selected[item.id].doc_status,
         })),
         purpose,
         type,
+        issue_date: issueDate,
+        final_approver_id: finalApproverId,
         from_org: fromOrg.trim() || null,
         to_org: toOrg.trim() || null,
         remarks: remarks.trim() || null,
-        access_circle_id: accessCircleId || null,
-        extra_recipient_ids: recipientIds,
       });
+      setDraftId(created.id);
+
+      for (const item of selectedItems) {
+        const line = created.lines.find((candidate) => candidate.mdl_item_id === item.id);
+        const files = attachments[item.id] ?? [];
+        if (files.length === 0) continue;
+        if (!line) throw new Error(`ردیف مدرک «${item.doc_code}» در پیش‌نویس پیدا نشد.`);
+        for (const file of files) {
+          const form = new FormData();
+          form.append("line_id", line.id);
+          form.append("kind", "pdf");
+          form.append("file", file);
+          await api.postForm(`/transmittals/${created.id}/attachments`, form);
+        }
+      }
       navigate(`/transmittals/${created.id}`);
     } catch (err) {
       setError(messageOf(err));
@@ -193,17 +216,24 @@ export function ManualTransmittalPage() {
           }
         />
         <div className="border-b border-[#c3ccd6] bg-[#fffdf3] px-3 py-2 text-[10.5px] leading-5 text-[#5b4d1a]">
-          در این مسیر، اطلاعات مدرک از MDL و مقدار بازنگری از کاربر گرفته می‌شود. برای هر ردیف در صورت نبودن
-          بازنگری قبلی، یک بازنگری دستی ثبت می‌شود و سپس پیش‌نویس ترانسمیتال ساخته خواهد شد.
+          در این مسیر، اطلاعات مدرک از MDL و مقدار بازنگری از کاربر گرفته می‌شود. با کلیک روی «ترانسمیتال جدید»،
+          ابتدا یک پیش‌نویس موقت در کارتابل ایجادکننده ساخته می‌شود.
         </div>
         {!isDcc ? (
           <div className="px-3 pt-2 text-[10.5px] text-[#8a5a12]">
-            ثبت نهایی توسط کنترل مدارک یا مدیر پروژه انجام می‌شود؛ دسترسی فعلی شما ممکن است فقط مشاهده باشد.
+            ثبت نهایی پس از بررسی پیش‌نویس در کارتابل انجام می‌شود؛ دسترسی فعلی شما ممکن است فقط مشاهده باشد.
           </div>
         ) : null}
       </Card>
 
-      {error ? <ErrorBox message={error} onRetry={() => void load()} /> : null}
+      {error ? (
+        <ErrorBox message={error} />
+      ) : null}
+      {draftId ? (
+        <div className="border border-[#c3ccd6] bg-[#eef4fa] px-3 py-2 text-[10.5px] text-[#1f3864]">
+          پیش‌نویس ایجاد شد. <button className="font-bold underline" onClick={() => navigate(`/transmittals/${draftId}`)}>مشاهده پیش‌نویس</button>
+        </div>
+      ) : null}
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
         <Card>
@@ -301,16 +331,29 @@ export function ManualTransmittalPage() {
                 </Select>
               </Field>
               <Field label="نوع برگه ارسال">
-                <Select value={type} onChange={(event) => setType(event.target.value)}>
-                  <option value="internal">داخلی — Internal</option>
-                  <option value="external">خارجی — External</option>
+                <Select value={type} onChange={(event) => setType(event.target.value as ManualTransmittalType)}>
+                  <option value="OT">ترانسمیتال مهندسی - OT</option>
+                  <option value="OS">ترانسمیتال نهایی - OS</option>
                 </Select>
               </Field>
-              <Field label="حلقه دسترسی *" hint="اعضای این حلقه فقط همین ترانسمیتال را می‌بینند.">
-                <Select value={accessCircleId} onChange={(event) => setAccessCircleId(event.target.value)}>
-                  <option value="">{user?.is_superuser ? "بدون حلقه / دسترسی پروژه‌ای" : "انتخاب حلقه…"}</option>
-                  {circles.map((circle) => (
-                    <option key={circle.id} value={circle.id}>{circle.code} — {circle.name}</option>
+              <Field label="تاریخ صدور ترانسمیتال">
+                <Input
+                  className="ltr text-center"
+                  type="text"
+                  inputMode="numeric"
+                  dir="ltr"
+                  placeholder="۱۴۰۵/۰۸/۰۲"
+                  value={issueDate}
+                  onChange={(event) => setIssueDate(event.target.value)}
+                />
+              </Field>
+              <Field label="تأیید کننده نهایی">
+                <Select value={finalApproverId} onChange={(event) => setFinalApproverId(event.target.value)}>
+                  <option value="">انتخاب شخص…</option>
+                  {approverOptions.map((member) => (
+                    <option key={member.user_id} value={member.user_id}>
+                      {member.full_name}{member.discipline_name ? ` — ${member.discipline_name}` : ""}
+                    </option>
                   ))}
                 </Select>
               </Field>
@@ -337,30 +380,46 @@ export function ManualTransmittalPage() {
             </div>
           </Card>
 
-          <Card>
-            <CardHeader title="گیرندگان پروژه" subtitle="برای تشکیل کارتابل و صدور ترانسمیتال حداقل یک گیرنده انتخاب کنید." />
-            <div className="divide-y divide-slate-100">
-              {members.length === 0 ? (
-                <p className="p-3 text-xs text-slate-500">عضو فعالی در این پروژه تعریف نشده است.</p>
-              ) : (
-                members.map((member) => (
-                  <label key={member.user_id} className="flex cursor-pointer items-start gap-2 px-3 py-2 hover:bg-slate-50">
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={recipientIds.includes(member.user_id)}
-                      onChange={() => toggleRecipient(member.user_id)}
+          {selectedItems.length > 0 ? (
+            <Card>
+              <CardHeader title="Doc.Status" subtitle="وضعیت هر مدرک انتخاب‌شده را مشخص کنید." />
+              <div className="space-y-2 p-3">
+                {selectedItems.map((item) => (
+                  <Field key={item.id} label={`${item.doc_code} — Doc.Status`}>
+                    <Select
+                      value={selected[item.id].doc_status}
+                      onChange={(event) => updateLine(item.id, "doc_status", event.target.value)}
+                    >
+                      {DOC_STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
+                    </Select>
+                  </Field>
+                ))}
+              </div>
+            </Card>
+          ) : null}
+
+          {selectedItems.length > 0 ? (
+            <Card>
+              <CardHeader title="بارگذاری فایل پیوست" subtitle="فقط فایل PDF پذیرفته می‌شود." />
+              <div className="space-y-2 p-3">
+                {selectedItems.map((item) => (
+                  <Field key={item.id} label={`${item.doc_code} — فایل پیوست PDF`}>
+                    <Input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      multiple
+                      onChange={(event) => updateAttachments(item.id, event.target.files)}
                     />
-                    <span className="min-w-0">
-                      <span className="block text-xs font-bold text-[#1f3864]">{member.full_name}</span>
-                      <span className="block ltr text-[10px] text-slate-500">{member.email}</span>
-                      <span className="text-[10px] text-slate-500">{member.role}{member.discipline_code ? ` · ${member.discipline_code}` : ""}</span>
+                    <span className="mt-0.5 block text-[9.5px] text-[#7a8794]">
+                      {(attachments[item.id] ?? []).length
+                        ? `${persianDigits((attachments[item.id] ?? []).length)} فایل انتخاب شده است.`
+                        : "انتخاب فایل اختیاری است."}
                     </span>
-                  </label>
-                ))
-              )}
-            </div>
-          </Card>
+                  </Field>
+                ))}
+              </div>
+            </Card>
+          ) : null}
 
           {selectedItems.length > 0 ? (
             <Card>
@@ -380,7 +439,7 @@ export function ManualTransmittalPage() {
           ) : null}
 
           <Button className="w-full" disabled={busy || loading || selectedItems.length === 0} onClick={() => void submit()}>
-            {busy ? "در حال ایجاد ترانسمیتال…" : "ایجاد ترانسمیتال جدید"}
+            {busy ? "در حال ایجاد پیش‌نویس…" : "ترانسمیتال جدید"}
           </Button>
         </div>
       </div>

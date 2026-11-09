@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from app.models import AccessCircle, Transmittal
+import uuid
+
+from app.models import AccessCircle, ProjectMember, Transmittal
 from app.models.enums import PurposeOfIssue, TransmittalStatus, TransmittalType
 from tests.conftest import auth_headers
 
@@ -54,6 +56,50 @@ def test_admin_can_create_person_with_identity_and_put_them_in_circle(client, db
     assert body["external_member_count"] == 1
     assert body["members"][0]["national_id"] == "1234567891"
     assert body["members"][0]["can_access_external"] is True
+
+
+def test_admin_can_assign_and_edit_project_role_and_discipline_from_user_account(client, db, project, users):
+    admin = auth_headers(client, "admin@edms-test.com")
+    response = client.post(
+        "/api/v1/admin/users",
+        headers=admin,
+        json={
+            "email": "role-editor@edms-test.com",
+            "full_name": "کاربر دارای نقش",
+            "national_id": "1234567891",
+            "mobile": "09121234567",
+            "password": "Secret123!",
+            "project_id": str(project.id),
+            "role": "کارشناس DCC",
+            "discipline_name": "کنترل کیفیت تجهیزات",
+        },
+    )
+    assert response.status_code == 201, response.text
+    person = response.json()
+    membership = db.query(ProjectMember).filter_by(project_id=project.id, user_id=uuid.UUID(person["id"])).one()
+    assert membership.role == "dcc"
+    assert membership.discipline.name == "کنترل کیفیت تجهیزات"
+
+    updated = client.patch(
+        f"/api/v1/admin/users/{person['id']}",
+        headers=admin,
+        json={
+            "project_id": str(project.id),
+            "role": "هماهنگ‌کننده مدارک پروژه",
+            "discipline_id": None,
+            "discipline_name": "",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    db.refresh(membership)
+    assert membership.role == "هماهنگ‌کننده مدارک پروژه"
+    assert membership.discipline_id is None
+
+    listed = client.get(f"/api/v1/projects/{project.id}/members", headers=admin)
+    assert listed.status_code == 200, listed.text
+    row = next(item for item in listed.json() if item["user_id"] == person["id"])
+    assert row["role"] == "هماهنگ‌کننده مدارک پروژه"
+    assert row["discipline_id"] is None
 
 
 def test_a_circle_allows_only_one_external_member(client, db, project, users):

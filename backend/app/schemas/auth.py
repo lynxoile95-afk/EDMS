@@ -91,6 +91,13 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     is_superuser: bool = False
     locale: str = "fa"
+    # Optional project membership details. The administration screen sends these
+    # together with the account so creating a person and assigning the first
+    # project role is one transaction rather than two unrelated browser calls.
+    project_id: uuid.UUID | None = None
+    role: str | None = Field(default=None, min_length=1, max_length=255)
+    discipline_id: uuid.UUID | None = None
+    discipline_name: str | None = Field(default=None, max_length=255)
 
     _normalize_national_id = field_validator("national_id")(_validate_national_id)
     _normalize_mobile = field_validator("mobile")(_validate_mobile)
@@ -106,6 +113,12 @@ class UserUpdate(BaseModel):
     password: str | None = Field(default=None, min_length=8, max_length=128)
     is_superuser: bool | None = None
     locale: str | None = Field(default=None, min_length=2, max_length=8)
+    # When any of the following membership fields is supplied, ``project_id``
+    # identifies the project whose role/discipline is being edited.
+    project_id: uuid.UUID | None = None
+    role: str | None = Field(default=None, min_length=1, max_length=255)
+    discipline_id: uuid.UUID | None = None
+    discipline_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("national_id")
     @classmethod

@@ -9,9 +9,10 @@ from sqlalchemy import func, or_, select
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.security import hash_password
-from app.models import AuditLog, Project, User
+from app.models import AuditLog, Project, ProjectMember, User
 from pydantic import BaseModel, Field
 
+from app.api.routes.projects import _resolve_member_discipline, _resolve_member_role
 from app.schemas.auth import UserCreate, UserOut, UserUpdate
 from app.services import acl, audit
 
@@ -28,6 +29,87 @@ def _identity_conflict(db, *, email: str, national_id: str | None, mobile: str |
     if exclude_id is not None:
         stmt = stmt.where(User.id != exclude_id)
     return db.execute(stmt).scalars().first()
+
+
+def _save_project_membership(
+    db,
+    *,
+    project_id: uuid.UUID,
+    user_id: uuid.UUID,
+    role_value: str,
+    discipline_id: uuid.UUID | None,
+    discipline_name: str | None,
+    actor: User,
+    existing: ProjectMember | None = None,
+) -> ProjectMember:
+    """Create or update one project membership for the admin user form.
+
+    Account administration is deliberately the only place that may save the
+    account and its first project membership in one transaction. The same role
+    and discipline resolvers used by the project-members endpoint are reused so
+    aliases keep routing permissions while unknown typed labels remain intact.
+    """
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="پروژه یافت نشد.")
+    if not role_value.strip():
+        raise HTTPException(status_code=422, detail="نقش پروژه نمی‌تواند خالی باشد.")
+
+    role = _resolve_member_role(role_value)
+    discipline = _resolve_member_discipline(db, project.id, discipline_id, discipline_name)
+    resolved_discipline_id = discipline.id if discipline is not None else None
+
+    duplicate_stmt = select(ProjectMember.id).where(
+        ProjectMember.project_id == project.id,
+        ProjectMember.user_id == user_id,
+        ProjectMember.role == role,
+    )
+    if existing is not None:
+        duplicate_stmt = duplicate_stmt.where(ProjectMember.id != existing.id)
+    if resolved_discipline_id is None:
+        duplicate_stmt = duplicate_stmt.where(ProjectMember.discipline_id.is_(None))
+    else:
+        duplicate_stmt = duplicate_stmt.where(ProjectMember.discipline_id == resolved_discipline_id)
+    if db.execute(duplicate_stmt).scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="این کاربر با همین نقش و دیسیپلین قبلاً عضو پروژه است.")
+
+    if existing is None:
+        member = ProjectMember(
+            project_id=project.id,
+            user_id=user_id,
+            role=role,
+            discipline_id=resolved_discipline_id,
+        )
+        db.add(member)
+        db.flush()
+        action = "project.member.add"
+        before = None
+    else:
+        member = existing
+        action = "project.member.update"
+        before = {
+            "role": str(member.role),
+            "discipline_id": str(member.discipline_id) if member.discipline_id else None,
+        }
+        member.role = role
+        member.discipline_id = resolved_discipline_id
+        db.flush()
+
+    audit.record(
+        db,
+        action=action,
+        entity_type="project_member",
+        entity_id=member.id,
+        actor=actor,
+        project_id=project.id,
+        before=before,
+        after={
+            "role": role,
+            "discipline_id": str(resolved_discipline_id) if resolved_discipline_id else None,
+            "discipline_name": discipline.name if discipline else None,
+        },
+    )
+    return member
 
 
 @router.get("/users", response_model=list[UserOut], summary="فهرست کاربران")
@@ -71,11 +153,31 @@ def create_user(payload: UserCreate, db: DbSession, user: CurrentUser) -> UserOu
     )
     db.add(new_user)
     db.flush()
+    if payload.project_id is not None:
+        if payload.role is None:
+            raise HTTPException(status_code=422, detail="برای عضویت در پروژه، نقش پروژه الزامی است.")
+        _save_project_membership(
+            db,
+            project_id=payload.project_id,
+            user_id=new_user.id,
+            role_value=payload.role,
+            discipline_id=payload.discipline_id,
+            discipline_name=payload.discipline_name,
+            actor=user,
+        )
+    elif payload.role is not None or payload.discipline_id is not None or payload.discipline_name:
+        raise HTTPException(status_code=422, detail="برای ثبت نقش یا دیسیپلین، پروژه را انتخاب کنید.")
     audit.record(
         db, action="user.create", entity_type="user", entity_id=new_user.id, actor=user,
-        after={"email": new_user.email, "superuser": new_user.is_superuser},
+        after={
+            "email": new_user.email,
+            "superuser": new_user.is_superuser,
+            "project_id": str(payload.project_id) if payload.project_id else None,
+            "role": payload.role,
+        },
     )
     db.commit()
+    db.refresh(new_user)
     return UserOut.model_validate(new_user)
 
 
@@ -86,10 +188,55 @@ def update_user(user_id: uuid.UUID, payload: UserUpdate, db: DbSession, user: Cu
     if target is None:
         raise HTTPException(status_code=404, detail="کاربر یافت نشد.")
 
-    updates = payload.model_dump(exclude_unset=True)
-    candidate_email = str(updates.get("email", target.email)).lower()
-    candidate_national_id = updates.get("national_id", target.national_id)
-    candidate_mobile = updates.get("mobile", target.mobile)
+    raw_updates = payload.model_dump(exclude_unset=True)
+    membership_keys = {"role", "discipline_id", "discipline_name"}
+    has_membership_update = bool(membership_keys.intersection(raw_updates))
+    project_id = raw_updates.pop("project_id", None)
+    role_value = raw_updates.pop("role", None)
+    discipline_id_provided = "discipline_id" in raw_updates
+    discipline_name_provided = "discipline_name" in raw_updates
+    discipline_id_value = raw_updates.pop("discipline_id", None)
+    discipline_name_value = raw_updates.pop("discipline_name", None)
+
+    if has_membership_update:
+        if project_id is None:
+            raise HTTPException(status_code=422, detail="برای ویرایش نقش یا دیسیپلین، پروژه را انتخاب کنید.")
+        existing = db.execute(
+            select(ProjectMember)
+            .where(ProjectMember.project_id == project_id, ProjectMember.user_id == target.id)
+            .order_by(ProjectMember.created_at, ProjectMember.id)
+            .limit(1)
+        ).scalars().first()
+        if role_value is None and existing is None:
+            raise HTTPException(status_code=422, detail="برای عضویت در پروژه، نقش پروژه الزامی است.")
+        effective_role = role_value or str(existing.role)
+        if discipline_id_provided:
+            effective_discipline_id = discipline_id_value
+            effective_discipline_name = (
+                discipline_name_value
+                if discipline_name_provided
+                else (existing.discipline.name if existing and discipline_id_value else None)
+            )
+        elif discipline_name_provided:
+            effective_discipline_id = None
+            effective_discipline_name = discipline_name_value
+        else:
+            effective_discipline_id = existing.discipline_id if existing else None
+            effective_discipline_name = existing.discipline.name if existing and existing.discipline else None
+        _save_project_membership(
+            db,
+            project_id=project_id,
+            user_id=target.id,
+            role_value=effective_role,
+            discipline_id=effective_discipline_id,
+            discipline_name=effective_discipline_name,
+            actor=user,
+            existing=existing,
+        )
+
+    candidate_email = str(raw_updates.get("email", target.email)).lower()
+    candidate_national_id = raw_updates.get("national_id", target.national_id)
+    candidate_mobile = raw_updates.get("mobile", target.mobile)
     conflict = _identity_conflict(
         db,
         email=candidate_email,
@@ -111,12 +258,12 @@ def update_user(user_id: uuid.UUID, payload: UserUpdate, db: DbSession, user: Cu
         "mobile": target.mobile,
         "is_superuser": target.is_superuser,
     }
-    if "email" in updates:
-        updates["email"] = candidate_email
-    if "password" in updates:
-        target.hashed_password = hash_password(updates.pop("password")) if updates["password"] else target.hashed_password
-        updates.pop("password", None)
-    for field, value in updates.items():
+    if "email" in raw_updates:
+        raw_updates["email"] = candidate_email
+    if "password" in raw_updates:
+        target.hashed_password = hash_password(raw_updates.pop("password")) if raw_updates["password"] else target.hashed_password
+        raw_updates.pop("password", None)
+    for field, value in raw_updates.items():
         setattr(target, field, value)
     audit.record(
         db,
@@ -125,7 +272,7 @@ def update_user(user_id: uuid.UUID, payload: UserUpdate, db: DbSession, user: Cu
         entity_id=target.id,
         actor=user,
         before=before,
-        after={key: value for key, value in updates.items() if key != "password"},
+        after={key: value for key, value in raw_updates.items() if key != "password"},
     )
     db.commit()
     db.refresh(target)

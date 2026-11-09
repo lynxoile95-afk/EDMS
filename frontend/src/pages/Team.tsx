@@ -63,6 +63,8 @@ interface NewUserForm {
   national_id: string;
   mobile: string;
   password: string;
+  role_text: string;
+  discipline_text: string;
   is_superuser: boolean;
 }
 
@@ -72,6 +74,8 @@ interface EditUserForm {
   national_id: string;
   mobile: string;
   password: string;
+  role_text: string;
+  discipline_text: string;
   is_superuser: boolean;
 }
 
@@ -104,6 +108,8 @@ const EMPTY_USER: NewUserForm = {
   national_id: "",
   mobile: "",
   password: "",
+  role_text: "",
+  discipline_text: "",
   is_superuser: false,
 };
 
@@ -113,6 +119,8 @@ const EMPTY_EDIT_USER: EditUserForm = {
   national_id: "",
   mobile: "",
   password: "",
+  role_text: "",
+  discipline_text: "",
   is_superuser: false,
 };
 
@@ -255,26 +263,40 @@ export function Team() {
   };
   const createUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!project) return;
+    const role = roleForValue(newUser.role_text);
+    if (!role) {
+      setError("نقش پروژه را به‌صورت متنی وارد کنید؛ نمونه: reviewer یا کارشناس کنترل پروژه.");
+      return;
+    }
+    const disciplineText = newUser.discipline_text;
+    const discipline = disciplineText.trim() ? disciplineForValue(disciplineText) : undefined;
+    const disciplineName = (discipline?.name ?? disciplineText.trim()) || null;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
       const created = await api.post<SystemUser>("/admin/users", {
-        ...newUser,
         full_name: newUser.full_name.trim(),
         email: newUser.email.trim(),
         national_id: newUser.national_id.trim(),
         mobile: newUser.mobile.trim(),
+        password: newUser.password,
+        is_superuser: newUser.is_superuser,
+        project_id: project.id,
+        role,
+        discipline_id: discipline?.id ?? null,
+        discipline_name: disciplineName,
       });
       setUsers((current) => [...current, created].sort((left, right) => left.full_name.localeCompare(right.full_name, "fa")));
-      setNewMember((current) => ({
-        ...current,
-        user_id: created.id,
-        user_text: created.email,
-      }));
       setNewUser(EMPTY_USER);
+      // The account and its project membership are committed by one backend
+      // request; close only after both have succeeded, then refresh both tables.
       setUserModalOpen(false);
-      setNotice(`حساب «${created.full_name}» ساخته شد. می‌توانید ابتدا سایر حساب‌ها را ثبت کنید و بعداً نقش پروژه و حلقه دسترسی را تعیین کنید.`);
+      await load();
+      setNotice(
+        `حساب «${created.full_name}» با نقش «${roleLabel(role)}»${disciplineName ? ` و دیسیپلین «${disciplineName}»` : ""} ساخته شد.`,
+      );
     } catch (err) {
       setError(messageOf(err, "ایجاد حساب کاربر ناموفق بود."));
     } finally {
@@ -283,6 +305,7 @@ export function Team() {
   };
 
   const openEditUser = (account: SystemUser) => {
+    const membership = members.find((item) => item.user_id === account.id);
     setEditingUser(account);
     setEditUser({
       full_name: account.full_name,
@@ -290,6 +313,8 @@ export function Team() {
       national_id: account.national_id ?? "",
       mobile: account.mobile ?? "",
       password: "",
+      role_text: membership?.role ?? "",
+      discipline_text: membership?.discipline_name ?? membership?.discipline_code ?? "",
       is_superuser: account.is_superuser,
     });
     setError(null);
@@ -298,7 +323,18 @@ export function Team() {
 
   const updateUser = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!editingUser) return;
+    if (!editingUser || !project) return;
+    const currentMembership = members.find((item) => item.user_id === editingUser.id);
+    const roleText = editUser.role_text.trim();
+    const role = roleText ? roleForValue(roleText) : null;
+    if (currentMembership && !role) {
+      setError("نقش پروژه نمی‌تواند خالی باشد.");
+      return;
+    }
+    if (editUser.discipline_text.trim() && !role) {
+      setError("برای ثبت دیسیپلین، ابتدا نقش پروژه را وارد کنید.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -311,12 +347,20 @@ export function Team() {
         is_superuser: editUser.is_superuser,
       };
       if (editUser.password.trim()) payload.password = editUser.password;
+      if (role) {
+        const disciplineText = editUser.discipline_text;
+        const discipline = disciplineText.trim() ? disciplineForValue(disciplineText) : undefined;
+        payload.project_id = project.id;
+        payload.role = role;
+        payload.discipline_id = discipline?.id ?? null;
+        payload.discipline_name = (discipline?.name ?? disciplineText.trim()) || null;
+      }
       await api.patch<SystemUser>(`/admin/users/${editingUser.id}`, payload);
       setEditUserModalOpen(false);
       setEditingUser(null);
       setEditUser(EMPTY_EDIT_USER);
       await load();
-      setNotice(`اطلاعات حساب «${editUser.full_name.trim()}» به‌روزرسانی شد.`);
+      setNotice(`اطلاعات حساب «${editUser.full_name.trim()}» و نقش/دیسیپلین پروژه به‌روزرسانی شد.`);
     } catch (err) {
       setError(messageOf(err, "ویرایش اطلاعات کاربر ناموفق بود."));
     } finally {
@@ -842,6 +886,23 @@ export function Team() {
             <Field label="شماره موبایل *" hint="نمونه: 09121234567">
               <Input required dir="ltr" inputMode="tel" maxLength={14} value={editUser.mobile} onChange={(event) => setEditUser({ ...editUser, mobile: event.target.value })} />
             </Field>
+            <Field label="نقش در پروژه *" hint="برای همین پروژه؛ مقدار سفارشی هم مجاز است.">
+              <Input
+                required={Boolean(editingUser && members.some((item) => item.user_id === editingUser.id))}
+                list="edit-user-role-options"
+                value={editUser.role_text}
+                placeholder="reviewer / dcc / عنوان سفارشی"
+                onChange={(event) => setEditUser({ ...editUser, role_text: event.target.value })}
+              />
+            </Field>
+            <Field label="دیسیپلین (اختیاری)" hint="خالی‌کردن این فیلد دیسیپلین را حذف می‌کند.">
+              <Input
+                list="edit-user-discipline-options"
+                value={editUser.discipline_text}
+                placeholder="کد یا نام دیسیپلین"
+                onChange={(event) => setEditUser({ ...editUser, discipline_text: event.target.value })}
+              />
+            </Field>
             <Field label="رمز عبور جدید" hint="اختیاری — حداقل ۸ نویسه">
               <Input type="password" dir="ltr" minLength={8} value={editUser.password} onChange={(event) => setEditUser({ ...editUser, password: event.target.value })} />
             </Field>
@@ -850,6 +911,12 @@ export function Team() {
               مدیر سیستم
             </label>
           </div>
+          <datalist id="edit-user-role-options">
+            {ROLE_OPTIONS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}
+          </datalist>
+          <datalist id="edit-user-discipline-options">
+            {disciplines.map((item) => <option key={item.id} value={item.code} label={item.name} />)}
+          </datalist>
         </form>
       </Modal>
 
@@ -867,8 +934,8 @@ export function Team() {
       >
         <form id="new-user-form" className="space-y-2" onSubmit={createUser}>
           <div className="border border-[#c3ccd6] bg-[#fffdf3] px-2 py-1.5 text-[10px] leading-5 text-[#5b4d1a]">
-            کد ملی و شماره موبایل الزامی است و برای جلوگیری از تعریف حساب تکراری کنترل می‌شود. نقش این فرد را
-            در مرحله بعد، هنگام افزودن به پروژه، انتخاب کنید.
+            کد ملی و شماره موبایل الزامی است و برای جلوگیری از تعریف حساب تکراری کنترل می‌شود. نقش در پروژه
+            همین‌جا ثبت می‌شود؛ دیسیپلین اختیاری است و نام جدید هم قابل تایپ و ذخیره است.
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <Field label="نام و نام خانوادگی *">
@@ -883,6 +950,23 @@ export function Team() {
             <Field label="شماره موبایل *" hint="نمونه: 09121234567">
               <Input required dir="ltr" inputMode="tel" maxLength={14} value={newUser.mobile} onChange={(event) => setNewUser({ ...newUser, mobile: event.target.value })} />
             </Field>
+            <Field label="نقش در پروژه *" hint="کلید انگلیسی یا عنوان فارسی؛ مقدار سفارشی هم مجاز است.">
+              <Input
+                required
+                list="new-user-role-options"
+                value={newUser.role_text}
+                placeholder="reviewer / dcc / کارشناس کنترل پروژه"
+                onChange={(event) => setNewUser({ ...newUser, role_text: event.target.value })}
+              />
+            </Field>
+            <Field label="دیسیپلین (اختیاری)" hint="کد، نام موجود یا نام جدید را تایپ کنید.">
+              <Input
+                list="new-user-discipline-options"
+                value={newUser.discipline_text}
+                placeholder="مثلاً CIV، سیویل یا نام جدید"
+                onChange={(event) => setNewUser({ ...newUser, discipline_text: event.target.value })}
+              />
+            </Field>
             <Field label="گذرواژه *" hint="حداقل ۸ نویسه">
               <Input required type="password" dir="ltr" minLength={8} value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} />
             </Field>
@@ -893,6 +977,12 @@ export function Team() {
               </label>
             ) : null}
           </div>
+          <datalist id="new-user-role-options">
+            {ROLE_OPTIONS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}
+          </datalist>
+          <datalist id="new-user-discipline-options">
+            {disciplines.map((item) => <option key={item.id} value={item.code} label={item.name} />)}
+          </datalist>
         </form>
       </Modal>
 

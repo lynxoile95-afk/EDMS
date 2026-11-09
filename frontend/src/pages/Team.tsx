@@ -86,14 +86,12 @@ interface NewCircleForm {
 }
 
 interface NewMemberForm {
-  user_id: string;
-  user_text: string;
-  role: Role;
-  role_text: string;
-  discipline_id: string;
-  discipline_text: string;
   circle_id: string;
   circle_text: string;
+  search: string;
+  selected_user_ids: string[];
+  role_text: string;
+  discipline_text: string;
   can_access_external: boolean;
 }
 
@@ -126,14 +124,12 @@ const EMPTY_EDIT_USER: EditUserForm = {
 
 const EMPTY_CIRCLE: NewCircleForm = { code: "", name: "", description: "" };
 const EMPTY_MEMBER: NewMemberForm = {
-  user_id: "",
-  user_text: "",
-  role: "reviewer",
-  role_text: "reviewer",
-  discipline_id: "",
-  discipline_text: "",
   circle_id: "",
   circle_text: "",
+  search: "",
+  selected_user_ids: [],
+  role_text: "reviewer",
+  discipline_text: "",
   can_access_external: false,
 };
 
@@ -184,8 +180,8 @@ export function Team() {
   const [newCircle, setNewCircle] = useState<NewCircleForm>(EMPTY_CIRCLE);
   const [newMember, setNewMember] = useState<NewMemberForm>(EMPTY_MEMBER);
 
-  const load = async () => {
-    if (!project) return;
+  const load = async (): Promise<boolean> => {
+    if (!project) return false;
     setLoading(true);
     setError(null);
     try {
@@ -202,8 +198,10 @@ export function Team() {
       } else {
         setUsers([]);
       }
+      return true;
     } catch (err) {
       setError(messageOf(err, "بارگذاری کاربران و حلقه‌های دسترسی ناموفق بود."));
+      return false;
     } finally {
       setLoading(false);
     }
@@ -231,16 +229,24 @@ export function Team() {
         memberships: [],
       });
     });
-    return Array.from(byId.values());
+    return Array.from(byId.values()).filter((item) => item.is_active);
   }, [members, user?.is_superuser, users]);
 
   const selectedCircle = circles.find((circle) => circle.id === newMember.circle_id);
-  const userForValue = (value: string) => {
-    const normalized = value.trim().toLowerCase();
-    return usersForPicker.find(
-      (item) => item.id === value || item.email.toLowerCase() === normalized || item.full_name.trim().toLowerCase() === normalized,
+  const selectedCircleUserIds = useMemo(
+    () => new Set(selectedCircle?.members.map((member) => member.user_id) ?? []),
+    [selectedCircle],
+  );
+  const filteredCircleUsers = useMemo(() => {
+    const query = newMember.search.trim().toLocaleLowerCase("fa");
+    if (!query) return usersForPicker;
+    return usersForPicker.filter((item) =>
+      [item.full_name, item.email, item.mobile ?? "", item.national_id ?? ""]
+        .join(" ")
+        .toLocaleLowerCase("fa")
+        .includes(query),
     );
-  };
+  }, [newMember.search, usersForPicker]);
   const roleForValue = (value: string): Role | null => {
     const trimmed = value.trim();
     if (!trimmed) return null;
@@ -436,63 +442,45 @@ export function Team() {
   const addMember = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!project) return;
-
-    const account = userForValue(newMember.user_text) ?? userForValue(newMember.user_id);
-    if (!account) {
-      setError("کاربر را با تایپ نام یا ایمیل معتبر وارد کنید.");
-      return;
-    }
-    const role = roleForValue(newMember.role_text) ?? (newMember.role_text.trim() ? null : newMember.role);
-    if (!role) {
-      setError("نقش پروژه را به‌صورت متنی وارد کنید؛ نمونه: reviewer یا کارشناس کنترل پروژه.");
-      return;
-    }
-    const disciplineText = newMember.discipline_text;
-    const discipline = disciplineText.trim() ? disciplineForValue(disciplineText) : undefined;
-    const disciplineName = (discipline?.name ?? disciplineText.trim()) || null;
     const circle = newMember.circle_text.trim() ? circleForValue(newMember.circle_text) : undefined;
-    if (newMember.circle_text.trim() && !circle) {
-      setError("حلقه واردشده در پروژه یافت نشد؛ کد یا نام حلقه را تایپ کنید.");
+    if (!circle) {
+      setError("ابتدا حلقهٔ موردنظر را انتخاب کنید.");
       return;
     }
-    const normalizedDisciplineName = disciplineName?.trim().toLowerCase() || null;
-    const alreadyInProject = members.some((item) => {
-      if (item.user_id !== account.id || item.role !== role) return false;
-      if (discipline) return item.discipline_id === discipline.id;
-      if (normalizedDisciplineName) {
-        return item.discipline_name?.trim().toLowerCase() === normalizedDisciplineName;
-      }
-      return item.discipline_id === null;
-    });
+    const selectedUserIds = newMember.selected_user_ids.filter((id) => !selectedCircleUserIds.has(id));
+    if (!selectedUserIds.length) {
+      setError("حداقل یک کاربر جدید را با تیک انتخاب کنید.");
+      return;
+    }
+    const projectMemberIds = new Set(members.map((member) => member.user_id));
+    const selectedWithoutProjectMembership = selectedUserIds.filter((id) => !projectMemberIds.has(id));
+    if (selectedWithoutProjectMembership.length && !newMember.role_text.trim()) {
+      setError("برای حساب‌های انتخاب‌شده‌ای که هنوز عضو پروژه نیستند، نقش پروژه را وارد کنید.");
+      return;
+    }
+    const discipline = disciplineForValue(newMember.discipline_text);
+    if (newMember.can_access_external && selectedUserIds.length > 1) {
+      setError("دسترسی خارج از حلقه فقط برای یک نفر قابل فعال‌سازی است؛ برای افزودن چند نفر این گزینه را بردارید.");
+      return;
+    }
 
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      if (!alreadyInProject) {
-        await api.post<ProjectMember>(`/projects/${project.id}/members`, {
-          user_id: account.id,
-          role,
-          discipline_id: discipline?.id ?? null,
-          discipline_name: disciplineName,
-        });
-      }
-      if (circle) {
-        await api.post<AccessCircle>(`/projects/${project.id}/circles/${circle.id}/members`, {
-          user_id: account.id,
-          can_access_external: newMember.can_access_external,
-        });
-      }
+      await api.post<AccessCircle>(`/projects/${project.id}/circles/${circle.id}/members/bulk`, {
+        user_ids: selectedUserIds,
+        can_access_external: newMember.can_access_external,
+        role: newMember.role_text.trim() || null,
+        discipline_id: discipline?.id ?? null,
+        discipline_name: newMember.discipline_text.trim() || null,
+      });
+      if (!(await load())) return;
       setMemberModalOpen(false);
-      setNewMember({ ...EMPTY_MEMBER, circle_id: circle?.id ?? "", circle_text: circle?.code ?? "" });
-      await load();
-      setNotice(
-        circle
-          ? "فرد با نقش پروژه و عضویت حلقه ثبت شد."
-          : "فرد با نقش پروژه ثبت شد؛ عضویت حلقه را می‌توانید بعداً انجام دهید.",
-      );
+      setNewMember({ ...EMPTY_MEMBER, circle_id: circle.id, circle_text: circle.code });
+      setNotice(`${persianDigits(selectedUserIds.length)} نفر با موفقیت به حلقهٔ «${circle.name}» اضافه شدند.`);
     } catch (err) {
-      setError(messageOf(err, "افزودن فرد به پروژه یا حلقه ناموفق بود."));
+      setError(messageOf(err, "افزودن افراد به حلقه ناموفق بود."));
     } finally {
       setBusy(false);
     }
@@ -549,7 +537,10 @@ export function Team() {
                   <Button className="btn-sm" onClick={() => setCircleModalOpen(true)}>
                     ایجاد حلقه دسترسی
                   </Button>
-                  <Button className="btn-sm" onClick={() => setMemberModalOpen(true)}>
+                  <Button className="btn-sm" onClick={() => {
+                    setNewMember(EMPTY_MEMBER);
+                    setMemberModalOpen(true);
+                  }}>
                     افزودن فرد به پروژه / حلقه
                   </Button>
                 </>
@@ -719,7 +710,7 @@ export function Team() {
                     </Badge>
                     {canManageCircles ? (
                       <Button className="btn-sm" onClick={() => {
-                        setNewMember((current) => ({ ...current, circle_id: circle.id, circle_text: circle.code }));
+                        setNewMember({ ...EMPTY_MEMBER, circle_id: circle.id, circle_text: circle.code });
                         setMemberModalOpen(true);
                       }}>
                         افزودن فرد
@@ -1020,92 +1011,140 @@ export function Team() {
         footer={
           <div className="flex justify-end gap-1">
             <Button onClick={() => setMemberModalOpen(false)}>انصراف</Button>
-            <Button variant="primary" form="new-member-form" type="submit" disabled={busy || !usersForPicker.length}>ثبت عضویت</Button>
+            <Button
+              variant="primary"
+              form="new-member-form"
+              type="submit"
+              disabled={busy || !newMember.circle_id || !newMember.selected_user_ids.length}
+            >
+              افزودن افراد انتخاب‌شده
+            </Button>
           </div>
         }
       >
         <form id="new-member-form" className="space-y-2" onSubmit={addMember}>
-          {!usersForPicker.length ? (
-            <div className="border border-[#c98a86] bg-[#fdeeee] px-2 py-1.5 text-[10.5px] leading-5 text-[#8a2b25]">
-              ابتدا از دکمه «تعریف کاربر جدید» حساب بسازید یا از مدیر سیستم بخواهید حساب‌های افراد را ثبت کند.
-            </div>
-          ) : null}
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Field label="کاربر (قابل تایپ) *" hint="نام یا ایمیل را تایپ کنید؛ پیشنهادها فقط برای کمک هستند.">
-              <Input
-                list="team-user-options"
-                value={newMember.user_text}
-                placeholder="نام یا email کاربر"
-                onChange={(event) => {
-                  const value = event.target.value;
-                  const account = userForValue(value);
-                  setNewMember({ ...newMember, user_text: value, user_id: account?.id ?? "" });
-                }}
-              />
-            </Field>
-            <Field label="نقش در پروژه (قابل تایپ) *" hint="کلید انگلیسی یا عنوان فارسی نقش را وارد کنید.">
-              <Input
-                list="team-role-options"
-                value={newMember.role_text}
-                placeholder="reviewer / dcc / PMO"
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setNewMember({ ...newMember, role_text: value, role: roleForValue(value) ?? newMember.role });
-                }}
-              />
-            </Field>
-            <Field label="دیسیپلین (اختیاری)" hint="نام جدید هم ثبت می‌شود؛ پیشنهادها فقط برای کمک هستند.">
-              <Input
-                list="team-discipline-options"
-                value={newMember.discipline_text}
-                placeholder="مثلاً CIV، سیویل یا نام جدید"
-                onChange={(event) => {
-                  const value = event.target.value;
-                  const discipline = disciplineForValue(value);
-                  setNewMember({ ...newMember, discipline_text: value, discipline_id: discipline?.id ?? "" });
-                }}
-              />
-            </Field>
-            <Field label="حلقه دسترسی (اختیاری)" hint="کد یا نام حلقه را تایپ کنید؛ در صورت خالی‌بودن فقط نقش پروژه ثبت می‌شود.">
-              <Input
-                list="team-circle-options"
-                value={newMember.circle_text}
-                placeholder="ENG یا واحد مهندسی"
-                onChange={(event) => {
-                  const value = event.target.value;
-                  const circle = circleForValue(value);
-                  setNewMember({
-                    ...newMember,
-                    circle_text: value,
-                    circle_id: circle?.id ?? "",
-                    can_access_external: value.trim() ? newMember.can_access_external : false,
-                  });
-                }}
-              />
-            </Field>
+          <div className="border border-[#c3ccd6] bg-[#fffdf3] px-2 py-1.5 text-[10px] leading-5 text-[#5b4d1a]">
+            از فهرست حساب‌های فعال جست‌وجو کنید، کنار چند نفر تیک بزنید و همه را هم‌زمان به حلقه اضافه کنید.
+            نقش و دیسیپلین هر نفر از عضویت پروژهٔ او استفاده می‌شود.
           </div>
-          <datalist id="team-user-options">
-            {usersForPicker.map((item) => <option key={item.id} value={item.email} label={item.full_name} />)}
-          </datalist>
-          <datalist id="team-role-options">
-            {ROLE_OPTIONS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}
-          </datalist>
-          <datalist id="team-discipline-options">
-            {disciplines.map((item) => <option key={item.id} value={item.code} label={item.name} />)}
-          </datalist>
+          <Field label="حلقه دسترسی *" hint="کد یا نام حلقه را تایپ کنید.">
+            <Input
+              list="team-circle-options"
+              value={newMember.circle_text}
+              placeholder="ENG یا واحد مهندسی"
+              onChange={(event) => {
+                const value = event.target.value;
+                const circle = circleForValue(value);
+                setNewMember({
+                  ...newMember,
+                  circle_text: value,
+                  circle_id: circle?.id ?? "",
+                  search: "",
+                  selected_user_ids: [],
+                  can_access_external: false,
+                });
+              }}
+            />
+          </Field>
           <datalist id="team-circle-options">
             {circles.map((item) => <option key={item.id} value={item.code} label={item.name} />)}
           </datalist>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="نقش پروژه برای حساب‌های جدید" hint="برای حسابی که هنوز عضو پروژه نیست نقش تایپی وارد کنید؛ نقش اعضای فعلی تغییر نمی‌کند.">
+              <Input
+                list="team-member-role-options"
+                value={newMember.role_text}
+                placeholder="reviewer / DCC / عنوان آزاد"
+                onChange={(event) => setNewMember({ ...newMember, role_text: event.target.value })}
+              />
+            </Field>
+            <Field label="دیسیپلین حساب‌های جدید (اختیاری)" hint="نام موجود یا نام جدید را آزادانه تایپ کنید.">
+              <Input
+                list="team-member-discipline-options"
+                value={newMember.discipline_text}
+                placeholder="مثلاً CIV یا کنترل کیفیت"
+                onChange={(event) => setNewMember({ ...newMember, discipline_text: event.target.value })}
+              />
+            </Field>
+          </div>
+          <datalist id="team-member-role-options">
+            {ROLE_OPTIONS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}
+          </datalist>
+          <datalist id="team-member-discipline-options">
+            {disciplines.map((item) => <option key={item.id} value={item.code} label={item.name} />)}
+          </datalist>
+          {selectedCircle ? (
+            <div className="border border-[#a8b6c2] bg-[#f7f9fb] p-2">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-1 text-[10px] text-[#4a5a67]">
+                <span>حلقهٔ انتخاب‌شده: <b className="text-[#1f3864]">{selectedCircle.name}</b></span>
+                <span>{persianDigits(selectedCircle.member_count)} عضو فعلی</span>
+              </div>
+              <Input
+                value={newMember.search}
+                placeholder="جست‌وجو با نام، ایمیل یا موبایل…"
+                onChange={(event) => setNewMember({ ...newMember, search: event.target.value })}
+              />
+              <div className="mt-2 max-h-64 overflow-y-auto border border-[#c3ccd6] bg-white">
+                {filteredCircleUsers.length === 0 ? (
+                  <p className="px-2 py-4 text-center text-[10px] text-[#7a8794]">کاربری با این جست‌وجو پیدا نشد.</p>
+                ) : (
+                  filteredCircleUsers.map((account) => {
+                    const alreadyInCircle = selectedCircleUserIds.has(account.id);
+                    const selected = newMember.selected_user_ids.includes(account.id);
+                    const projectRoles = members
+                      .filter((member) => member.user_id === account.id)
+                      .map((member) => roleLabel(member.role));
+                    return (
+                      <label
+                        key={account.id}
+                        className={`flex items-center gap-2 border-b border-[#edf0f3] px-2 py-1.5 text-[10.5px] last:border-b-0 ${
+                          alreadyInCircle ? "bg-[#f2f4f6] text-[#8a969f]" : "cursor-pointer hover:bg-[#eef5fb]"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected || alreadyInCircle}
+                          disabled={busy || alreadyInCircle}
+                          onChange={() => setNewMember((current) => ({
+                            ...current,
+                            selected_user_ids: selected
+                              ? current.selected_user_ids.filter((id) => id !== account.id)
+                              : [...current.selected_user_ids, account.id],
+                          }))}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-bold">{account.full_name}</span>
+                          <span className="block ltr truncate text-[9px] text-[#71808d]">
+                            {account.email}{account.mobile ? ` · ${account.mobile}` : ""}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-[9px] text-[#5c6b78]">
+                          {alreadyInCircle ? "عضو حلقه" : !projectRoles.length ? "نقش جدید لازم است" : projectRoles.join("، ")}
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              <p className="mt-1 text-[9.5px] text-[#5c6b78]">
+                {persianDigits(newMember.selected_user_ids.length)} نفر انتخاب شده‌اند.
+                افراد غیرفعال و اعضای فعلی حلقه قابل انتخاب نیستند؛ برای حساب بدون عضویت پروژه، نقش بالای فهرست ثبت می‌شود.
+              </p>
+            </div>
+          ) : (
+            <p className="border border-[#d8c58c] bg-[#fffdf3] px-2 py-2 text-[10px] text-[#5b4d1a]">
+              برای دیدن فهرست افراد، ابتدا یک حلقه را انتخاب کنید.
+            </p>
+          )}
           <label className="flex items-start gap-1 border border-[#d8c58c] bg-[#fffdf3] px-2 py-1.5 text-[10.5px] leading-5 text-[#5b4d1a]">
             <input
               type="checkbox"
               checked={newMember.can_access_external}
-              disabled={!newMember.circle_id}
+              disabled={!newMember.circle_id || newMember.selected_user_ids.length !== 1}
               onChange={(event) => setNewMember({ ...newMember, can_access_external: event.target.checked })}
             />
-            <span><b>اجازه دسترسی خارج از حلقه</b> — پس از انتخاب حلقه فعال می‌شود؛ فقط یک نفر در هر حلقه می‌تواند این گزینه را داشته باشد.</span>
+            <span><b>اجازه دسترسی خارج از حلقه</b> — فقط هنگام انتخاب یک نفر فعال می‌شود؛ برای چند نفر هم‌زمان این گزینه را بردارید.</span>
           </label>
-          {selectedCircle ? <p className="text-[9.5px] text-[#5c6b78]">حلقه انتخاب‌شده: {selectedCircle.name} · {persianDigits(selectedCircle.member_count)} عضو فعلی</p> : <p className="text-[9.5px] text-[#5c6b78]">بدون انتخاب حلقه، فقط نقش پروژه ثبت می‌شود و عضویت حلقه برای مرحله بعد باقی می‌ماند.</p>}
         </form>
       </Modal>
     </div>

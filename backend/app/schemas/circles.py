@@ -25,6 +25,17 @@ class CircleMemberCreate(BaseModel):
     can_access_external: bool = False
 
 
+class CircleMembersBulkCreate(BaseModel):
+    user_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+    can_access_external: bool = False
+    # When an account has no membership in this project yet, these optional
+    # fields preserve the legacy "add to project and circle" flow. Existing
+    # project memberships are never overwritten by this request.
+    role: str | None = Field(default=None, max_length=255)
+    discipline_id: uuid.UUID | None = None
+    discipline_name: str | None = Field(default=None, max_length=255)
+
+
 class CircleMemberUpdate(BaseModel):
     can_access_external: bool
 

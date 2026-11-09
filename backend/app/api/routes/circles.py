@@ -14,12 +14,14 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, ProjectDep
+from app.api.routes.projects import _resolve_member_discipline, _resolve_member_role
 from app.models import AccessCircle, AccessCircleMember, ProjectMember, User
 from app.schemas.circles import (
     CircleCreate,
     CircleMemberCreate,
     CircleMemberOut,
     CircleMemberUpdate,
+    CircleMembersBulkCreate,
     CircleOut,
     CircleUpdate,
 )
@@ -215,10 +217,12 @@ def add_circle_member(
     if target is None or not target.is_active:
         raise HTTPException(status_code=404, detail="کاربر فعال یافت نشد.")
     if db.execute(
-        select(ProjectMember.id).where(
+        select(ProjectMember.id)
+        .where(
             ProjectMember.project_id == project.id,
             ProjectMember.user_id == target.id,
         )
+        .limit(1)
     ).scalar_one_or_none() is None:
         raise HTTPException(status_code=422, detail="ابتدا این کاربر را با یک نقش به پروژه اضافه کنید.")
 
@@ -230,11 +234,13 @@ def add_circle_member(
     ).scalar_one_or_none()
     if payload.can_access_external:
         other_external = db.execute(
-            select(AccessCircleMember.id).where(
+            select(AccessCircleMember.id)
+            .where(
                 AccessCircleMember.circle_id == circle.id,
                 AccessCircleMember.can_access_external.is_(True),
                 AccessCircleMember.user_id != target.id,
             )
+            .limit(1)
         ).scalar_one_or_none()
         if other_external is not None:
             raise HTTPException(
@@ -265,6 +271,148 @@ def add_circle_member(
     return _circle_out(db, circle)
 
 
+@router.post(
+    "/{circle_id}/members/bulk",
+    response_model=CircleOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="افزودن چند نفر به حلقه",
+)
+def add_circle_members_bulk(
+    project: ProjectDep,
+    circle_id: uuid.UUID,
+    payload: CircleMembersBulkCreate,
+    db: DbSession,
+    user: CurrentUser,
+) -> CircleOut:
+    """Add a checked selection of active project accounts in one transaction."""
+    _can_manage(db, user, project.id)
+    circle = _circle_or_404(db, project.id, circle_id)
+    target_ids = list(dict.fromkeys(payload.user_ids))
+    people = {
+        person.id: person
+        for person in db.execute(
+            select(User).where(User.id.in_(target_ids), User.is_active.is_(True))
+        ).scalars()
+    }
+    if len(people) != len(target_ids):
+        raise HTTPException(status_code=404, detail="یک یا چند کاربر فعال یافت نشد.")
+
+    project_members = list(
+        db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id.in_(target_ids),
+            )
+        ).scalars()
+    )
+    project_member_ids = {member.user_id for member in project_members}
+    missing_project_member_ids = [
+        target_id for target_id in target_ids if target_id not in project_member_ids
+    ]
+    if missing_project_member_ids:
+        role = _resolve_member_role(payload.role) if payload.role else None
+        if role is None:
+            raise HTTPException(
+                status_code=422,
+                detail="برای حساب‌هایی که هنوز عضو پروژه نیستند، نقش پروژه را وارد کنید.",
+            )
+        discipline = _resolve_member_discipline(
+            db,
+            project.id,
+            payload.discipline_id,
+            payload.discipline_name,
+        )
+        new_project_members = [
+            ProjectMember(
+                project_id=project.id,
+                user_id=target_id,
+                role=role,
+                discipline_id=discipline.id if discipline is not None else None,
+            )
+            for target_id in missing_project_member_ids
+        ]
+        db.add_all(new_project_members)
+        db.flush()
+        for membership in new_project_members:
+            audit.record(
+                db,
+                action="project.member.add",
+                entity_type="project_member",
+                entity_id=membership.id,
+                actor=user,
+                project_id=project.id,
+                after={
+                    "user": people[membership.user_id].email,
+                    "role": role,
+                    "discipline_id": str(membership.discipline_id) if membership.discipline_id else None,
+                    "discipline_name": discipline.name if discipline else None,
+                },
+            )
+
+    existing_rows = list(
+        db.execute(
+            select(AccessCircleMember).where(
+                AccessCircleMember.circle_id == circle.id,
+                AccessCircleMember.user_id.in_(target_ids),
+            )
+        ).scalars()
+    )
+    existing_by_user = {row.user_id: row for row in existing_rows}
+    if payload.can_access_external:
+        if len(target_ids) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail="دسترسی خارج از حلقه را فقط برای یک نفر انتخاب کنید؛ افراد دیگر را بدون این گزینه اضافه کنید.",
+            )
+        other_external = db.execute(
+            select(AccessCircleMember.id)
+            .where(
+                AccessCircleMember.circle_id == circle.id,
+                AccessCircleMember.can_access_external.is_(True),
+                AccessCircleMember.user_id != target_ids[0],
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if other_external is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="هر حلقه فقط یک عضو با دسترسی خارج از حلقه می‌تواند داشته باشد.",
+            )
+
+    changed: list[AccessCircleMember] = []
+    for target_id in target_ids:
+        member = existing_by_user.get(target_id)
+        if member is None:
+            member = AccessCircleMember(
+                circle_id=circle.id,
+                user_id=target_id,
+                can_access_external=payload.can_access_external,
+            )
+            db.add(member)
+        else:
+            member.can_access_external = payload.can_access_external
+        changed.append(member)
+    db.flush()
+    for member in changed:
+        audit.record(
+            db,
+            action="access_circle.member.add",
+            entity_type="access_circle_member",
+            entity_id=member.id,
+            actor=user,
+            project_id=project.id,
+            after={
+                "circle": circle.code,
+                "user": people[member.user_id].email,
+                "can_access_external": member.can_access_external,
+            },
+        )
+    db.commit()
+    db.refresh(circle)
+    db.expire(circle, ["members"])
+    return _circle_out(db, circle)
+
+
 @router.patch(
     "/{circle_id}/members/{member_id}",
     response_model=CircleOut,
@@ -285,11 +433,13 @@ def update_circle_member(
         raise HTTPException(status_code=404, detail="عضویت حلقه یافت نشد.")
     if payload.can_access_external:
         other_external = db.execute(
-            select(AccessCircleMember.id).where(
+            select(AccessCircleMember.id)
+            .where(
                 AccessCircleMember.circle_id == circle.id,
                 AccessCircleMember.can_access_external.is_(True),
                 AccessCircleMember.id != member.id,
             )
+            .limit(1)
         ).scalar_one_or_none()
         if other_external is not None:
             raise HTTPException(

@@ -102,6 +102,94 @@ def test_admin_can_assign_and_edit_project_role_and_discipline_from_user_account
     assert row["discipline_id"] is None
 
 
+def test_circle_add_supports_bulk_selection_and_multiple_project_roles(client, project, users):
+    admin = auth_headers(client, "admin@edms-test.com")
+    first = _create_person(client, email="bulk-first@edms-test.com")
+    second = _create_person(
+        client,
+        email="bulk-second@edms-test.com",
+        mobile="09121234568",
+        national_id="9876543210",
+    )
+    third = _create_person(
+        client,
+        email="bulk-not-project-member@edms-test.com",
+        mobile="09121234569",
+        national_id="3141592659",
+    )
+    for person, roles in ((first, ("reviewer", "project_control")), (second, ("reviewer",))):
+        for role in roles:
+            response = client.post(
+                f"/api/v1/projects/{project.id}/members",
+                headers=admin,
+                json={"user_id": person["id"], "role": role},
+            )
+            assert response.status_code == 201, response.text
+
+    single_circle = client.post(
+        f"/api/v1/projects/{project.id}/circles",
+        headers=admin,
+        json={"code": "SINGLE", "name": "عضویت تکی"},
+    ).json()
+    single_added = client.post(
+        f"/api/v1/projects/{project.id}/circles/{single_circle['id']}/members",
+        headers=admin,
+        json={"user_id": first["id"]},
+    )
+    assert single_added.status_code == 201, single_added.text
+
+    circle = client.post(
+        f"/api/v1/projects/{project.id}/circles",
+        headers=admin,
+        json={"code": "BULK", "name": "انتخاب گروهی"},
+    ).json()
+    endpoint = f"/api/v1/projects/{project.id}/circles/{circle['id']}/members/bulk"
+    denied = client.post(
+        endpoint,
+        headers=admin,
+        json={"user_ids": [first["id"], third["id"]]},
+    )
+    assert denied.status_code == 422, denied.text
+    listed_circles = client.get(f"/api/v1/projects/{project.id}/circles", headers=admin).json()
+    bulk_circle = next(item for item in listed_circles if item["id"] == circle["id"])
+    assert bulk_circle["member_count"] == 0
+
+    added = client.post(
+        endpoint,
+        headers=admin,
+        json={"user_ids": [first["id"], second["id"]]},
+    )
+    assert added.status_code == 201, added.text
+    body = added.json()
+    assert body["member_count"] == 2
+    assert {member["user_id"] for member in body["members"]} == {first["id"], second["id"]}
+
+    duplicate = client.post(
+        endpoint,
+        headers=admin,
+        json={"user_ids": [first["id"], second["id"]]},
+    )
+    assert duplicate.status_code == 201, duplicate.text
+    assert duplicate.json()["member_count"] == 2
+
+    added_with_project_membership = client.post(
+        endpoint,
+        headers=admin,
+        json={
+            "user_ids": [third["id"]],
+            "role": "هماهنگ‌کننده جدید",
+            "discipline_name": "کنترل کیفیت جدید",
+        },
+    )
+    assert added_with_project_membership.status_code == 201, added_with_project_membership.text
+    assert added_with_project_membership.json()["member_count"] == 3
+    project_members = client.get(f"/api/v1/projects/{project.id}/members", headers=admin)
+    assert any(
+        row["user_id"] == third["id"] and row["role"] == "هماهنگ‌کننده جدید"
+        for row in project_members.json()
+    )
+
+
 def test_a_circle_allows_only_one_external_member(client, db, project, users):
     admin = auth_headers(client, "admin@edms-test.com")
     first = _create_person(client, email="engineer-one@edms-test.com", mobile="09121234568")

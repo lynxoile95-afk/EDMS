@@ -50,7 +50,7 @@ const TITLES: Record<string, string> = {
   "/projects": "تعریف و انتخاب پروژه",
   "/dashboard": "کارتابل من",
   "/mdl": "فهرست مدارک پروژه (MDL)",
-  "/upload": "ثبت و بارگذاری مدرک",
+  "/upload": "بارگذاری مدارک با هوش مصنوعی",
   "/registration": "ثبت و بارگذاری مدرک — برگهٔ ارسال",
   "/review": "صف بازبینی کنترل مدارک",
   "/team": "کاربران و نقش‌های گردش",
@@ -67,6 +67,12 @@ export function Layout() {
   const [unread, setUnread] = useState(0);
   const [queueCount, setQueueCount] = useState(0);
   const [panelOpen, setPanelOpen] = useState(false);
+
+  useEffect(() => {
+    document.title = location.pathname === "/upload"
+      ? "بارگذاری مدارک با هوش مصنوعی"
+      : "سامانه هوشمند مدیریت اسناد مهندسی | EDMS-AI";
+  }, [location.pathname]);
 
   useEffect(() => {
     let active = true;
@@ -290,7 +296,9 @@ export function Layout() {
         <main className="shell-main">
           {/* The reference stamps every inner page with this label, top-right. */}
           <div className="mb-[3px] flex items-center justify-end gap-1 text-[9.5px] text-[#5c6b78]">
-            <span className="border border-[#c3ccd6] bg-[#f7f9fb] px-1.5 py-[1px]">EDMS Result Page</span>
+            <span className="border border-[#c3ccd6] bg-[#f7f9fb] px-1.5 py-[1px]">
+              {location.pathname === "/upload" ? "بارگذاری مدارک با هوش مصنوعی" : "EDMS Result Page"}
+            </span>
           </div>
           {project || location.pathname === "/projects" ? (
             <Outlet />

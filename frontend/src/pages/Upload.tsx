@@ -225,7 +225,7 @@ export function UploadPage() {
     <div className="space-y-3">
       <Card>
         <CardHeader
-          title="بارگذاری مدارک"
+          title="بارگذاری مدارک با هوش مصنوعی"
           subtitle="فایل‌های PDF را اضافه کنید؛ سیستم کادر مشخصات را می‌خواند و با MDL تطبیق می‌دهد."
         />
         <div className="space-y-4 p-4">

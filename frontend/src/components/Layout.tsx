@@ -51,6 +51,7 @@ const TITLES: Record<string, string> = {
   "/dashboard": "کارتابل من",
   "/mdl": "فهرست مدارک پروژه (MDL)",
   "/upload": "بارگذاری مدارک با هوش مصنوعی",
+  "/transmittals/new": "ثبت ترانسمیتال دستی",
   "/registration": "ثبت و بارگذاری مدرک — برگهٔ ارسال",
   "/review": "صف بازبینی کنترل مدارک",
   "/team": "کاربران و نقش‌های گردش",
@@ -71,7 +72,9 @@ export function Layout() {
   useEffect(() => {
     document.title = location.pathname === "/upload"
       ? "بارگذاری مدارک با هوش مصنوعی"
-      : "سامانه هوشمند مدیریت اسناد مهندسی | EDMS-AI";
+      : location.pathname === "/transmittals/new"
+        ? "ثبت ترانسمیتال دستی"
+        : "سامانه هوشمند مدیریت اسناد مهندسی | EDMS-AI";
   }, [location.pathname]);
 
   useEffect(() => {
@@ -102,7 +105,7 @@ export function Layout() {
 
   const breadcrumb = useMemo(() => {
     const segments = location.pathname.split("/").filter(Boolean);
-    const label = TITLES[`/${segments[0] ?? ""}`] ?? "";
+    const label = TITLES[location.pathname] ?? TITLES[`/${segments[0] ?? ""}`] ?? "";
     return ["مرکز اسناد مهندسی", label, segments.length > 1 ? "جزئیات" : ""].filter(Boolean);
   }, [location.pathname]);
 
@@ -297,7 +300,11 @@ export function Layout() {
           {/* The reference stamps every inner page with this label, top-right. */}
           <div className="mb-[3px] flex items-center justify-end gap-1 text-[9.5px] text-[#5c6b78]">
             <span className="border border-[#c3ccd6] bg-[#f7f9fb] px-1.5 py-[1px]">
-              {location.pathname === "/upload" ? "بارگذاری مدارک با هوش مصنوعی" : "EDMS Result Page"}
+              {location.pathname === "/upload"
+                ? "بارگذاری مدارک با هوش مصنوعی"
+                : location.pathname === "/transmittals/new"
+                  ? "ثبت ترانسمیتال دستی"
+                  : "EDMS Result Page"}
             </span>
           </div>
           {project || location.pathname === "/projects" ? (

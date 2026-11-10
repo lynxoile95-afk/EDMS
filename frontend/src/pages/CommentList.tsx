@@ -457,6 +457,11 @@ export function CommentList() {
   useEffect(() => { void load(); }, [load]);
 
   const comments = useMemo(() => lists.flatMap((list) => list.comments), [lists]);
+  const returnTransmittalId = useMemo(
+    () => lists.find((list) => list.transmittal_id)?.transmittal_id ?? null,
+    [lists],
+  );
+  const returnTransmittalPath = returnTransmittalId ? `/transmittals/${returnTransmittalId}` : "/transmittals/new";
   const existingAttachments = editing?.attachments ?? [];
 
   const openNew = () => {
@@ -634,7 +639,13 @@ export function CommentList() {
           actions={
             <div className="flex flex-wrap items-center gap-2">
               {canRegister ? <Button variant="primary" className="px-2 py-1 text-[11px]" onClick={openNew}>Add New Comment — ثبت نظر جدید</Button> : null}
-              <Link className="text-xs text-brand-600 hover:underline" to="/transmittals">بازگشت به برگه‌های ارسال</Link>
+              <Link
+                className="btn btn-sm btn-transmittal-back"
+                to={returnTransmittalPath}
+                title="بازگشت مستقیم به فرم ترانسمیتال"
+              >
+                بازگشت به ترانسمیتال
+              </Link>
             </div>
           }
         />

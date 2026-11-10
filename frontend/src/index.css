@@ -419,6 +419,16 @@
   .btn-primary:hover {
     background: linear-gradient(180deg, #4c8dc4, #2b628f);
   }
+  .btn-transmittal-back {
+    color: #fff;
+    background: linear-gradient(180deg, #5aa65f, #33783b);
+    border-color: #28612f;
+    font-weight: 700;
+  }
+  .btn-transmittal-back:hover {
+    color: #fff;
+    background: linear-gradient(180deg, #68b86e, #3f8f45);
+  }
   .btn-secondary {
     @apply btn;
   }

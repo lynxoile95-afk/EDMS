@@ -183,6 +183,20 @@ async function tryRefresh(): Promise<boolean> {
   }
 }
 
+function downloadHref(path: string): string {
+  const access = tokens.access;
+  const hasAccessCookie = document.cookie
+    .split(";")
+    .some((cookie) => cookie.trim().startsWith(`${COOKIE_ACCESS}=`));
+  const separator = path.includes("?") ? "&" : "?";
+  // Existing tabs created before cookie-based auth may only have localStorage.
+  // The API supports this query-carried token specifically for download flows;
+  // new sessions use the cookie and do not expose the token in the URL.
+  return access && !hasAccessCookie
+    ? `${BASE_URL}${path}${separator}access_token=${encodeURIComponent(access)}`
+    : `${BASE_URL}${path}`;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
@@ -215,6 +229,8 @@ export const api = {
     }
     return URL.createObjectURL(await response.blob());
   },
+  /** URL for a native browser download link. */
+  downloadUrl: (path: string) => downloadHref(path),
   /**
    * Start a browser-native download instead of fetching a Blob first.
    *
@@ -226,19 +242,8 @@ export const api = {
    * keeps the click inside the original user gesture.
    */
   download(path: string, filename: string): void {
-    const access = tokens.access;
-    const hasAccessCookie = document.cookie
-      .split(";")
-      .some((cookie) => cookie.trim().startsWith(`${COOKIE_ACCESS}=`));
-    const separator = path.includes("?") ? "&" : "?";
-    // Existing tabs created before cookie-based auth may only have localStorage.
-    // The API supports this query-carried token specifically for download flows;
-    // new sessions use the cookie and do not expose the token in the URL.
-    const href = access && !hasAccessCookie
-      ? `${BASE_URL}${path}${separator}access_token=${encodeURIComponent(access)}`
-      : `${BASE_URL}${path}`;
     const link = document.createElement("a");
-    link.href = href;
+    link.href = downloadHref(path);
     link.download = filename;
     link.rel = "noopener";
     link.style.display = "none";

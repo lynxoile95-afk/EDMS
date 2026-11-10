@@ -840,7 +840,16 @@ export function TransmittalDetail() {
                           <span className="max-w-[18rem] truncate" title={attachment.filename}>{attachment.filename}</span>
                           <span className="text-[#7a8794]">{fileSize(attachment.size_bytes)}</span>
                           <IconButton icon={<IconView />} label="مشاهده پیوست" onClick={() => void openAttachmentPreview(attachment)} />
-                          <IconButton icon={<IconArchive />} label="دانلود پیوست" onClick={() => void downloadAttachment(attachment)} />
+                          <a
+                            className="icon-btn no-underline"
+                            href={api.downloadUrl(`/transmittals/${data.id}/attachments/${attachment.id}/download`)}
+                            download={attachment.filename}
+                            rel="noopener"
+                            title="دانلود پیوست"
+                            aria-label="دانلود پیوست"
+                          >
+                            <IconArchive />
+                          </a>
                           {canManageAttachments ? (
                             <IconButton icon={<IconEdit />} label="ویرایش پیوست" onClick={() => openAttachmentEdit(attachment)} />
                           ) : null}
@@ -1184,7 +1193,16 @@ export function TransmittalDetail() {
                                 <td className="cell-center">
                                   <span className="flex items-center justify-center gap-1">
                                     <IconButton icon={<IconView />} label="مشاهده پیوست" onClick={() => void openAttachmentPreview(attachment)} />
-                                    <IconButton icon={<IconArchive />} label="دانلود پیوست" onClick={() => void downloadAttachment(attachment)} />
+                                    <a
+                                      className="icon-btn no-underline"
+                                      href={api.downloadUrl(`/transmittals/${data.id}/attachments/${attachment.id}/download`)}
+                                      download={attachment.filename}
+                                      rel="noopener"
+                                      title="دانلود پیوست"
+                                      aria-label="دانلود پیوست"
+                                    >
+                                      <IconArchive />
+                                    </a>
                                     {canManageAttachments ? <IconButton icon={<IconEdit />} label="ویرایش پیوست" disabled={busy} onClick={() => openAttachmentEdit(attachment)} /> : null}
                                     {canManageAttachments ? <IconButton icon={<IconDelete />} label="حذف پیوست" disabled={busy} onClick={() => void deleteAttachment(attachment)} /> : null}
                                   </span>
@@ -1551,9 +1569,14 @@ export function TransmittalDetail() {
             </span>
             <div className="flex items-center gap-2">
               {previewAttachment ? (
-                <Button className="btn-sm" onClick={() => void downloadAttachment(previewAttachment)}>
+                <a
+                  className="btn btn-sm no-underline"
+                  href={api.downloadUrl(`/transmittals/${data.id}/attachments/${previewAttachment.id}/download`)}
+                  download={previewAttachment.filename}
+                  rel="noopener"
+                >
                   دریافت فایل
-                </Button>
+                </a>
               ) : null}
               <Button className="btn-sm" onClick={closeAttachmentPreview}>
                 بستن

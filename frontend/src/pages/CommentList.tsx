@@ -130,7 +130,10 @@ function formFromComment(comment: Comment): RegistrationForm {
 }
 
 function attachmentPath(attachment: CommentAttachment) {
-  return attachment.download_url;
+  // The comments API historically returned a full `/api/v1/...` path while the
+  // frontend API wrapper already prepends `/api/v1`. Normalize both shapes so
+  // preview and native download never request `/api/v1/api/v1/...`.
+  return attachment.download_url.replace(/^\/api\/v1(?=\/)/, "");
 }
 
 function toDocumentAttachment(attachment: CommentAttachment): DocumentAttachment {

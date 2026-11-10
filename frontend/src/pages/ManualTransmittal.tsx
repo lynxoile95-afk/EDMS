@@ -99,6 +99,12 @@ export function ManualTransmittalPage() {
   }, [items, query]);
 
   const selectedItems = items.filter((item) => Boolean(selected[item.id]));
+  const contractorCode = project?.contractor_code?.trim().toUpperCase() ?? "";
+  const parentCompanyCode = project?.parent_company_code?.trim().toUpperCase() ?? "";
+  const projectCodesReady = /^[A-Z]{2}$/.test(contractorCode) && /^[A-Z]{2}$/.test(parentCompanyCode);
+  const numberingWarning = project && !projectCodesReady
+    ? "کد پیمانکار و کد شرکت مادر این پروژه تکمیل نشده است؛ شماره با قالب قدیمی صادر می‌شود. برای فعال شدن قالب جدید، هر دو کد را دقیقاً با دو حرف انگلیسی A-Z ثبت کنید."
+    : null;
   const approverOptions = useMemo(() => {
     const unique = new Map<string, ProjectMember>();
     members.forEach((member) => {
@@ -222,6 +228,11 @@ export function ManualTransmittalPage() {
         {!isDcc ? (
           <div className="px-3 pt-2 text-[10.5px] text-[#8a5a12]">
             ثبت نهایی پس از بررسی پیش‌نویس در کارتابل انجام می‌شود؛ دسترسی فعلی شما ممکن است فقط مشاهده باشد.
+          </div>
+        ) : null}
+        {numberingWarning ? (
+          <div className="mx-3 mb-2 border border-[#c98a86] bg-[#fdeeee] px-2 py-1.5 text-[10.5px] leading-5 text-[#8a2b25]">
+            ⚠ {numberingWarning} برای تکمیل آن به صفحه مدیریت پروژه بروید.
           </div>
         ) : null}
       </Card>

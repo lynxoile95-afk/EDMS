@@ -929,7 +929,7 @@ export function TransmittalDetail() {
               disabled: busy || !issued,
               onClick: () => void act(`/transmittals/${data.id}/acknowledge`, { note: null }),
             },
-            ...(issued
+            ...(attachmentsLocked
               ? []
               : [
                   {
@@ -973,7 +973,7 @@ export function TransmittalDetail() {
 
         {actionError ? <ErrorBox message={actionError} /> : null}
 
-        {!issued ? (
+        {!attachmentsLocked ? (
           <div className="mt-1 flex items-center gap-2 border border-[#a8a284] bg-white px-2 py-1">
             <span className="text-[10px] font-bold text-[#20365c]">توضیحات صدور (Remarks):</span>
             <input

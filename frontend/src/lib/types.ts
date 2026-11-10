@@ -125,6 +125,8 @@ export interface Project {
   name: string;
   client_name: string | null;
   contractor_name: string | null;
+  contractor_code: string | null;
+  parent_company_code: string | null;
   description: string | null;
   is_active: boolean;
   created_at: string;

@@ -19,6 +19,13 @@ DEFAULT_PROJECT_SETTINGS: dict[str, Any] = {
     "project_type_label": None,
     "project_type_feature": None,
     "project_parties": [],
+    # Kept as read-only compatibility mirrors for clients that still inspect the
+    # JSON settings response. The authoritative values live on Project columns.
+    "contractor_code": None,
+    "parent_company_code": None,
+    # New OT/OS identity format; allocation is implemented atomically in
+    # services.numbering rather than by string interpolation in a route.
+    "transmittal_new_number_format": "{contract_no}-{contractor_code}-{parent_company_code}-{type}-{seq:04d}",
     # ---- document identity ----
     "doc_code_pattern": DEFAULT_DOC_CODE_PATTERN,
     "rev_scheme": "auto",  # auto | alpha | numeric | p_prefix

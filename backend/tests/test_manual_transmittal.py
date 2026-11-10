@@ -103,7 +103,7 @@ def test_manual_referral_accepts_per_person_action_and_note(client: TestClient, 
 
     referred = client.post(
         f"/api/v1/transmittals/{transmittal_id}/refer-people",
-        headers=dcc,
+        headers=auth_headers(client, "reviewer@edms-test.com"),
         json={
             "people": [
                 {"user_id": str(users["reviewer"].id), "action": "review", "note": "بررسی و اعلام نظر"},

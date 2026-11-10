@@ -20,6 +20,11 @@ const JALALI_DATETIME = new Intl.DateTimeFormat("fa-IR-u-ca-persian-nu-latn", {
   minute: "2-digit",
 });
 
+const JALALI_TIME = new Intl.DateTimeFormat("fa-IR-u-ca-persian-nu-latn", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 /** Dates are stored UTC; display in the user's local timezone (Asia/Tehran). */
 export function jalali(value?: string | Date | null): string {
   if (!value) return "—";
@@ -40,6 +45,13 @@ export function jalaliDateTime(value?: string | Date | null): string {
   const date = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return "—";
   return JALALI_DATETIME.format(date);
+}
+
+export function jalaliTime(value?: string | Date | null): string {
+  if (!value) return "—";
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return "—";
+  return JALALI_TIME.format(date);
 }
 
 export function persianDigits(input: string | number): string {

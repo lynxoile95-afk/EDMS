@@ -326,7 +326,11 @@ def issue_transmittal(
     if project is None:  # pragma: no cover
         raise ValueError("پروژه یافت نشد.")
 
-    number, seq = numbering.allocate(db, project)
+    number, seq = numbering.allocate(
+        db,
+        project,
+        transmittal_type=transmittal.type,
+    )
     transmittal.number = number
     transmittal.seq = seq
     transmittal.status = TransmittalStatus.ISSUED

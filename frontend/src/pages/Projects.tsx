@@ -5,7 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useProject } from "@/lib/project";
 import type { Project } from "@/lib/types";
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Field, Input, Select, Spinner } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Field, Input, Modal, Select, Spinner } from "@/components/ui";
 import { persianDigits } from "@/lib/format";
 
 interface ProjectParty {
@@ -19,9 +19,19 @@ interface ProjectForm {
   name: string;
   client_name: string;
   contractor_name: string;
+  contractor_code: string;
+  parent_company_code: string;
   project_type: string;
   description: string;
   parties: ProjectParty[];
+}
+
+interface ProjectEditForm {
+  name: string;
+  client_name: string;
+  contractor_name: string;
+  contractor_code: string;
+  parent_company_code: string;
 }
 
 const NEW_CLIENT = "__new_client__";
@@ -156,10 +166,27 @@ const EMPTY_FORM: ProjectForm = {
   name: "",
   client_name: "",
   contractor_name: "",
+  contractor_code: "",
+  parent_company_code: "",
   project_type: "",
   description: "",
   parties: [],
 };
+
+const EMPTY_EDIT_FORM: ProjectEditForm = {
+  name: "",
+  client_name: "",
+  contractor_name: "",
+  contractor_code: "",
+  parent_company_code: "",
+};
+
+const COMPANY_CODE_PATTERN = /^[A-Z]{2}$/;
+
+function deriveCompanyCode(name: string): string {
+  const latinLetters = name.match(/[A-Za-z]/g)?.join("") ?? "";
+  return latinLetters.slice(0, 2).toUpperCase();
+}
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.detail : fallback;
@@ -199,6 +226,12 @@ export function Projects() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [companyCodeTouched, setCompanyCodeTouched] = useState({ contractor: false, parent: false });
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editForm, setEditForm] = useState<ProjectEditForm>(EMPTY_EDIT_FORM);
+  const [editCodeTouched, setEditCodeTouched] = useState({ contractor: false, parent: false });
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const clientOptions = useMemo(() => {
     const values = new Set(
@@ -216,6 +249,32 @@ export function Projects() {
 
   const update = (field: keyof ProjectForm, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const updateCompanyName = (
+    field: "contractor_name" | "client_name",
+    codeField: "contractor_code" | "parent_company_code",
+    value: string,
+  ) => {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+      ...(codeField === "contractor_code" && !companyCodeTouched.contractor
+        ? { contractor_code: deriveCompanyCode(value) }
+        : {}),
+      ...(codeField === "parent_company_code" && !companyCodeTouched.parent
+        ? { parent_company_code: deriveCompanyCode(value) }
+        : {}),
+    }));
+  };
+
+  const updateCompanyCode = (field: "contractor_code" | "parent_company_code", value: string) => {
+    const normalized = value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
+    setForm((current) => ({ ...current, [field]: normalized }));
+    setCompanyCodeTouched((current) => ({
+      ...current,
+      [field === "contractor_code" ? "contractor" : "parent"]: true,
+    }));
   };
 
   const updateParty = (index: number, field: keyof ProjectParty, value: string) => {
@@ -275,6 +334,14 @@ export function Projects() {
       setError("نام کارفرما را از فهرست انتخاب کنید یا گزینه «کارفرمای جدید / سایر» را انتخاب و وارد کنید.");
       return;
     }
+    if (!COMPANY_CODE_PATTERN.test(form.contractor_code)) {
+      setError("کد پیمانکار باید دقیقاً دو حرف انگلیسی A-Z باشد. نام فارسی به‌تنهایی کد تولید نمی‌کند.");
+      return;
+    }
+    if (!COMPANY_CODE_PATTERN.test(form.parent_company_code)) {
+      setError("کد شرکت مادر باید دقیقاً دو حرف انگلیسی A-Z باشد. نام فارسی به‌تنهایی کد تولید نمی‌کند.");
+      return;
+    }
     if (!form.project_type) {
       setError("نوع پروژه / قرارداد را انتخاب کنید.");
       return;
@@ -303,6 +370,8 @@ export function Projects() {
         name,
         client_name: clientName,
         contractor_name: form.contractor_name.trim() || null,
+        contractor_code: form.contractor_code,
+        parent_company_code: form.parent_company_code,
         description: form.description.trim() || null,
         settings: {
           project_type: selectedProjectType?.code,
@@ -315,12 +384,68 @@ export function Projects() {
       await reload();
       select(created.id);
       setForm(EMPTY_FORM);
+      setCompanyCodeTouched({ contractor: false, parent: false });
       setClientChoice("");
       setNotice(`پروژه «${created.name}» ساخته شد و اکنون انتخاب شده است.`);
     } catch (err) {
       setError(messageOf(err, "تعریف پروژه ناموفق بود."));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const canEditProject = (item: Project) =>
+    Boolean(user?.is_superuser) ||
+    ["dcc", "project_control", "pmo", "project_manager"].includes(item.member_role ?? "");
+
+  const openEdit = (item: Project) => {
+    setEditingProject(item);
+    setEditError(null);
+    setEditCodeTouched({
+      contractor: Boolean(item.contractor_code),
+      parent: Boolean(item.parent_company_code),
+    });
+    setEditForm({
+      name: item.name,
+      client_name: item.client_name ?? "",
+      contractor_name: item.contractor_name ?? "",
+      contractor_code: item.contractor_code ?? deriveCompanyCode(item.contractor_name ?? ""),
+      parent_company_code: item.parent_company_code ?? deriveCompanyCode(item.client_name ?? ""),
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editingProject) return;
+    setEditError(null);
+    if (editForm.name.trim().length < 2) {
+      setEditError("نام پروژه الزامی است.");
+      return;
+    }
+    if (!COMPANY_CODE_PATTERN.test(editForm.contractor_code)) {
+      setEditError("کد پیمانکار باید دقیقاً دو حرف انگلیسی A-Z باشد.");
+      return;
+    }
+    if (!COMPANY_CODE_PATTERN.test(editForm.parent_company_code)) {
+      setEditError("کد شرکت مادر باید دقیقاً دو حرف انگلیسی A-Z باشد.");
+      return;
+    }
+    setEditBusy(true);
+    try {
+      const updated = await api.patch<Project>(`/projects/${editingProject.id}`, {
+        name: editForm.name.trim(),
+        client_name: editForm.client_name.trim() || null,
+        contractor_name: editForm.contractor_name.trim() || null,
+        contractor_code: editForm.contractor_code,
+        parent_company_code: editForm.parent_company_code,
+      });
+      await reload();
+      select(updated.id);
+      setEditingProject(null);
+      setNotice(`اطلاعات پروژه «${updated.name}» به‌روزرسانی شد.`);
+    } catch (err) {
+      setEditError(messageOf(err, "ویرایش پروژه ناموفق بود."));
+    } finally {
+      setEditBusy(false);
     }
   };
 
@@ -349,11 +474,11 @@ export function Projects() {
             <CardHeader title="تعریف پروژه جدید" subtitle="پروژه قبل از بارگذاری MDL باید ایجاد شود." />
             <form className="space-y-2 p-3" onSubmit={create}>
               <div className="grid gap-2 sm:grid-cols-2">
-                <Field label="کد پروژه *" hint="نمونه: PRJ-001">
+                <Field label="شماره قرارداد / کد پروژه *" hint="این مقدار در Contract و شماره ترانسمیتال استفاده می‌شود؛ نمونه: 7001">
                   <Input
                     value={form.code}
                     onChange={(event) => update("code", event.target.value)}
-                    placeholder="PRJ-001"
+                    placeholder="7001"
                     maxLength={32}
                     dir="ltr"
                     autoComplete="off"
@@ -376,8 +501,8 @@ export function Projects() {
                     onChange={(event) => {
                       const value = event.target.value;
                       setClientChoice(value);
-                      if (value !== NEW_CLIENT) update("client_name", value);
-                      else update("client_name", "");
+                      if (value !== NEW_CLIENT) updateCompanyName("client_name", "parent_company_code", value);
+                      else updateCompanyName("client_name", "parent_company_code", "");
                     }}
                   >
                     <option value="">انتخاب کارفرما…</option>
@@ -392,7 +517,7 @@ export function Projects() {
                     <Input
                       className="mt-1"
                       value={form.client_name}
-                      onChange={(event) => update("client_name", event.target.value)}
+                      onChange={(event) => updateCompanyName("client_name", "parent_company_code", event.target.value)}
                       placeholder="نام شرکت یا سازمان کارفرما"
                       maxLength={255}
                     />
@@ -401,9 +526,37 @@ export function Projects() {
                 <Field label="نام پیمانکار اصلی">
                   <Input
                     value={form.contractor_name}
-                    onChange={(event) => update("contractor_name", event.target.value)}
+                    onChange={(event) => updateCompanyName("contractor_name", "contractor_code", event.target.value)}
                     placeholder="پیمانکار اصلی"
                     maxLength={255}
+                  />
+                </Field>
+                <Field
+                  label="کد پیمانکار *"
+                  hint="دو حرف اول نام لاتین خودکار است؛ در نام فارسی، کد را دستی با A-Z وارد کنید."
+                >
+                  <Input
+                    value={form.contractor_code}
+                    onChange={(event) => updateCompanyCode("contractor_code", event.target.value)}
+                    placeholder="IP"
+                    maxLength={2}
+                    dir="ltr"
+                    className="uppercase"
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field
+                  label="کد شرکت مادر *"
+                  hint="معمولاً از دو حرف اول نام لاتین کارفرما تکمیل می‌شود."
+                >
+                  <Input
+                    value={form.parent_company_code}
+                    onChange={(event) => updateCompanyCode("parent_company_code", event.target.value)}
+                    placeholder="MR"
+                    maxLength={2}
+                    dir="ltr"
+                    className="uppercase"
+                    autoComplete="off"
                   />
                 </Field>
                 <Field label="نوع پروژه / قرارداد *" hint="مسئولیت اصلی پیمانکار را مشخص می‌کند.">
@@ -538,6 +691,7 @@ export function Projects() {
                     <th style={{ width: 90 }}>طرف‌ها</th>
                     <th style={{ width: 100 }}>تعداد MDL</th>
                     <th style={{ width: 140 }}>نقش شما</th>
+                    <th style={{ width: 90 }}>ویرایش</th>
                     <th style={{ width: 150 }}>ورود</th>
                   </tr>
                 </thead>
@@ -557,6 +711,13 @@ export function Projects() {
                       <td className="cell-center">{persianDigits(partyCount(item))}</td>
                       <td className="cell-center">{persianDigits(item.document_count ?? 0)}</td>
                       <td>{item.member_role ?? "—"}</td>
+                      <td>
+                        {canEditProject(item) ? (
+                          <Button className="btn-sm" variant="secondary" onClick={() => openEdit(item)}>
+                            ویرایش
+                          </Button>
+                        ) : "—"}
+                      </td>
                       <td>
                         <Button className="btn-sm" onClick={() => enter(item)}>
                           {project?.id === item.id ? "ورود به پروژه" : "انتخاب و ورود"}
@@ -584,6 +745,11 @@ export function Projects() {
               ) : null}
             </div>
             <div className="flex gap-1">
+              {canEditProject(project) ? (
+                <Button className="btn-sm" variant="secondary" onClick={() => openEdit(project)}>
+                  ویرایش پروژه
+                </Button>
+              ) : null}
               <Button className="btn-sm" onClick={() => navigate("/mdl")}>
                 ورود به MDL
               </Button>
@@ -594,6 +760,95 @@ export function Projects() {
           </div>
         </Card>
       ) : null}
+
+      <Modal
+        open={Boolean(editingProject)}
+        title="ویرایش پروژه و کدهای شرکت"
+        onClose={() => setEditingProject(null)}
+        width="max-w-2xl"
+        footer={
+          <div className="flex justify-end gap-1">
+            <Button className="btn-sm" variant="secondary" onClick={() => setEditingProject(null)}>
+              انصراف
+            </Button>
+            <Button className="btn-sm" disabled={editBusy} onClick={() => void saveEdit()}>
+              {editBusy ? "در حال ذخیره…" : "ذخیره تغییرات"}
+            </Button>
+          </div>
+        }
+      >
+        {editError ? <ErrorBox message={editError} /> : null}
+        <div className="grid gap-2 p-3 sm:grid-cols-2">
+          <Field label="نام پروژه *">
+            <Input
+              value={editForm.name}
+              onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))}
+              maxLength={255}
+            />
+          </Field>
+          <Field label="نام کارفرما / شرکت مادر">
+            <Input
+              value={editForm.client_name}
+              onChange={(event) => {
+                const value = event.target.value;
+                setEditForm((current) => ({
+                  ...current,
+                  client_name: value,
+                  ...(editCodeTouched.parent ? {} : { parent_company_code: deriveCompanyCode(value) }),
+                }));
+              }}
+              maxLength={255}
+            />
+          </Field>
+          <Field label="نام پیمانکار اصلی">
+            <Input
+              value={editForm.contractor_name}
+              onChange={(event) => {
+                const value = event.target.value;
+                setEditForm((current) => ({
+                  ...current,
+                  contractor_name: value,
+                  ...(editCodeTouched.contractor ? {} : { contractor_code: deriveCompanyCode(value) }),
+                }));
+              }}
+              maxLength={255}
+            />
+          </Field>
+          <Field label="کد پیمانکار *" hint="دقیقاً دو حرف انگلیسی A-Z">
+            <Input
+              value={editForm.contractor_code}
+              onChange={(event) => {
+                setEditCodeTouched((current) => ({ ...current, contractor: true }));
+                setEditForm((current) => ({
+                  ...current,
+                  contractor_code: event.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2),
+                }));
+              }}
+              maxLength={2}
+              dir="ltr"
+              className="uppercase"
+            />
+          </Field>
+          <Field label="کد شرکت مادر *" hint="دقیقاً دو حرف انگلیسی A-Z">
+            <Input
+              value={editForm.parent_company_code}
+              onChange={(event) => {
+                setEditCodeTouched((current) => ({ ...current, parent: true }));
+                setEditForm((current) => ({
+                  ...current,
+                  parent_company_code: event.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2),
+                }));
+              }}
+              maxLength={2}
+              dir="ltr"
+              className="uppercase"
+            />
+          </Field>
+        </div>
+        <div className="border-t border-[#d5dde5] px-3 pb-3 text-[10px] leading-5 text-[#5c6b78]">
+          این دو کد فقط روی ترانسمیتال‌های جدید اثر می‌گذارند؛ شماره‌های صادرشده قبلی بدون تغییر باقی می‌مانند.
+        </div>
+      </Modal>
     </div>
   );
 }

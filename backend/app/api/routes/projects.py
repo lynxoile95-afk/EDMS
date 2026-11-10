@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
@@ -37,6 +38,29 @@ from app.services import acl, audit
 from app.services.project_settings import merge_settings
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+_COMPANY_CODE_RE = re.compile(r"^[A-Z]{2}$")
+
+
+def _company_code(value: str | None, label: str) -> str | None:
+    """Normalize an optional company code and reject anything except A-Z pairs."""
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if not normalized:
+        return None
+    if not _COMPANY_CODE_RE.fullmatch(normalized):
+        raise HTTPException(status_code=422, detail=f"{label} باید دقیقاً دو حرف انگلیسی A-Z باشد.")
+    return normalized
+
+
+def _effective_project_settings(project: Project) -> dict:
+    effective = merge_settings(project.settings)
+    if project.contractor_code is not None:
+        effective["contractor_code"] = project.contractor_code
+    if project.parent_company_code is not None:
+        effective["parent_company_code"] = project.parent_company_code
+    return effective
 
 
 _ROLE_ALIASES = {
@@ -170,13 +194,24 @@ def create_project(payload: ProjectCreate, db: DbSession, user: CurrentUser) -> 
     acl.assert_admin(user)
     if db.execute(select(Project).where(Project.code == payload.code)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="کد پروژه تکراری است.")
+    project_settings = dict(payload.settings or {})
+    contractor_code = _company_code(
+        payload.contractor_code or project_settings.get("contractor_code"),
+        "کد پیمانکار",
+    )
+    parent_company_code = _company_code(
+        payload.parent_company_code or project_settings.get("parent_company_code"),
+        "کد شرکت مادر",
+    )
     project = Project(
         code=payload.code.upper(),
         name=payload.name,
         client_name=payload.client_name,
         contractor_name=payload.contractor_name,
+        contractor_code=contractor_code,
+        parent_company_code=parent_company_code,
         description=payload.description,
-        settings=merge_settings(payload.settings),
+        settings=merge_settings(project_settings),
     )
     db.add(project)
     db.flush()
@@ -197,12 +232,32 @@ def get_project_endpoint(project: ProjectDep) -> ProjectOut:
 @router.patch("/{project_id}", response_model=ProjectOut, summary="ویرایش پروژه")
 def update_project(project: ProjectDep, payload: ProjectUpdate, db: DbSession, user: CurrentUser) -> ProjectOut:
     acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
-    before = {"name": project.name, "client_name": project.client_name}
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    before = {
+        "name": project.name,
+        "client_name": project.client_name,
+        "contractor_code": project.contractor_code,
+        "parent_company_code": project.parent_company_code,
+    }
+    values = payload.model_dump(exclude_unset=True)
+    settings_patch = values.pop("settings", None)
+    if settings_patch is not None:
+        project.settings = merge_settings({**(project.settings or {}), **settings_patch})
+        # Older clients stored these two values in the JSON settings object. If
+        # such a client updates a project, promote them to the first-class
+        # columns while retaining all other project settings.
+        if "contractor_code" not in values and "contractor_code" in settings_patch:
+            values["contractor_code"] = settings_patch["contractor_code"]
+        if "parent_company_code" not in values and "parent_company_code" in settings_patch:
+            values["parent_company_code"] = settings_patch["parent_company_code"]
+    if "contractor_code" in values:
+        values["contractor_code"] = _company_code(values["contractor_code"], "کد پیمانکار")
+    if "parent_company_code" in values:
+        values["parent_company_code"] = _company_code(values["parent_company_code"], "کد شرکت مادر")
+    for field, value in values.items():
         setattr(project, field, value)
     audit.record(
         db, action="project.update", entity_type="project", entity_id=project.id, actor=user,
-        project_id=project.id, before=before, after=payload.model_dump(exclude_unset=True),
+        project_id=project.id, before=before, after={**values, **({"settings": settings_patch} if settings_patch is not None else {})},
     )
     db.commit()
     return ProjectOut.model_validate(project)
@@ -210,7 +265,7 @@ def update_project(project: ProjectDep, payload: ProjectUpdate, db: DbSession, u
 
 @router.get("/{project_id}/settings", summary="تنظیمات مؤثر پروژه")
 def get_settings(project: ProjectDep) -> dict:
-    return merge_settings(project.settings)
+    return _effective_project_settings(project)
 
 
 @router.put("/{project_id}/settings", response_model=ProjectOut, summary="به‌روزرسانی تنظیمات")
@@ -220,6 +275,12 @@ def update_settings(
     acl.require_project(db, user, project.id, [ProjectRole.DCC, ProjectRole.PROJECT_CONTROL, ProjectRole.PMO, ProjectRole.PROJECT_MANAGER])
     before = dict(project.settings or {})
     project.settings = merge_settings(payload.settings)
+    if "contractor_code" in payload.settings:
+        project.contractor_code = _company_code(payload.settings.get("contractor_code"), "کد پیمانکار")
+    if "parent_company_code" in payload.settings:
+        project.parent_company_code = _company_code(
+            payload.settings.get("parent_company_code"), "کد شرکت مادر"
+        )
     audit.record(
         db, action="project.settings.update", entity_type="project", entity_id=project.id,
         actor=user, project_id=project.id, before=before, after=project.settings,

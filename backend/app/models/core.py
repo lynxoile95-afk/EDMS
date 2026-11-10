@@ -28,6 +28,11 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     client_name: Mapped[str | None] = mapped_column(String(255))
     contractor_name: Mapped[str | None] = mapped_column(String(255))
+    # Two-letter company identifiers are kept on the project itself because they
+    # are part of the immutable identity of every newly issued transmittal.
+    # Existing projects may remain NULL until an administrator completes them.
+    contractor_code: Mapped[str | None] = mapped_column(String(2))
+    parent_company_code: Mapped[str | None] = mapped_column(String(2))
     description: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     #: project-scoped configuration (doc code pattern, thresholds, numbering, ...)

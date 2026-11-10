@@ -8,11 +8,16 @@ from pydantic import BaseModel, Field
 from app.schemas.common import ORMModel
 
 
+COMPANY_CODE_PATTERN = r"^[A-Z]{2}$"
+
+
 class ProjectCreate(BaseModel):
     code: str = Field(min_length=2, max_length=32, pattern=r"^[A-Z0-9_-]+$")
     name: str = Field(min_length=2, max_length=255)
     client_name: str | None = None
     contractor_name: str | None = None
+    contractor_code: str | None = Field(default=None, min_length=2, max_length=2, pattern=COMPANY_CODE_PATTERN)
+    parent_company_code: str | None = Field(default=None, min_length=2, max_length=2, pattern=COMPANY_CODE_PATTERN)
     description: str | None = None
     settings: dict | None = None
 
@@ -21,8 +26,11 @@ class ProjectUpdate(BaseModel):
     name: str | None = None
     client_name: str | None = None
     contractor_name: str | None = None
+    contractor_code: str | None = Field(default=None, min_length=2, max_length=2, pattern=COMPANY_CODE_PATTERN)
+    parent_company_code: str | None = Field(default=None, min_length=2, max_length=2, pattern=COMPANY_CODE_PATTERN)
     description: str | None = None
     is_active: bool | None = None
+    settings: dict | None = None
 
 
 class ProjectSettingsUpdate(BaseModel):
@@ -51,6 +59,8 @@ class ProjectOut(ORMModel):
     name: str
     client_name: str | None = None
     contractor_name: str | None = None
+    contractor_code: str | None = None
+    parent_company_code: str | None = None
     description: str | None = None
     is_active: bool
     created_at: datetime

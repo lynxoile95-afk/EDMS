@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import DatePicker from "react-multi-date-picker";
 import DateObject from "react-date-object";
 import gregorian from "react-date-object/calendars/gregorian";
@@ -7,7 +7,8 @@ import persian_fa from "react-date-object/locales/persian_fa";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { Comment, CommentAttachment, CommentList as CommentListType } from "@/lib/types";
+import type { Comment, CommentAttachment, CommentList as CommentListType, DocumentAttachment } from "@/lib/types";
+import { AttachmentPreview } from "@/components/AttachmentPreview";
 import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Modal, ProgressBar, Spinner } from "@/components/ui";
 import { FField, FieldGrid } from "@/components/window";
 import { DISPOSITION_LABELS, fileSize, jalaliDateTime, persianDigits } from "@/lib/format";
@@ -132,9 +133,18 @@ function attachmentPath(attachment: CommentAttachment) {
   return attachment.download_url;
 }
 
-function attachmentPreviewUrl(attachment: CommentAttachment) {
-  const url = api.downloadUrl(attachmentPath(attachment));
-  return `${url}${url.includes("?") ? "&" : "?"}inline=1`;
+function toDocumentAttachment(attachment: CommentAttachment): DocumentAttachment {
+  return {
+    id: attachment.id,
+    line_id: attachment.comment_id,
+    revision_id: null,
+    kind: attachment.mime_type === "application/pdf" ? "pdf" : "native",
+    filename: attachment.file_name,
+    content_type: attachment.mime_type,
+    size_bytes: attachment.file_size,
+    uploaded_at: attachment.uploaded_at,
+    uploaded_by_id: attachment.uploaded_by_id,
+  };
 }
 
 function CommentRegistrationModal({
@@ -150,6 +160,7 @@ function CommentRegistrationModal({
   existingAttachments,
   removedAttachmentIds,
   onRemoveExisting,
+  onPreview,
   dragActive,
   setDragActive,
   busy,
@@ -170,6 +181,7 @@ function CommentRegistrationModal({
   existingAttachments: CommentAttachment[];
   removedAttachmentIds: string[];
   onRemoveExisting: (id: string) => void;
+  onPreview: (attachment: CommentAttachment) => void;
   dragActive: boolean;
   setDragActive: (active: boolean) => void;
   busy: boolean;
@@ -315,7 +327,7 @@ function CommentRegistrationModal({
                 attachment={attachment}
                 onRemove={() => onRemoveExisting(attachment.id)}
                 onDownload={() => api.download(attachmentPath(attachment), attachment.file_name)}
-                onPreview={() => window.open(attachmentPreviewUrl(attachment), "_blank", "noopener,noreferrer")}
+                onPreview={() => onPreview(attachment)}
                 existing
               />
             ))}
@@ -407,6 +419,16 @@ export function CommentList() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<CommentAttachment | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewRequestRef = useRef(0);
+  const previewUrlRef = useRef<string | null>(null);
+
+  useEffect(() => () => {
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+  }, []);
 
   const canRegister = COMMENT_EDITOR_ROLES.some((role) => hasRole(role));
   const canEditCoordinator = COORDINATOR_ROLES.some((role) => hasRole(role));
@@ -458,6 +480,47 @@ export function CommentList() {
     if (busy) return;
     setModalOpen(false);
     setEditing(null);
+  };
+
+  const closeAttachmentPreview = () => {
+    previewRequestRef.current += 1;
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreviewAttachment(null);
+    setPreviewUrl(null);
+    setPreviewLoading(false);
+    setPreviewError(null);
+  };
+
+  const openAttachmentPreview = async (attachment: CommentAttachment) => {
+    const requestId = previewRequestRef.current + 1;
+    previewRequestRef.current = requestId;
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreviewAttachment(attachment);
+    setPreviewUrl(null);
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const separator = attachmentPath(attachment).includes("?") ? "&" : "?";
+      const url = await api.blobUrl(`${attachmentPath(attachment)}${separator}inline=true`);
+      if (previewRequestRef.current !== requestId) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      previewUrlRef.current = url;
+      setPreviewUrl(url);
+    } catch (err) {
+      if (previewRequestRef.current === requestId) {
+        setPreviewError(err instanceof ApiError ? err.detail : "نمایش فایل پیوست ناموفق بود.");
+      }
+    } finally {
+      if (previewRequestRef.current === requestId) setPreviewLoading(false);
+    }
   };
 
   const addFiles = (incoming: File[]) => {
@@ -590,7 +653,7 @@ export function CommentList() {
                 <p className="mt-2 text-sm leading-6 text-slate-800">{comment.text}</p>
                 {comment.attachments.length ? (
                   <div className="mt-2 space-y-1 rounded-lg bg-[#f8fafc] p-2">
-                    {comment.attachments.map((attachment) => <AttachmentRow key={attachment.id} attachment={attachment} onDownload={() => api.download(attachmentPath(attachment), attachment.file_name)} onPreview={() => window.open(attachmentPreviewUrl(attachment), "_blank", "noopener,noreferrer")} />)}
+                    {comment.attachments.map((attachment) => <AttachmentRow key={attachment.id} attachment={attachment} onDownload={() => api.download(attachmentPath(attachment), attachment.file_name)} onPreview={() => void openAttachmentPreview(attachment)} />)}
                   </div>
                 ) : null}
                 {comment.response_text ? <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2"><p className="text-[11px] font-medium text-slate-500">پاسخ پیمانکار</p><p className="mt-1 text-xs leading-6 text-slate-700">{comment.response_text}</p><p className="mt-1 text-[10px] text-slate-400">{jalaliDateTime(comment.responded_at)}</p></div> : null}
@@ -619,6 +682,7 @@ export function CommentList() {
         existingAttachments={existingAttachments}
         removedAttachmentIds={removedAttachmentIds}
         onRemoveExisting={(id) => setRemovedAttachmentIds((previous) => [...previous, id])}
+        onPreview={(attachment) => void openAttachmentPreview(attachment)}
         dragActive={dragActive}
         setDragActive={setDragActive}
         busy={busy}
@@ -627,6 +691,40 @@ export function CommentList() {
         onSave={() => void saveRegistration()}
         onClose={closeModal}
       /> : null}
+
+      <Modal
+        open={previewAttachment !== null}
+        title={previewAttachment ? `مشاهده پیوست — ${previewAttachment.file_name}` : "مشاهده پیوست"}
+        onClose={closeAttachmentPreview}
+        width="max-w-6xl"
+        footer={
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[9.5px] text-[#5c6b78]">فایل با احراز هویت از انبار اسناد دریافت شده است.</span>
+            <div className="flex items-center gap-2">
+              {previewAttachment ? (
+                <Button
+                  variant="primary"
+                  className="px-2 py-1 text-[10px]"
+                  onClick={() => api.download(attachmentPath(previewAttachment), previewAttachment.file_name)}
+                >
+                  دریافت فایل
+                </Button>
+              ) : null}
+              <Button variant="secondary" className="px-2 py-1 text-[10px]" onClick={closeAttachmentPreview}>بستن</Button>
+            </div>
+          </div>
+        }
+      >
+        {previewAttachment ? (
+          <AttachmentPreview
+            attachment={toDocumentAttachment(previewAttachment)}
+            url={previewUrl}
+            loading={previewLoading}
+            error={previewError}
+            onDownload={() => api.download(attachmentPath(previewAttachment), previewAttachment.file_name)}
+          />
+        ) : null}
+      </Modal>
 
       <Modal open={answering !== null} title="پاسخ به نظر — Reply to Comment" onClose={() => setAnswering(null)} footer={<><Button variant="primary" onClick={() => void respond()} disabled={!answering || answering.text.trim().length < 2}>Save</Button><Button variant="secondary" onClick={() => setAnswering(null)}>Close</Button></>}>
         <div className="section-bar mb-1">Comment Information — اطلاعات نظر</div>

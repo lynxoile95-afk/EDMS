@@ -162,7 +162,7 @@ export function Modal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0b1a26]/45 p-4 pt-10">
-      <div className={clsx("window is-dialog", width)} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined}>
+      <div className={clsx("window is-dialog w-full", width)} role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined}>
         <div className="window-title">
           <button type="button" className="wt-btn is-close" onClick={onClose} aria-label="بستن">
             ✕

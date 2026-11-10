@@ -58,6 +58,29 @@ from app.utils.jalali import format_jalali
 
 router = APIRouter(tags=["transmittals"])
 
+_FINALIZED_ATTACHMENT_STATUSES = {
+    TransmittalStatus.ISSUED.value,
+    TransmittalStatus.PARTIALLY_ACKNOWLEDGED.value,
+    TransmittalStatus.ACKNOWLEDGED.value,
+    TransmittalStatus.CLOSED.value,
+    TransmittalStatus.CANCELLED.value,
+}
+
+
+def _assert_attachments_editable(transmittal: Transmittal) -> None:
+    """Lock attachment bytes and metadata after final issue or cancellation.
+
+    The frontend hides the editing controls as a convenience, but this check is
+    deliberately server-side too: a stale tab, direct API client, project admin,
+    or superuser must not be able to alter the immutable finalized record.
+    """
+    status_value = getattr(transmittal.status, "value", transmittal.status)
+    if str(status_value) in _FINALIZED_ATTACHMENT_STATUSES or transmittal.number:
+        raise HTTPException(
+            status_code=409,
+            detail="پس از صدور قطعی ترانسمیتال، افزودن، ویرایش یا حذف فایل پیوست مجاز نیست.",
+        )
+
 
 def _out(transmittal: Transmittal) -> TransmittalOut:
     acknowledged = sum(
@@ -141,6 +164,37 @@ def _attachment_out(raw: dict) -> AttachmentOut:
 
 def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
     base = _out(transmittal)
+    project = db.get(Project, transmittal.project_id)
+    project_meta: dict[str, object] = {}
+    preview = None
+    if project is not None:
+        project_meta = {
+            "contract_number": project.code,
+            "contractor_code": project.contractor_code,
+            "parent_company_code": project.parent_company_code,
+        }
+        type_value = getattr(transmittal.type, "value", transmittal.type)
+        if str(type_value).upper() in {"OT", "OS"}:
+            missing = numbering.missing_company_codes(project)
+            if missing:
+                project_meta["numbering_warning"] = (
+                    "کد " + " و ".join(missing) +
+                    " پروژه ثبت نشده است؛ شماره با قالب قدیمی صادر می‌شود و برای فعال شدن قالب جدید، "
+                    "هر دو کد را دقیقاً با دو حرف انگلیسی A-Z تکمیل کنید."
+                )
+        try:
+            settings = merge_settings(project.settings)
+            preview = numbering.peek_temp(
+                db,
+                project,
+                transmittal_type=str(type_value),
+                settings=settings,
+            )
+        except Exception:  # noqa: BLE001
+            # A legacy project without company codes still needs to open so the
+            # administrator can edit it; the warning above explains the issue.
+            preview = None
+        base.meta = {**(base.meta or {}), **project_meta}
     result_ids = {
         line.revision.extraction_result_id
         for line in transmittal.lines
@@ -192,12 +246,6 @@ def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
         )
         for recipient in transmittal.recipients
     ]
-    try:
-        project = db.get(Project, transmittal.project_id)
-        settings = merge_settings(project.settings if project else None)
-        preview = numbering.peek_temp(db, project, settings=settings) if project else None
-    except Exception:  # noqa: BLE001
-        preview = None
     pdf_url = None
     if transmittal.pdf_key:
         try:
@@ -478,7 +526,7 @@ def get_transmittal(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser)
 @router.post(
     "/transmittals/{transmittal_id}/refer-people",
     response_model=TransmittalDetail,
-    summary="ارجاع ترانسمیتال دستی به پرسنل انتخاب‌شده",
+    summary="ارجاع برگه ارسال به پرسنل انتخاب‌شده",
 )
 def refer_people(
     transmittal_id: uuid.UUID,
@@ -486,32 +534,18 @@ def refer_people(
     db: DbSession,
     user: CurrentUser,
 ) -> TransmittalDetail:
-    """Send an issued manual transmittal to selected project personnel.
+    """Send an issued transmittal to selected project personnel.
 
-    This is intentionally separate from the existing management-to-discipline
-    route: the manual creator selects project members directly from the roster.
-    Multiple selected people receive independent referral rows and notifications.
+    Any active project member who can access the transmittal may initiate the
+    referral. The selected project members still pass through the normal ACL and
+    access-circle checks, and each person receives an independent referral row
+    and notification.
     """
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     acl.require_transmittal(db, user, transmittal)
 
-    can_manage = acl.has_role(
-        db,
-        user,
-        transmittal.project_id,
-        ProjectRole.DCC,
-        ProjectRole.PROJECT_CONTROL,
-        ProjectRole.PMO,
-        ProjectRole.PROJECT_MANAGER,
-        ProjectRole.SYSTEM_ADMIN,
-    )
-    if not transmittal.manual_workflow or (transmittal.created_by_id != user.id and not can_manage):
-        raise HTTPException(
-            status_code=403,
-            detail="ارجاع مدرک فقط برای ایجادکننده ترانسمیتال دستی مجاز است.",
-        )
     if str(transmittal.status) not in {
         str(TransmittalStatus.ISSUED),
         str(TransmittalStatus.PARTIALLY_ACKNOWLEDGED),
@@ -656,6 +690,7 @@ async def upload_attachment(
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     project = acl.require_transmittal(db, user, transmittal)
+    _assert_attachments_editable(transmittal)
     can_manage = acl.has_role(
         db,
         user,
@@ -797,14 +832,25 @@ def download_attachment(
         project_id=transmittal.project_id,
         after={"attachment_id": str(attachment_id)},
     )
+    storage = get_storage()
+    try:
+        content = storage.get_bytes(attachment["storage_key"])
+    except Exception as exc:  # noqa: BLE001 - hide storage implementation details
+        raise HTTPException(status_code=404, detail="فایل پیوست در انبار اسناد قابل دریافت نیست.") from exc
+
+    filename = os.path.basename(attachment.get("filename") or "attachment")
+    detected_type = mimetypes.guess_type(filename)[0]
+    content_type = attachment.get("content_type") or detected_type or "application/octet-stream"
+    if content_type == "application/octet-stream" and detected_type:
+        content_type = detected_type
     db.commit()
-    return RedirectResponse(
-        url=get_storage().presigned_url(
-            attachment["storage_key"],
-            filename=attachment.get("filename"),
-            expires_seconds=settings.download_link_ttl_seconds,
-        ),
-        status_code=302,
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+            "Cache-Control": "private, no-store",
+        },
     )
 
 
@@ -820,10 +866,10 @@ def preview_attachment(
 ):
     """Return attachment bytes with an inline disposition for authenticated preview.
 
-    The normal download endpoint deliberately redirects with ``attachment`` so the
-    browser saves the file. PDF.js and media/text previews need the opposite
-    behaviour, and a same-origin response also avoids requiring CORS on a public
-    S3/MinIO endpoint. The ACL and audit trail are the same as for downloads.
+    The normal download endpoint returns the authenticated bytes with an
+    ``attachment`` disposition, while PDF.js and media/text previews need the
+    opposite ``inline`` behaviour. Both same-origin responses avoid requiring
+    browser CORS access to a public S3/MinIO endpoint.
     """
     transmittal = db.get(Transmittal, transmittal_id)
     if transmittal is None:
@@ -891,6 +937,7 @@ async def update_attachment(
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     project = acl.require_transmittal(db, user, transmittal)
+    _assert_attachments_editable(transmittal)
     can_manage = acl.has_role(
         db,
         user,
@@ -1030,6 +1077,7 @@ def delete_attachment(
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     acl.require_transmittal(db, user, transmittal)
+    _assert_attachments_editable(transmittal)
     can_manage = acl.has_role(
         db,
         user,

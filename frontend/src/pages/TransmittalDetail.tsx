@@ -44,6 +44,7 @@ import {
   fileSize,
   jalali,
   jalaliDateTime,
+  jalaliTime,
   persianDigits,
 } from "@/lib/format";
 
@@ -172,9 +173,12 @@ export function TransmittalDetail() {
   const canManage =
     hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("project_manager") || hasRole("system_admin");
   const issued = ["issued", "partially_acknowledged", "acknowledged", "closed"].includes(data.status);
+  const attachmentsLocked = issued || data.status === "cancelled";
   const isManualOwner = data.manual_workflow && data.created_by_id === user?.id;
   const canFinalIssue = canManage || isManualOwner;
-  const canReferPeople = canManage || isManualOwner;
+  // Any authenticated project member who can view this sheet may refer it;
+  // the backend still enforces project membership and access-circle ACLs.
+  const canReferPeople = Boolean(user);
   const allComments = Object.values(comments).flat().flatMap((list) => list.comments);
   const meta = data.meta as Record<string, string | undefined>;
   const commentsRows = data.lines.flatMap((line) =>
@@ -361,7 +365,10 @@ export function TransmittalDetail() {
   };
 
   const canEditDocuments = hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("system_admin");
-  const canManageAttachments = canManage || (isManualOwner && !issued);
+  // Issued/green sheets and cancelled sheets are immutable. This is mirrored by
+  // the backend guard; the UI also removes upload/edit/delete controls to avoid
+  // misleading clicks.
+  const canManageAttachments = !attachmentsLocked && (canManage || isManualOwner);
 
   const openFlowForLine = (line?: TransmittalLine) => {
     setFlowLine(line ?? null);
@@ -548,7 +555,7 @@ export function TransmittalDetail() {
       {/* ---------- Transmittal Workspace window ---------- */}
       <Window
         title={
-          <span className="ltr">
+          <span className="ltr" dir="ltr">
             Transmittal Workspace — {data.number ?? data.preview_number ?? "Draft"}
           </span>
         }
@@ -561,7 +568,7 @@ export function TransmittalDetail() {
       >
         {/* identity strip: the reference prints these five values at the window's top */}
         <div className="mb-1 flex items-stretch border border-[#a8a284] bg-white">
-          <div className="flex flex-1 flex-col items-center justify-center gap-1 px-3 py-1">
+          <div className="order-2 flex flex-1 flex-col items-center justify-center gap-1 px-3 py-1">
             <span className="text-[13px] font-bold tracking-tight text-[#1f3864]">Transmittal Workspace</span>
             <span className="flex items-center gap-1.5">
               <StatusLamp tone={issued ? "green" : "yellow"} />
@@ -578,7 +585,7 @@ export function TransmittalDetail() {
               </span>
             </span>
           </div>
-          <div className="w-[250px] border-inline-start border-[#a8a284] text-[10px]">
+          <div className="order-1 w-[250px] shrink-0 border-inline-start border-[#a8a284] text-[10px]">
             {[
               ["Transmittal Identity:", data.id.slice(0, 8).toUpperCase()],
               ["Transmittal No.:", data.number ?? data.preview_number ?? "—"],
@@ -588,33 +595,53 @@ export function TransmittalDetail() {
             ].map(([label, value]) => (
               <div
                 key={label}
-                className="flex items-center justify-between gap-2 border-b border-[#e6e1c8] px-2 py-[2px] last:border-b-0"
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 border-b border-[#e6e1c8] px-2 py-[2px] last:border-b-0"
               >
-                <span className="font-bold text-[#20365c]">{label}</span>
-                <span className="ltr truncate text-[#11202c]">{value}</span>
+                <span className="text-right font-bold text-[#20365c]">{label}</span>
+                <span
+                  className="ltr break-words text-[#11202c]"
+                  dir="ltr"
+                  style={{ textAlign: label === "Transmittal No.:" ? "right" : "left" }}
+                >
+                  {value}
+                </span>
               </div>
             ))}
           </div>
         </div>
 
+        {meta.numbering_warning ? (
+          <div className="mb-1 border border-[#c98a86] bg-[#fdeeee] px-2 py-1.5 text-[10px] leading-5 text-[#8a2b25]">
+            ⚠ {meta.numbering_warning}
+          </div>
+        ) : null}
+
         <div className="section-bar">Transmittal Information — اطلاعات برگه ارسال</div>
         <FieldGrid>
           <FField label="Transmittal Subject:" full>
-            <span className="truncate">{data.lines[0]?.title ?? data.remarks ?? "—"}</span>
+            {data.lines.length > 0 ? (
+              <span className="block w-full">
+                {data.lines.map((line) => (
+                  <span key={line.id} className="block break-words">
+                    <span className="ltr font-bold text-[#17427a]" dir="ltr">{line.doc_code ?? "—"}</span>
+                    <span> — {line.title ?? "بدون عنوان"}</span>
+                  </span>
+                ))}
+              </span>
+            ) : (
+              <span>{data.remarks ?? "—"}</span>
+            )}
           </FField>
           <FField label="Project:">{meta.project_name ?? "—"}</FField>
-          <FField label="Contract:" muted>
-            —
+          <FField label="Contract:">
+            <span className="ltr break-words" dir="ltr">{meta.contract_number ?? "—"}</span>
           </FField>
           <FField label="Received Letter No.:" muted>
             —
           </FField>
-          <FField label="Contractor Transmittal No.:" muted>
-            —
-          </FField>
           <FField label="Issued by:">{meta.issued_by ?? "—"}</FField>
           <FField label="تأییدکننده نهایی:">{data.final_approver_name ?? "—"}</FField>
-          <FField label="From:">{data.from_org ?? meta.issued_by ?? "—"}</FField>
+          <FField label="Contractor/Originator:">{data.from_org ?? meta.issued_by ?? "—"}</FField>
           <FField label="Coordinator/Originator:">{meta.ddm_rule ?? "—"}</FField>
           <FField label="Status:">{STATUS_LABELS[data.status] ?? data.status}</FField>
           <FField label="مرحله گردش:">{data.stage_label ?? STAGE_LABELS[stage] ?? stage}</FField>
@@ -640,6 +667,11 @@ export function TransmittalDetail() {
           <span className="text-[9.5px] text-[#5c6b78]">
             {persianDigits((data.attachments ?? []).length)} فایل برای {persianDigits(data.line_count)} مدرک
           </span>
+          {attachmentsLocked ? (
+            <span className="border border-[#9bc3a0] bg-[#eef8ef] px-1.5 py-0.5 text-[9.5px] font-bold text-[#286437]">
+              این برگه نهایی یا لغو شده است؛ پیوست‌ها قفل شده‌اند.
+            </span>
+          ) : null}
           <span className="flex-1" />
           <button
             type="button"
@@ -691,10 +723,10 @@ export function TransmittalDetail() {
               {data.lines.map((line) => (
                 <tr key={line.id}>
                   <td className="cell-center">{persianDigits(line.line_no)}</td>
-                  <td className="whitespace-nowrap">
-                    <span className="flex items-center gap-1">
+                  <td className="break-words">
+                    <span className="flex min-w-0 items-start gap-1">
                       <StatusLamp tone={line.status === "issued" ? "green" : "yellow"} />
-                      <span className="ltr font-bold text-[#17427a]">{line.doc_code ?? "—"}</span>
+                      <span className="ltr break-words font-bold text-[#17427a]" dir="ltr">{line.doc_code ?? "—"}</span>
                     </span>
                   </td>
                   <td>{line.title ?? "—"}</td>
@@ -1480,7 +1512,16 @@ export function TransmittalDetail() {
                   <td className="truncate" title={referral.note ?? ""}>
                     {referral.note || "—"}
                   </td>
-                  <td className="cell-center">{referral.created_at ? jalali(referral.created_at) : "—"}</td>
+                  <td className="cell-center whitespace-nowrap">
+                    {referral.created_at ? (
+                      <span className="inline-flex flex-col items-center leading-4">
+                        <span>{jalali(referral.created_at)}</span>
+                        <span className="text-[9px] text-[#5c6b78]" dir="ltr">{jalaliTime(referral.created_at)}</span>
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   <td className="cell-center">
                     {referral.responded_at ? jalali(referral.responded_at) : "—"}
                   </td>
@@ -1501,7 +1542,7 @@ export function TransmittalDetail() {
         open={Boolean(previewAttachment)}
         title={previewAttachment ? `مشاهده پیوست — ${previewAttachment.filename}` : "مشاهده پیوست"}
         onClose={closeAttachmentPreview}
-        width="max-w-5xl"
+        width="max-w-6xl"
         footer={
           <div className="flex items-center justify-between gap-2">
             <span className="text-[9.5px] text-[#5c6b78]">

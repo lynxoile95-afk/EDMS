@@ -567,8 +567,8 @@ export function TransmittalDetail() {
         }
       >
         {/* identity strip: the reference prints these five values at the window's top */}
-        <div className="mb-1 flex items-stretch border border-[#a8a284] bg-white">
-          <div className="order-2 flex flex-1 flex-col items-center justify-center gap-1 px-3 py-1">
+        <div className="workspace-identity mb-1">
+          <div className="workspace-identity-main order-2 flex flex-1 flex-col items-center justify-center gap-1 px-3 py-1">
             <span className="text-[13px] font-bold tracking-tight text-[#1f3864]">Transmittal Workspace</span>
             <span className="flex items-center gap-1.5">
               <StatusLamp tone={issued ? "green" : "yellow"} />
@@ -585,7 +585,7 @@ export function TransmittalDetail() {
               </span>
             </span>
           </div>
-          <div className="order-1 w-[250px] shrink-0 border-inline-start border-[#a8a284] text-[10px]">
+          <div className="workspace-identity-meta order-1 text-[10px]">
             {[
               ["Transmittal Identity:", data.id.slice(0, 8).toUpperCase()],
               ["Transmittal No.:", data.number ?? data.preview_number ?? "—"],
@@ -595,7 +595,7 @@ export function TransmittalDetail() {
             ].map(([label, value]) => (
               <div
                 key={label}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 border-b border-[#e6e1c8] px-2 py-[2px] last:border-b-0"
+                className="workspace-identity-meta-row grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-[#e6e1c8] px-2 py-[2px] last:border-b-0"
               >
                 <span className="text-right font-bold text-[#20365c]">{label}</span>
                 <span
@@ -617,7 +617,7 @@ export function TransmittalDetail() {
         ) : null}
 
         <div className="section-bar">Transmittal Information — اطلاعات برگه ارسال</div>
-        <FieldGrid>
+        <FieldGrid className="workspace-info-grid">
           <FField label="Transmittal Subject:" full>
             {data.lines.length > 0 ? (
               <span className="block w-full">
@@ -640,9 +640,10 @@ export function TransmittalDetail() {
             —
           </FField>
           <FField label="Issued by:">{meta.issued_by ?? "—"}</FField>
-          <FField label="تأییدکننده نهایی:">{data.final_approver_name ?? "—"}</FField>
           <FField label="Contractor/Originator:">{data.from_org ?? meta.issued_by ?? "—"}</FField>
-          <FField label="Coordinator/Originator:">{meta.ddm_rule ?? "—"}</FField>
+          <FField label="Coordinator/Originator:">
+            {data.final_approver_name ?? data.issued_by_name ?? meta.issued_by ?? "—"}
+          </FField>
           <FField label="Status:">{STATUS_LABELS[data.status] ?? data.status}</FField>
           <FField label="مرحله گردش:">{data.stage_label ?? STAGE_LABELS[stage] ?? stage}</FField>
           <FField label="ارجاع‌های باز:">

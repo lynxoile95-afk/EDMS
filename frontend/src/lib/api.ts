@@ -215,14 +215,35 @@ export const api = {
     }
     return URL.createObjectURL(await response.blob());
   },
-  async download(path: string, filename: string): Promise<void> {
-    const url = await api.blobUrl(path);
+  /**
+   * Start a browser-native download instead of fetching a Blob first.
+   *
+   * A Blob-anchor click performed after an awaited fetch is no longer covered by
+   * the browser's transient user activation. Chrome therefore ignores the click
+   * in the preview iframe even though the protected GET itself returned 200.
+   * The attachment endpoint already returns Content-Disposition: attachment;
+   * navigating a same-origin anchor lets the browser handle the download and
+   * keeps the click inside the original user gesture.
+   */
+  download(path: string, filename: string): void {
+    const access = tokens.access;
+    const hasAccessCookie = document.cookie
+      .split(";")
+      .some((cookie) => cookie.trim().startsWith(`${COOKIE_ACCESS}=`));
+    const separator = path.includes("?") ? "&" : "?";
+    // Existing tabs created before cookie-based auth may only have localStorage.
+    // The API supports this query-carried token specifically for download flows;
+    // new sessions use the cookie and do not expose the token in the URL.
+    const href = access && !hasAccessCookie
+      ? `${BASE_URL}${path}${separator}access_token=${encodeURIComponent(access)}`
+      : `${BASE_URL}${path}`;
     const link = document.createElement("a");
-    link.href = url;
+    link.href = href;
     link.download = filename;
+    link.rel = "noopener";
+    link.style.display = "none";
     document.body.appendChild(link);
     link.click();
     link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   },
 };

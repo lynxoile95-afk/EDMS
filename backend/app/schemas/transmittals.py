@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.enums import ActionRequired, CommentDisposition, PURPOSE_PATTERN
 from app.schemas.common import ORMModel
@@ -231,8 +231,51 @@ class CommentCreate(BaseModel):
     text: str = Field(min_length=2, max_length=4000)
     code: str = Field(default="2", pattern=r"^[123]$")
     category: str | None = None
-    page_no: int | None = None
+    related_comment_id: uuid.UUID | None = None
+    discipline_id: uuid.UUID | None = None
+    discipline_code: str | None = Field(default=None, max_length=32)
+    page_no: int | None = Field(default=None, ge=1)
+    from_page_no: int | None = Field(default=None, ge=1)
+    to_page_no: int | None = Field(default=None, ge=1)
     bbox: list[float] = []
+    disposition: CommentDisposition | None = None
+    status_change_date: date | None = None
+    personal_remarks: str | None = Field(default=None, max_length=4000)
+    coordinator_date: date | None = None
+    judgment: str = Field(default="draft", max_length=32)
+    judgment_comments: str | None = Field(default=None, max_length=4000)
+    remarks: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_page_range(self) -> "CommentCreate":
+        if self.from_page_no is not None and self.to_page_no is not None and self.to_page_no < self.from_page_no:
+            raise ValueError("صفحه پایان باید بزرگ‌تر یا مساوی صفحه شروع باشد.")
+        return self
+
+
+class CommentUpdate(BaseModel):
+    text: str = Field(min_length=2, max_length=4000)
+    code: str = Field(default="2", pattern=r"^[123]$")
+    category: str | None = None
+    related_comment_id: uuid.UUID | None = None
+    discipline_id: uuid.UUID | None = None
+    discipline_code: str | None = Field(default=None, max_length=32)
+    page_no: int | None = Field(default=None, ge=1)
+    from_page_no: int | None = Field(default=None, ge=1)
+    to_page_no: int | None = Field(default=None, ge=1)
+    disposition: CommentDisposition | None = None
+    status_change_date: date | None = None
+    personal_remarks: str | None = Field(default=None, max_length=4000)
+    coordinator_date: date | None = None
+    judgment: str = Field(default="draft", max_length=32)
+    judgment_comments: str | None = Field(default=None, max_length=4000)
+    remarks: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_page_range(self) -> "CommentUpdate":
+        if self.from_page_no is not None and self.to_page_no is not None and self.to_page_no < self.from_page_no:
+            raise ValueError("صفحه پایان باید بزرگ‌تر یا مساوی صفحه شروع باشد.")
+        return self
 
 
 class CommentRespond(BaseModel):
@@ -246,22 +289,51 @@ class CommentClose(BaseModel):
     note: str | None = None
 
 
+class CommentAttachmentOut(ORMModel):
+    id: uuid.UUID
+    comment_id: uuid.UUID
+    file_name: str
+    file_size: int
+    mime_type: str
+    uploaded_by_id: uuid.UUID | None = None
+    uploaded_by_name: str | None = None
+    uploaded_at: datetime
+    download_url: str
+
+
 class CommentOut(ORMModel):
     id: uuid.UUID
+    registration_id: str
     revision_id: uuid.UUID
     comment_list_id: uuid.UUID
     seq_no: int
     code: str
     category: str | None = None
+    related_comment_id: uuid.UUID | None = None
+    discipline_id: uuid.UUID | None = None
+    discipline_code: str | None = None
+    discipline_name: str | None = None
     text: str
     page_no: int | None = None
+    from_page_no: int | None = None
+    to_page_no: int | None = None
     bbox: list = []
     status: str
     disposition: str | None = None
+    status_change_date: date | None = None
+    personal_remarks: str | None = None
+    coordinator_date: date | None = None
+    judgment: str | None = None
+    judgment_comments: str | None = None
+    remarks: str | None = None
     response_text: str | None = None
     responded_at: datetime | None = None
+    author_id: uuid.UUID | None = None
     author_name: str | None = None
     created_at: datetime
+    revision_time: datetime | None = None
+    attachments: list[CommentAttachmentOut] = []
+    attachment_count: int = 0
 
 
 class CommentListOut(ORMModel):

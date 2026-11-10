@@ -26,6 +26,7 @@ from app.models.registration import RegistrationRow
 from app.models.transmittal import (
     AuditLog,
     Comment,
+    CommentAttachment,
     CommentList,
     DDMRule,
     DDMRuleRecipient,
@@ -59,6 +60,7 @@ __all__ = [
     "ValidationIssue",
     "AuditLog",
     "Comment",
+    "CommentAttachment",
     "CommentList",
     "DDMRule",
     "DDMRuleRecipient",

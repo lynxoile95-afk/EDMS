@@ -5,7 +5,6 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -62,6 +61,19 @@ class Settings(BaseSettings):
     # ---------------- uploads ----------------
     max_upload_mb: int = 200
     allowed_upload_types: str = "application/pdf"
+    # Comment attachments intentionally use a smaller, explicit allow-list than
+    # the document-ingest pipeline. These settings are kept together so an
+    # installation can change the policy without touching route code.
+    comment_attachment_max_mb: int = 20
+    comment_attachment_allowed_extensions: str = "pdf,docx,xlsx,dwg,png,jpg,zip"
+
+    @property
+    def comment_attachment_extensions(self) -> set[str]:
+        return {
+            extension.strip().lower().lstrip(".")
+            for extension in self.comment_attachment_allowed_extensions.split(",")
+            if extension.strip()
+        }
 
     # ---------------- antivirus ----------------
     av_enabled: bool = False

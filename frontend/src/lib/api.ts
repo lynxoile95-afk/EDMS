@@ -183,6 +183,60 @@ async function tryRefresh(): Promise<boolean> {
   }
 }
 
+function formWithProgress<T>(
+  method: "POST" | "PATCH",
+  path: string,
+  form: FormData,
+  onProgress: (value: number) => void,
+  retry = true,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, `${BASE_URL}${path}`);
+    xhr.withCredentials = true;
+    authHeaders().forEach((value, key) => xhr.setRequestHeader(key, value));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.total ? event.loaded / event.total : 0);
+    };
+    xhr.onerror = () => reject(new ApiError(0, "ارتباط با سرور برقرار نشد."));
+    xhr.onload = async () => {
+      if (xhr.status === 401 && retry && tokens.refresh && (await tryRefresh())) {
+        try {
+          resolve(await formWithProgress<T>(method, path, form, onProgress, false));
+        } catch (error) {
+          reject(error);
+        }
+        return;
+      }
+      if (xhr.status === 204) {
+        onProgress(1);
+        resolve(undefined as T);
+        return;
+      }
+      let payload: ApiErrorPayload | null = null;
+      if (xhr.responseText) {
+        try {
+          payload = JSON.parse(xhr.responseText) as ApiErrorPayload;
+        } catch {
+          payload = null;
+        }
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        if (xhr.status === 401) {
+          tokens.clear();
+          onUnauthorized?.();
+        }
+        const detail = typeof payload?.detail === "string" ? payload.detail : `خطای سرور (${xhr.status})`;
+        reject(new ApiError(xhr.status, detail, payload));
+        return;
+      }
+      onProgress(1);
+      resolve((xhr.responseText ? JSON.parse(xhr.responseText) : undefined) as T);
+    };
+    xhr.send(form);
+  });
+}
+
 function downloadHref(path: string): string {
   const access = tokens.access;
   const hasAccessCookie = document.cookie
@@ -208,6 +262,10 @@ export const api = {
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
   postForm: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
   patchForm: <T>(path: string, form: FormData) => request<T>(path, { method: "PATCH", body: form }),
+  postFormWithProgress: <T>(path: string, form: FormData, onProgress: (value: number) => void) =>
+    formWithProgress<T>("POST", path, form, onProgress),
+  patchFormWithProgress: <T>(path: string, form: FormData, onProgress: (value: number) => void) =>
+    formWithProgress<T>("PATCH", path, form, onProgress),
   /** Fetch a protected binary resource as a blob URL (used by the PDF viewer). */
   async blobUrl(path: string, retry = true): Promise<string> {
     const response = await fetch(`${BASE_URL}${path}`, {

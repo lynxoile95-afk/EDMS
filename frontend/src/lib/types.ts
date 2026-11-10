@@ -417,22 +417,51 @@ export interface TransmittalDetail extends Transmittal {
   stage_label: string | null;
 }
 
+export interface CommentAttachment {
+  id: string;
+  comment_id: string;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
+  uploaded_by_id: string | null;
+  uploaded_by_name: string | null;
+  uploaded_at: string;
+  download_url: string;
+}
+
 export interface Comment {
   id: string;
+  registration_id: string;
   revision_id: string;
   comment_list_id: string;
   seq_no: number;
   code: string;
   category: string | null;
+  related_comment_id: string | null;
+  discipline_id: string | null;
+  discipline_code: string | null;
+  discipline_name: string | null;
   text: string;
   page_no: number | null;
+  from_page_no: number | null;
+  to_page_no: number | null;
   bbox: number[];
   status: "open" | "answered" | "closed";
   disposition: "accepted" | "canceled" | "commented" | "no_comment" | "rejected" | null;
+  status_change_date: string | null;
+  personal_remarks: string | null;
+  coordinator_date: string | null;
+  judgment: string | null;
+  judgment_comments: string | null;
+  remarks: string | null;
   response_text: string | null;
   responded_at: string | null;
+  author_id: string | null;
   author_name: string | null;
   created_at: string;
+  revision_time: string | null;
+  attachments: CommentAttachment[];
+  attachment_count: number;
 }
 
 export interface CommentList {

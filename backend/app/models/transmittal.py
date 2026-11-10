@@ -217,21 +217,39 @@ class CommentList(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class Comment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "comments"
-    __table_args__ = (Index("ix_comment_revision", "revision_id", "status"),)
+    __table_args__ = (
+        Index("ix_comment_revision", "revision_id", "status"),
+        UniqueConstraint("comment_list_id", "seq_no", name="uq_comment_list_seq"),
+    )
 
     comment_list_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("comment_lists.id", ondelete="CASCADE"))
     revision_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_revisions.id", ondelete="CASCADE"))
     sheet_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sheets.id", ondelete="SET NULL"))
     author_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    related_comment_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("comments.id", ondelete="SET NULL"), index=True
+    )
+    discipline_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("disciplines.id", ondelete="SET NULL"), index=True
+    )
     seq_no: Mapped[int] = mapped_column(Integer, default=1)
     code: Mapped[CommentCode] = mapped_column(String(4), default=CommentCode.CODE2)
     category: Mapped[str | None] = mapped_column(String(64))
     text: Mapped[str] = mapped_column(Text, nullable=False)
     page_no: Mapped[int | None] = mapped_column(Integer)
+    from_page_no: Mapped[int | None] = mapped_column(Integer)
+    to_page_no: Mapped[int | None] = mapped_column(Integer)
     bbox: Mapped[list] = mapped_column(default=list)
     status: Mapped[CommentStatus] = mapped_column(String(16), default=CommentStatus.OPEN)
-    # Set when the coordinator closes the comment; NULL while it is still open.
+    # ``disposition`` is the printable status selected in the reference form;
+    # the workflow ``status`` above remains open/answered/closed.
     disposition: Mapped[str | None] = mapped_column(String(16))
+    status_change_date: Mapped[date | None] = mapped_column(Date)
+    personal_remarks: Mapped[str | None] = mapped_column(Text)
+    coordinator_date: Mapped[date | None] = mapped_column(Date)
+    judgment: Mapped[str | None] = mapped_column(String(32), default="draft", server_default="draft")
+    judgment_comments: Mapped[str | None] = mapped_column(Text)
+    remarks: Mapped[str | None] = mapped_column(Text)
     response_text: Mapped[str | None] = mapped_column(Text)
     responded_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -240,6 +258,34 @@ class Comment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     comment_list: Mapped[CommentList] = relationship(back_populates="comments")
     revision: Mapped["DocumentRevision"] = relationship(back_populates="comments")  # noqa: F821
     author: Mapped["User"] = relationship(foreign_keys=[author_id], lazy="joined")  # noqa: F821
+    related_comment: Mapped["Comment | None"] = relationship(
+        foreign_keys=[related_comment_id], remote_side="Comment.id", lazy="joined"
+    )
+    discipline: Mapped["Discipline | None"] = relationship(lazy="joined")  # noqa: F821
+    attachments: Mapped[list["CommentAttachment"]] = relationship(
+        back_populates="comment",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="CommentAttachment.uploaded_at",
+    )
+
+
+class CommentAttachment(UUIDPrimaryKeyMixin, Base):
+    """Authenticated file belonging to a comment registration."""
+
+    __tablename__ = "comment_attachments"
+    __table_args__ = (Index("ix_comment_attachment_comment", "comment_id", "uploaded_at"),)
+
+    comment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("comments.id", ondelete="CASCADE"), index=True)
+    file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    uploaded_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    comment: Mapped[Comment] = relationship(back_populates="attachments")
+    uploaded_by: Mapped["User | None"] = relationship(foreign_keys=[uploaded_by_id], lazy="joined")  # noqa: F821
 
 
 class TransmittalReferral(UUIDPrimaryKeyMixin, TimestampMixin, Base):

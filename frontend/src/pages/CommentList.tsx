@@ -640,7 +640,7 @@ export function CommentList() {
             <div className="flex flex-wrap items-center gap-2">
               {canRegister ? <Button variant="primary" className="px-2 py-1 text-[11px]" onClick={openNew}>Add New Comment — ثبت نظر جدید</Button> : null}
               <Link
-                className="btn btn-sm btn-transmittal-back"
+                className="btn btn-transmittal-back px-2 py-1 text-[11px]"
                 to={returnTransmittalPath}
                 title="بازگشت مستقیم به فرم ترانسمیتال"
               >

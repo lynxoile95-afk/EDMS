@@ -421,13 +421,13 @@
   }
   .btn-transmittal-back {
     color: #fff;
-    background: linear-gradient(180deg, #5aa65f, #33783b);
-    border-color: #28612f;
+    background: linear-gradient(180deg, #3f6f9e, #1f3864);
+    border-color: #183554;
     font-weight: 700;
   }
   .btn-transmittal-back:hover {
     color: #fff;
-    background: linear-gradient(180deg, #68b86e, #3f8f45);
+    background: linear-gradient(180deg, #507fa8, #294b73);
   }
   .btn-secondary {
     @apply btn;

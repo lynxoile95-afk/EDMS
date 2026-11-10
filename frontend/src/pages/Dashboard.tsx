@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { api, ApiError } from "@/lib/api";
 import { useProject } from "@/lib/project";
@@ -496,7 +496,14 @@ export function Dashboard() {
                     <td>
                       <div className="min-w-0">
                         {row.code ? <span className="ltr block text-[9.5px] text-[#17427a]">{row.code}</span> : null}
-                        <p className="truncate font-bold text-[#1f3864]">{row.title}</p>
+                        <Link
+                          to={row.href}
+                          className="block truncate font-bold text-[#1f3864] underline-offset-2 hover:text-[#1f4e79] hover:underline focus:outline-none focus:ring-1 focus:ring-[#3d789d]"
+                          title="باز کردن پنجره مربوط به مدرک"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {row.title}
+                        </Link>
                         <p className="line-clamp-1 text-[10px] text-[#3c4b58]">{row.subject}</p>
                       </div>
                     </td>

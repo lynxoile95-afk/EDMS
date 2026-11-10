@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type DragEvent } from "react";
+import DatePicker from "react-multi-date-picker";
+import DateObject from "react-date-object";
+import gregorian from "react-date-object/calendars/gregorian";
+import persian from "react-date-object/calendars/persian";
+import persian_fa from "react-date-object/locales/persian_fa";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -20,8 +25,16 @@ const CODE_LABELS: Record<string, string> = {
 
 const shortening = (value: string, max = 90) => (value.length > max ? `${value.slice(0, max)}…` : value);
 
+interface RevisionDocument {
+  doc_code: string | null;
+  title: string | null;
+}
+
+interface RevisionDetails {
+  doc: RevisionDocument | null;
+}
+
 interface RegistrationForm {
-  relatedCommentId: string;
   disciplineCode: string;
   code: string;
   disposition: string;
@@ -36,11 +49,17 @@ interface RegistrationForm {
   remarks: string;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+};
+
+const LATIN_DIGITS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 function emptyForm(): RegistrationForm {
   return {
-    relatedCommentId: "",
     disciplineCode: "",
     code: "2",
     disposition: "commented",
@@ -56,9 +75,44 @@ function emptyForm(): RegistrationForm {
   };
 }
 
+function isoToJalaliDate(value: string) {
+  if (!value) return null;
+  return new DateObject({ date: `${value}T12:00:00`, calendar: gregorian }).convert(persian);
+}
+
+function jalaliDateToIso(value: DateObject | null) {
+  return value ? value.convert(gregorian).format("YYYY-MM-DD") : "";
+}
+
+function JalaliDateField({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <DatePicker
+      value={isoToJalaliDate(value)}
+      calendar={persian}
+      locale={persian_fa}
+      digits={LATIN_DIGITS}
+      format="YYYY/MM/DD"
+      inputClass="input w-full text-right font-mono"
+      containerClassName="jalali-date-picker"
+      calendarPosition="bottom-right"
+      portal
+      zIndex={100}
+      disabled={disabled}
+      onChange={(selected) => onChange(jalaliDateToIso(selected as DateObject | null))}
+    />
+  );
+}
+
 function formFromComment(comment: Comment): RegistrationForm {
   return {
-    relatedCommentId: comment.related_comment_id ?? "",
     disciplineCode: comment.discipline_code ?? "",
     code: comment.code,
     disposition: comment.disposition ?? "commented",
@@ -85,8 +139,7 @@ function attachmentPreviewUrl(attachment: CommentAttachment) {
 
 function CommentRegistrationModal({
   open,
-  revisionId,
-  comments,
+  document,
   editing,
   canEditCoordinator,
   form,
@@ -106,8 +159,7 @@ function CommentRegistrationModal({
   onClose,
 }: {
   open: boolean;
-  revisionId: string;
-  comments: Comment[];
+  document: RevisionDocument | null;
   editing: Comment | null;
   canEditCoordinator: boolean;
   form: RegistrationForm;
@@ -129,6 +181,7 @@ function CommentRegistrationModal({
   const registrationId = editing ? editing.registration_id : "AUTO — پس از ذخیره";
   const registrationTime = editing ? jalaliDateTime(editing.created_at) : "اکنون / پس از Save";
   const revisionTime = editing?.revision_time ? jalaliDateTime(editing.revision_time) : "—";
+  const relatedDocument = [document?.doc_code, document?.title].filter(Boolean).join(" — ") || "—";
 
   const set = (key: keyof RegistrationForm, value: string) => {
     setForm((previous) => ({ ...previous, [key]: value }));
@@ -176,21 +229,13 @@ function CommentRegistrationModal({
       <div className="section-bar mt-1">Comment Information — اطلاعات نظر</div>
       <FieldGrid>
         <FField label="Related Document:">
-          <span dir="ltr" className="block truncate font-mono text-[10px] text-[#536272]" title={revisionId}>
-            {revisionId}
+          <span
+            dir="ltr"
+            className="block whitespace-normal break-words text-right font-mono text-[10px] leading-5 text-[#536272]"
+            title={relatedDocument}
+          >
+            {relatedDocument}
           </span>
-        </FField>
-        <FField label="Related Comment:">
-          <select className="input" value={form.relatedCommentId} onChange={(event) => set("relatedCommentId", event.target.value)}>
-            <option value="">— بدون نظر مرتبط —</option>
-            {comments
-              .filter((comment) => comment.id !== editing?.id)
-              .map((comment) => (
-                <option key={comment.id} value={comment.id}>
-                  #{persianDigits(comment.seq_no)} — {shortening(comment.text, 45)}
-                </option>
-              ))}
-          </select>
         </FField>
         <FField label="Discipline / رشته:">
           <input
@@ -200,9 +245,6 @@ function CommentRegistrationModal({
             placeholder="مثلاً CIV"
             dir="ltr"
           />
-        </FField>
-        <FField label="Comment No.:">
-          <span dir="ltr" className="font-mono font-bold text-[#1f3864]">{editing ? persianDigits(editing.seq_no) : "AUTO"}</span>
         </FField>
         <FField label="Code:">
           <select className="input" value={form.code} onChange={(event) => set("code", event.target.value)}>
@@ -219,8 +261,8 @@ function CommentRegistrationModal({
             ))}
           </select>
         </FField>
-        <FField label="Status Change Date:">
-          <input className="input" type="date" value={form.statusChangeDate} onChange={(event) => set("statusChangeDate", event.target.value)} dir="ltr" />
+        <FField label="Status Change Date:" full>
+          <JalaliDateField value={form.statusChangeDate} onChange={(value) => set("statusChangeDate", value)} />
         </FField>
         <FField label="From Page:">
           <input className="input" type="number" min={1} value={form.fromPageNo} onChange={(event) => set("fromPageNo", event.target.value)} dir="ltr" />
@@ -230,7 +272,7 @@ function CommentRegistrationModal({
         </FField>
         <FField label="Comment Description:" full>
           <textarea
-            className="input min-h-[76px] w-full"
+            className="input min-h-[170px] w-full resize-y"
             value={form.text}
             onChange={(event) => set("text", event.target.value)}
             placeholder="شرح نظر را وارد کنید…"
@@ -298,7 +340,7 @@ function CommentRegistrationModal({
       <div className="section-bar mt-2">Coordinator — هماهنگ‌کننده</div>
       <FieldGrid>
         <FField label="Date:">
-          <input className="input" type="date" value={form.coordinatorDate} onChange={(event) => set("coordinatorDate", event.target.value)} disabled={!canEditCoordinator} dir="ltr" />
+          <JalaliDateField value={form.coordinatorDate} onChange={(value) => set("coordinatorDate", value)} disabled={!canEditCoordinator} />
         </FField>
         <FField label="Judgment:">
           <select className="input" value={form.judgment} onChange={(event) => set("judgment", event.target.value)} disabled={!canEditCoordinator}>
@@ -350,6 +392,7 @@ export function CommentList() {
   const { revisionId } = useParams<{ revisionId: string }>();
   const { hasRole, user } = useAuth();
   const [lists, setLists] = useState<CommentListType[]>([]);
+  const [revisionDetails, setRevisionDetails] = useState<RevisionDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -373,7 +416,12 @@ export function CommentList() {
     setLoading(true);
     setError(null);
     try {
-      setLists(await api.get<CommentListType[]>(`/revisions/${revisionId}/comment-lists`));
+      const [nextLists, nextRevision] = await Promise.all([
+        api.get<CommentListType[]>(`/revisions/${revisionId}/comment-lists`),
+        api.get<RevisionDetails>(`/revisions/${revisionId}`),
+      ]);
+      setLists(nextLists);
+      setRevisionDetails(nextRevision);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "بارگذاری فهرست نظرها ناموفق بود.");
     } finally {
@@ -435,7 +483,6 @@ export function CommentList() {
     const data = new FormData();
     data.append("text", form.text.trim());
     data.append("code", form.code);
-    if (form.relatedCommentId) data.append("related_comment_id", form.relatedCommentId);
     if (form.disciplineCode.trim()) data.append("discipline_code", form.disciplineCode.trim());
     if (form.disposition) data.append("disposition", form.disposition);
     if (form.statusChangeDate) data.append("status_change_date", form.statusChangeDate);
@@ -561,8 +608,7 @@ export function CommentList() {
 
       {revisionId ? <CommentRegistrationModal
         open={modalOpen}
-        revisionId={revisionId}
-        comments={comments}
+        document={revisionDetails?.doc ?? null}
         editing={editing}
         canEditCoordinator={canEditCoordinator}
         form={form}

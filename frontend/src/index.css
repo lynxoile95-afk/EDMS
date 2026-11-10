@@ -766,6 +766,15 @@
     background: #fff;
     border: 1px solid #c0c7cf;
   }
+  .jalali-date-picker {
+    display: block;
+    width: 100%;
+  }
+  .jalali-date-picker .rmdp-input {
+    width: 100%;
+    direction: ltr;
+    text-align: right;
+  }
 
   /* ---------- navy tabs (reference tab strip) ---------- */
   .tabstrip {

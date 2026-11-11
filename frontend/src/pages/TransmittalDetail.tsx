@@ -7,6 +7,8 @@ import type {
   CommentList as CommentListType,
   DocumentRecord,
   ProjectMember,
+  ReplySheet,
+  ReplySheetRow,
   TransmittalDetail as Detail,
   TransmittalLine,
   TransmittalReferral,
@@ -60,6 +62,19 @@ const PERSONNEL_REFERRAL_ACTIONS: Array<{ value: PersonnelReferralAction; label:
   { value: "return_to_sender", label: "بازگشت به فرستنده" },
 ];
 
+type RelatedAttachmentType = "letter" | "correspondence" | "meeting_minutes" | "image";
+
+const RELATED_ATTACHMENT_TYPES: Array<{ value: RelatedAttachmentType; label: string }> = [
+  { value: "letter", label: "نامه" },
+  { value: "correspondence", label: "مکاتبه" },
+  { value: "meeting_minutes", label: "صورتجلسه" },
+  { value: "image", label: "تصویر" },
+];
+
+function relatedAttachmentLabel(value: string | null | undefined): string {
+  return RELATED_ATTACHMENT_TYPES.find((item) => item.value === value)?.label ?? value ?? "پیوست مرتبط";
+}
+
 interface PersonnelReferralDraft {
   action: PersonnelReferralAction;
   note: string;
@@ -76,6 +91,8 @@ export function TransmittalDetail() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [remarks, setRemarks] = useState("");
   const [comments, setComments] = useState<Record<string, CommentListType[]>>({});
+  const [replySheetRows, setReplySheetRows] = useState<ReplySheetRow[]>([]);
+  const [replySheetRecord, setReplySheetRecord] = useState<ReplySheet | null>(null);
   const [documentRecords, setDocumentRecords] = useState<DocumentRecord[]>([]);
   const [activeTab, setActiveTab] = useState("letters");
   // review route: flow history, referral dialog, and the roster the dialog needs
@@ -95,6 +112,7 @@ export function TransmittalDetail() {
   const [flowLine, setFlowLine] = useState<TransmittalLine | null>(null);
   const [attachmentLineId, setAttachmentLineId] = useState<string | null>(null);
   const [attachmentKind, setAttachmentKind] = useState<"pdf" | "native">("pdf");
+  const [relatedAttachmentType, setRelatedAttachmentType] = useState<RelatedAttachmentType>("letter");
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [editLine, setEditLine] = useState<TransmittalLine | null>(null);
   const [editForm, setEditForm] = useState({ title: "", status: "", reason: "" });
@@ -116,6 +134,7 @@ export function TransmittalDetail() {
   const previewUrlRef = useRef<string | null>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const nativeInputRef = useRef<HTMLInputElement>(null);
+  const relatedInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     if (!transmittalId) return;
@@ -129,7 +148,7 @@ export function TransmittalDetail() {
       const mdlItemIds = Array.from(
         new Set(detail.lines.map((line) => line.mdl_item_id).filter((id): id is string => Boolean(id))),
       );
-      const [commentResults, recordResults] = await Promise.all([
+      const [commentResults, recordResults, sheetRows, sheetRecord] = await Promise.all([
         Promise.all(
           revisionIds.map((id) =>
             api
@@ -142,9 +161,13 @@ export function TransmittalDetail() {
             api.get<DocumentRecord[]>(`/mdl-items/${id}/document-records`).catch(() => [] as DocumentRecord[]),
           ),
         ),
+        api.get<ReplySheetRow[]>(`/transmittals/${transmittalId}/reply-sheet`).catch(() => [] as ReplySheetRow[]),
+        api.get<ReplySheet | null>(`/transmittals/${transmittalId}/reply-sheet/record`).catch(() => null),
       ]);
       setComments(Object.fromEntries(revisionIds.map((id, index) => [id, commentResults[index]])));
       setDocumentRecords(recordResults.flat());
+      setReplySheetRows(sheetRows);
+      setReplySheetRecord(sheetRecord ?? detail.reply_sheet ?? null);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "بارگذاری برگه ارسال ناموفق بود.");
     } finally {
@@ -183,9 +206,15 @@ export function TransmittalDetail() {
 
   const canManage =
     hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("project_manager") || hasRole("system_admin");
-  const issued = ["issued", "partially_acknowledged", "acknowledged", "closed"].includes(data.status);
+  const issued = ["issued", "final", "partially_acknowledged", "acknowledged", "closed"].includes(data.status);
+  const isFinal = data.is_final || data.status === "final";
   const attachmentsLocked = issued || data.status === "cancelled";
   const isManualOwner = data.manual_workflow && data.created_by_id === user?.id;
+  const isProjectManager = hasRole("project_manager");
+  const isAfc = data.purpose === "AFC" || data.lines.some((line) => line.poi === "AFC");
+  const canCoordinator = canManage || hasRole("coordinator");
+  const canNoComment = canCoordinator && !isFinal && data.status !== "cancelled";
+  const canFinalizeAfc = isAfc && isProjectManager && !isFinal && data.status !== "cancelled";
   const canFinalIssue = canManage || isManualOwner;
   // Any authenticated project member who can view this sheet may refer it;
   // the backend still enforces project membership and access-circle ACLs.
@@ -203,8 +232,44 @@ export function TransmittalDetail() {
       })),
     ),
   );
+  const displayedReplyRows: ReplySheetRow[] = replySheetRows.length
+    ? replySheetRows
+    : commentsRows.map((row) => ({
+        id: row.id,
+        reply_sheet_id: null,
+        transmittal_line_id: null,
+        revision_id: row.revision_id,
+        comment_id: row.id,
+        line_no: 0,
+        doc_code: row.doc_code,
+        title: row.doc_title,
+        rev: row.rev,
+        discipline: row.discipline,
+        comment_code: row.code,
+        comment_text: row.text,
+        author_name: row.author_name,
+        response_text: row.response_text,
+        disposition: row.disposition,
+        status: row.status,
+        judgment: row.judgment,
+        owner_comments: null,
+        provider_clarification: null,
+        assign_user_id: null,
+        assign_user_name: null,
+        doc_status: null,
+        doc_percent: null,
+        created_at: row.created_at,
+        number: null,
+        replied_by_id: null,
+        replied_by_name: null,
+        sheet_created_at: null,
+        sheet_status: null,
+        flow_history_count: 0,
+        view_url: null,
+      }));
   const revisionIds = Array.from(new Set(data.lines.map((line) => line.revision_id)));
   const nativeAttachments = (data.attachments ?? []).filter((attachment) => attachment.kind === "native");
+  const relatedAttachments = (data.attachments ?? []).filter((attachment) => attachment.kind === "related");
 
   // --- review route -------------------------------------------------------
   const stage = data.stage ?? "draft";
@@ -387,6 +452,9 @@ export function TransmittalDetail() {
   // Native files are owned by the issuer. Do not require a DCC role here:
   // legitimate issuers can be submitters or senders without document-control privileges.
   const canManageNative = !attachmentsLocked && isTransmittalIssuer;
+  // Letters are append-only supporting records: the issuer or document-control
+  // role may add a later letter/minute/photo even after the transmittal is issued.
+  const canManageRelatedAttachments = data.status !== "cancelled" && (canManage || isTransmittalIssuer);
 
   const openFlowForLine = (line?: TransmittalLine) => {
     setFlowLine(line ?? null);
@@ -449,6 +517,30 @@ export function TransmittalDetail() {
     } finally {
       setBusy(false);
       setAttachmentLineId(null);
+    }
+  };
+
+  const chooseRelatedAttachment = () => {
+    setAttachmentError(null);
+    relatedInputRef.current?.click();
+  };
+
+  const uploadRelatedAttachment = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    setAttachmentError(null);
+    try {
+      const form = new FormData();
+      form.append("related_type", relatedAttachmentType);
+      form.append("file", file);
+      await api.postForm(`/transmittals/${data.id}/related-attachments`, form);
+      await load();
+    } catch (err) {
+      setAttachmentError(err instanceof ApiError ? err.detail : "بارگذاری فایل مرتبط ناموفق بود.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -536,6 +628,7 @@ export function TransmittalDetail() {
   };
 
   const openAttachmentEdit = (attachment: Detail["attachments"][number]) => {
+    if (attachment.kind === "related") return;
     setAttachmentEditError(null);
     setEditAttachment(attachment);
     setAttachmentEditForm({ filename: attachment.filename, kind: attachment.kind });
@@ -1010,11 +1103,51 @@ export function TransmittalDetail() {
               onClick: () => api.download(`/transmittals/${data.id}/pdf`, `${data.number ?? "transmittal"}.pdf`),
             },
             {
+              label: "دریافت Reply Sheet",
+              icon: <IconComment />,
+              disabled: busy,
+              onClick: () => api.download(`/transmittals/${data.id}/reply-sheet.pdf`, `${replySheetRecord?.number ?? data.number ?? "reply-sheet"}-reply-sheet.pdf`),
+            },
+            {
               label: "تأییدیه دریافت",
               icon: <IconMail />,
               disabled: busy || !issued,
               onClick: () => void act(`/transmittals/${data.id}/acknowledge`, { note: null }),
             },
+            ...(canNoComment
+              ? [
+                  {
+                    label: "ثبت No Comment",
+                    icon: <IconComment />,
+                    groupStart: true,
+                    disabled: busy,
+                    title: "تکمیل Reply Sheet با Judgment = OK و Doc % = 100",
+                    onClick: () =>
+                      void act(
+                        `/transmittals/${data.id}/reply-sheet/no-comment`,
+                        { remarks: remarks || null },
+                        "برای همه مدارک این ترانسمیتال No Comment و Judgment = OK ثبت شود؟",
+                      ),
+                  },
+                ]
+              : []),
+            ...(canFinalizeAfc
+              ? [
+                  {
+                    label: "No Comment & Finalize",
+                    icon: <IconLock />,
+                    groupStart: true,
+                    disabled: busy,
+                    title: "فقط Project Manager برای P.O.I = AFC مجاز است",
+                    onClick: () =>
+                      void act(
+                        `/transmittals/${data.id}/reply-sheet/no-comment-finalize`,
+                        { remarks: remarks || null },
+                        "نسخه AFC با No Comment نهایی و غیرقابل ویرایش می‌شود. ادامه می‌دهید؟",
+                      ),
+                  },
+                ]
+              : []),
             ...(attachmentsLocked
               ? []
               : [
@@ -1022,8 +1155,8 @@ export function TransmittalDetail() {
                     label: "صدور نهایی",
                     icon: <IconAdd />,
                     groupStart: true,
-                    disabled: busy || !canFinalIssue,
-                    title: canFinalIssue ? "صدور نهایی ترانسمیتال" : "فقط ایجادکننده یا مسئول کنترل مجاز است",
+                    disabled: busy || !canFinalIssue || isAfc,
+                    title: isAfc ? "برای AFC فقط No Comment & Finalize توسط Project Manager مجاز است" : canFinalIssue ? "صدور نهایی ترانسمیتال" : "فقط ایجادکننده یا مسئول کنترل مجاز است",
                     onClick: () =>
                       void act(
                         `/transmittals/${data.id}/issue`,
@@ -1032,6 +1165,18 @@ export function TransmittalDetail() {
                       ),
                   },
                 ]),
+            ...(data.os_available && isProjectManager
+              ? [
+                  {
+                    label: "ایجاد OS از AFC",
+                    icon: <IconArchive />,
+                    groupStart: true,
+                    disabled: busy,
+                    title: "ایجاد پیش‌نویس OS با Revision B0",
+                    onClick: () => void act(`/transmittals/${data.id}/reply-sheet/create-os`, {}),
+                  },
+                ]
+              : []),
             ...(issued && canReferPeople
               ? [
                   {
@@ -1082,42 +1227,93 @@ export function TransmittalDetail() {
               count: data.lines.length,
               content: (
                 <div className="max-h-[46vh] overflow-auto">
-                  <table className="table-base">
-                    <thead>
-                      <tr>
-                        <th className="cell-center" style={{ width: 30 }}>Row</th>
-                        <th style={{ width: 150 }}>Doc. No.</th>
-                        <th>Doc. Title</th>
-                        <th style={{ width: 70 }}>Discipline</th>
-                        <th style={{ width: 46 }}>Rev</th>
-                        <th style={{ width: 46 }}>Pages</th>
-                        <th style={{ width: 98 }}>Action</th>
-                        <th style={{ width: 84 }}>Status</th>
-                        <th style={{ width: 84 }}>Due Date</th>
-                        <th className="cell-center" style={{ width: 84 }}>Comments</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.lines.map((line) => (
-                        <tr key={line.id}>
-                          <td className="cell-center">{persianDigits(line.line_no)}</td>
-                          <td className="ltr font-bold text-[#17427a]">{line.doc_code ?? "—"}</td>
-                          <td>{line.title ?? "—"}</td>
-                          <td className="text-center">{line.discipline_code ?? "—"}</td>
-                          <td className="cell-center">{line.rev ?? "—"}</td>
-                          <td className="cell-center">{line.page_count ?? "—"}</td>
-                          <td className="text-[10px]">{ACTION_LABELS[line.action] ?? line.action}</td>
-                          <td className="text-[10px]">{STATUS_LABELS[line.status] ?? line.status}</td>
-                          <td className="whitespace-nowrap text-[10px]">{line.due_date ? jalali(line.due_date) : "—"}</td>
-                          <td className="cell-center">
-                            <Link className="text-[10px] font-bold text-[#1f4e79] underline" to={`/documents/${line.revision_id}/comments`}>
-                              Comment List
-                            </Link>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="border-t border-[#a8a284] bg-[#fbfaf2]">
+                    <div className="flex flex-wrap items-center gap-2 border-b border-[#d4ceb0] px-2 py-1">
+                      <span className="flex items-center gap-1 text-[10.5px] font-bold text-[#1f3864]">
+                        <IconPaperclip className="h-3.5 w-3.5" /> سوابق مرتبط — Related Records: نامه، مکاتبه، صورتجلسه و تصویر
+                      </span>
+                      <span className="text-[9px] text-[#5c6b78]">
+                        {persianDigits(relatedAttachments.length)} فایل مرتبط با این ترانسمیتال
+                      </span>
+                      <span className="flex-1" />
+                      <select
+                        className="input h-6 w-auto min-w-[7.5rem] py-0 text-[9.5px]"
+                        value={relatedAttachmentType}
+                        onChange={(event) => setRelatedAttachmentType(event.target.value as RelatedAttachmentType)}
+                        disabled={!canManageRelatedAttachments || busy}
+                        aria-label="نوع فایل مرتبط"
+                      >
+                        {RELATED_ATTACHMENT_TYPES.map((item) => (
+                          <option key={item.value} value={item.value}>{item.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 border border-[#1f4e79] bg-[#eef3f8] px-2 py-1 text-[9.5px] font-bold text-[#1f3864] hover:bg-[#e0ebf5] disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={!canManageRelatedAttachments || busy}
+                        onClick={chooseRelatedAttachment}
+                        title="افزودن نامه، مکاتبه، صورتجلسه یا تصویر مرتبط با این ترانسمیتال"
+                      >
+                        <IconAdd className="h-3.5 w-3.5" /> افزودن فایل مرتبط
+                      </button>
+                      <input
+                        ref={relatedInputRef}
+                        type="file"
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.xlsm,.ppt,.pptx,.txt,.csv,.zip,.rar,.7z,.png,.jpg,.jpeg,.gif,.bmp,.tif,.tiff,.webp"
+                        className="hidden"
+                        onChange={(event) => void uploadRelatedAttachment(event)}
+                      />
+                    </div>
+                    <div className="max-h-[22vh] overflow-auto">
+                      <table className="table-base">
+                        <thead>
+                          <tr>
+                            <th className="cell-center" style={{ width: 34 }}>Row</th>
+                            <th style={{ width: 96 }}>نوع</th>
+                            <th>نام فایل</th>
+                            <th style={{ width: 92 }}>تاریخ ثبت</th>
+                            <th style={{ width: 120 }}>ثبت‌کننده</th>
+                            <th className="cell-center" style={{ width: 48 }}>View</th>
+                            <th className="cell-center" style={{ width: 64 }}>Download</th>
+                            <th className="cell-center" style={{ width: 48 }}>Delete</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {relatedAttachments.length === 0 ? (
+                            <tr>
+                              <td colSpan={8} className="cell-center py-3 text-[9.5px] text-[#5c6b78]">
+                                هنوز نامه، مکاتبه، صورتجلسه یا تصویر مرتبطی ثبت نشده است.
+                              </td>
+                            </tr>
+                          ) : (
+                            relatedAttachments.map((attachment, index) => (
+                              <tr key={attachment.id}>
+                                <td className="cell-center">{persianDigits(index + 1)}</td>
+                                <td className="font-bold">{relatedAttachmentLabel(attachment.related_type)}</td>
+                                <td>
+                                  <span className="ltr block truncate font-bold" title={attachment.filename}>{attachment.filename}</span>
+                                  <span className="text-[9px] text-[#5c6b78]">{fileSize(attachment.size_bytes)} · {attachment.content_type}</span>
+                                </td>
+                                <td className="cell-center whitespace-nowrap text-[9.5px]">{jalali(attachment.uploaded_at)}</td>
+                                <td className="truncate text-[9.5px]">{attachment.uploaded_by_name ?? "—"}</td>
+                                <td className="cell-center">
+                                  <IconButton icon={<IconView />} label="مشاهده فایل مرتبط" disabled={busy} onClick={() => void openAttachmentPreview(attachment)} />
+                                </td>
+                                <td className="cell-center">
+                                  <IconButton icon={<IconArchive />} label="دانلود فایل مرتبط" disabled={busy} onClick={() => void downloadAttachment(attachment)} />
+                                </td>
+                                <td className="cell-center">
+                                  {canManageAttachments ? (
+                                    <IconButton icon={<IconDelete />} label="حذف فایل مرتبط" disabled={busy} onClick={() => void deleteAttachment(attachment)} />
+                                  ) : <span>—</span>}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               ),
             },
@@ -1288,38 +1484,6 @@ export function TransmittalDetail() {
               ),
             },
             {
-              key: "revisions",
-              label: "Revision Index",
-              content: (
-                <table className="table-base">
-                  <thead>
-                    <tr>
-                      <th style={{ width: 30 }}>Row</th>
-                      <th style={{ width: 150 }}>Doc. No.</th>
-                      <th>Doc. Title</th>
-                      <th style={{ width: 60 }}>Rev</th>
-                      <th style={{ width: 100 }}>Discipline</th>
-                      <th style={{ width: 90 }}>Pages</th>
-                      <th style={{ width: 100 }}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.lines.map((line) => (
-                      <tr key={line.id}>
-                        <td className="cell-center">{persianDigits(line.line_no)}</td>
-                        <td className="ltr font-bold">{line.doc_code ?? "—"}</td>
-                        <td>{line.title ?? "—"}</td>
-                        <td className="cell-center">{line.rev ?? "—"}</td>
-                        <td className="text-center">{line.discipline_code ?? "—"}</td>
-                        <td className="cell-center">{line.page_count ?? "—"}</td>
-                        <td className="text-center">{STATUS_LABELS[line.status] ?? line.status}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ),
-            },
-            {
               key: "records",
               label: "Document Records",
               content: (
@@ -1437,7 +1601,7 @@ export function TransmittalDetail() {
                   <div className="mb-1 flex items-center justify-between border border-[#a8a284] bg-white px-2 py-1">
                     <span className="text-[11px] font-bold text-[#1f3864]">Reply Sheet — برگه پاسخ</span>
                     <span className="ltr text-[10px] text-[#33475b]">
-                      Reply Sheet No.: {data.number ? `${data.number}-R` : "—"}
+                      Reply Sheet No.: {replySheetRecord?.number ?? (data.number ? `${data.number}-R01` : "—")}
                     </span>
                   </div>
                   <FieldGrid>
@@ -1451,17 +1615,15 @@ export function TransmittalDetail() {
                         "—"
                       )}
                     </FField>
-                    <FField label="Replied by:">{meta.issued_by ?? "—"}</FField>
-                    <FField label="Description:" muted>
-                      —
+                    <FField label="Replied by:">{replySheetRecord?.replied_by_name ?? meta.issued_by ?? "—"}</FField>
+                    <FField label="Created:">{replySheetRecord?.created_at ? jalaliDateTime(replySheetRecord.created_at) : "—"}</FField>
+                    <FField label="Status:">{replySheetRecord ? (STATUS_LABELS[replySheetRecord.status] ?? replySheetRecord.status) : "—"}</FField>
+                    <FField label="Assign:">{replySheetRecord?.assigned_to_name ?? "—"}</FField>
+                    <FField label="Flow History:">
+                      {persianDigits(replySheetRecord?.flow_history.length ?? 0)}
                     </FField>
-                    <FField label="Status:">{STATUS_LABELS[data.status] ?? data.status}</FField>
-                    <FField label="Related Letter:" muted>
-                      —
-                    </FField>
-                    <FField label="Parzin Number:" muted>
-                      —
-                    </FField>
+                    <FField label="Doc Status:">{replySheetRecord?.doc_status ?? "—"}</FField>
+                    <FField label="Doc %:">{replySheetRecord ? `${persianDigits(replySheetRecord.doc_percent)}٪` : "—"}</FField>
                     <FField label="Acknowledgements:">
                       {persianDigits(data.acknowledged_count)} از {persianDigits(data.recipient_count)}
                     </FField>
@@ -1491,38 +1653,40 @@ export function TransmittalDetail() {
                         </tr>
                       </thead>
                       <tbody>
-                        {commentsRows.length === 0 ? (
+                        {displayedReplyRows.length === 0 ? (
                           <tr>
                             <td colSpan={14} className="cell-center text-[10px] text-[#5c6b78]">
                               No items have been registered…
                             </td>
                           </tr>
                         ) : (
-                          commentsRows.map((row, index) => (
-                            <tr key={row.id}>
+                          displayedReplyRows.map((row, index) => (
+                            <tr key={row.id ?? `${row.revision_id ?? "row"}-${index}`}>
                               <td className="cell-center">{persianDigits(index + 1)}</td>
                               <td className="cell-center">
-                                <input type="checkbox" defaultChecked={row.status === "closed"} aria-label="انتخاب" />
+                                <input type="checkbox" defaultChecked={row.status === "closed" || row.status === "No Comment"} aria-label="انتخاب" />
                               </td>
                               <td className="ltr whitespace-nowrap font-bold text-[#17427a]">{row.doc_code ?? "—"}</td>
-                              <td className="truncate">{row.doc_title ?? "—"}</td>
+                              <td className="truncate">{row.title ?? "—"}</td>
                               <td className="cell-center">{row.rev ?? "—"}</td>
                               <td className="text-center">{row.discipline ?? "—"}</td>
-                              <td className="whitespace-nowrap text-center text-[10px]">{jalali(row.created_at)}</td>
-                              <td className="text-[10px]">{row.author_name ?? "—"}</td>
+                              <td className="whitespace-nowrap text-center text-[10px]">{row.created_at ? jalali(row.created_at) : "—"}</td>
+                              <td className="text-[10px]">{row.author_name ?? row.replied_by_name ?? "—"}</td>
                               <td className="text-center text-[10px]">
                                 {row.disposition ? (DISPOSITION_LABELS[row.disposition] ?? row.disposition) : row.status}
                               </td>
-                              <td className="cell-center text-[10px]">{row.status === "closed" ? "OK" : "—"}</td>
-                              <td className="max-w-[9rem] truncate text-[10px]">{row.text}</td>
-                              <td className="max-w-[9rem] truncate text-[10px]">{row.response_text ?? "—"}</td>
+                              <td className="cell-center text-[10px]">{row.judgment ?? "—"}</td>
+                              <td className="max-w-[9rem] truncate text-[10px]">{row.owner_comments ?? row.comment_text ?? "—"}</td>
+                              <td className="max-w-[9rem] truncate text-[10px]">{row.provider_clarification ?? row.response_text ?? "—"}</td>
                               <td className="cell-center">
                                 <IconButton icon={<IconChain />} label="زنجیره مدارک" disabled />
                               </td>
                               <td className="cell-center">
-                                <Link to={`/documents/${row.revision_id}/comments`} aria-label="مشاهده فهرست نظرها">
-                                  <IconButton icon={<IconView />} label="مشاهده" />
-                                </Link>
+                                {row.revision_id ? (
+                                  <Link to={`/documents/${row.revision_id}/comments`} aria-label="مشاهده فهرست نظرها">
+                                    <IconButton icon={<IconView />} label="مشاهده" />
+                                  </Link>
+                                ) : "—"}
                               </td>
                             </tr>
                           ))

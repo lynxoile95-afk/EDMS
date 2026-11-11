@@ -46,6 +46,7 @@ class PurposeOfIssue(StrEnum):
     IFE = "IFE"  # Issued for Engineering
     IFP = "IFP"  # Issued for Purchase
     IPC = "IPC"  # Issued for Procurement / Purchase (reference-system wording)
+    AFC = "AFC"  # Approved for Construction (reference-system workflow)
     RESPONSE_TO_COMMENT = "RTC"  # Response to Comment
     AS_BUILT = "ASB"  # As-Built
 
@@ -105,6 +106,8 @@ class ReviewStatus(StrEnum):
 class RevisionStatus(StrEnum):
     REGISTERED = "registered"
     ISSUED = "issued"
+    #: A revision that has passed the AFC no-comment final gate.
+    FINAL = "final"
     #: The immutable historical state of a revision replaced by a newer one.
     VOID = "void"
     # Kept for compatibility with legacy line/status data; new revision
@@ -159,6 +162,8 @@ class TransmittalStatus(StrEnum):
     DRAFT = "draft"
     PENDING_APPROVAL = "pending_approval"
     ISSUED = "issued"
+    #: A locked sheet/document after the AFC No Comment final gate.
+    FINAL = "final"
     PARTIALLY_ACKNOWLEDGED = "partially_acknowledged"
     ACKNOWLEDGED = "acknowledged"
     CLOSED = "closed"
@@ -184,6 +189,7 @@ class ReferralStatus(StrEnum):
 class TransmittalLineStatus(StrEnum):
     DRAFT = "draft"
     ISSUED = "issued"
+    FINAL = "final"
     ACKNOWLEDGED = "acknowledged"
     SUPERSEDED = "superseded"
     CLOSED = "closed"

@@ -24,6 +24,7 @@ from app.models import (
     CommentList,
     DocumentRevision,
     Project,
+    ReplySheet,
     Transmittal,
     TransmittalLine,
     TransmittalRecipient,
@@ -326,6 +327,7 @@ def issue_transmittal(
     if project is None:  # pragma: no cover
         raise ValueError("پروژه یافت نشد.")
 
+    before_status = str(transmittal.status)
     number, seq = numbering.allocate(
         db,
         project,
@@ -337,6 +339,13 @@ def issue_transmittal(
     transmittal.issued_at = datetime.now(timezone.utc)
     transmittal.issue_date = transmittal.issue_date or transmittal.issued_at.date()
     transmittal.issued_by_id = actor.id
+
+    # A Reply Sheet may be created while its parent is still a draft. Once the
+    # permanent transmittal number exists, promote its display number as well.
+    for sheet in db.execute(
+        select(ReplySheet).where(ReplySheet.transmittal_id == transmittal.id)
+    ).scalars():
+        sheet.number = f"{number}-R{sheet.sequence_no:02d}"
 
     for line in transmittal.lines:
         line.status = TransmittalLineStatus.ISSUED
@@ -377,7 +386,8 @@ def issue_transmittal(
         entity_id=transmittal.id,
         actor=actor,
         project_id=project.id,
-        after={"number": number, "lines": len(transmittal.lines), "recipients": len(transmittal.recipients)},
+        before={"status": before_status},
+        after={"status": str(transmittal.status), "number": number, "lines": len(transmittal.lines), "recipients": len(transmittal.recipients)},
     )
     return transmittal
 
@@ -411,6 +421,8 @@ def acknowledge(
     user: User,
     note: str | None = None,
 ) -> Transmittal:
+    if transmittal.status == TransmittalStatus.FINAL:
+        raise ValueError("ترانسمیتال Final است و قابل تغییر نیست.")
     recipient = db.execute(
         select(TransmittalRecipient).where(
             TransmittalRecipient.transmittal_id == transmittal.id,
@@ -450,6 +462,8 @@ def cancel_transmittal(
 ) -> Transmittal:
     if transmittal.status is TransmittalStatus.CANCELLED:
         return transmittal
+    if transmittal.status is TransmittalStatus.FINAL:
+        raise ValueError("ترانسمیتال Final است و قابل ابطال نیست.")
     if transmittal.status is TransmittalStatus.ACKNOWLEDGED:
         raise ValueError("برگه ارسال تأییدشده قابل ابطال نیست؛ اصلاحیه صادر کنید.")
     before = str(transmittal.status)

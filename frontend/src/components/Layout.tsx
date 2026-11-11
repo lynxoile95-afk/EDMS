@@ -122,7 +122,11 @@ export function Layout() {
       {/* ---------- masthead ---------- */}
       <header className="masthead">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="masthead-logo">EDMS</div>
+          <img
+            className="masthead-logo"
+            src="/aidana-logo.png"
+            alt="AIDANA — سامانه هوشمند مدیریت اسناد مهندسی"
+          />
           <div className="min-w-0">
             <h1 className="masthead-title">سامانه هوشمند مدیریت اسناد مهندسی</h1>
             <p className="masthead-sub">Engineering Document Management System — EDMS-AI</p>

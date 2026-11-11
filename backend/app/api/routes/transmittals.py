@@ -21,6 +21,7 @@ from app.models import (
     ExtractionResult,
     Project,
     ProjectMember,
+    ReplySheet,
     Transmittal,
     TransmittalLine,
     TransmittalRecipient,
@@ -30,6 +31,7 @@ from app.models import (
 from app.models.enums import (
     ActionRequired,
     ProjectRole,
+    PurposeOfIssue,
     ReferralStatus,
     TransmittalStatus,
     TransmittalType,
@@ -39,6 +41,7 @@ from app.schemas.transmittals import (
     AttachmentAccessUpdate,
     CancelRequest,
     CompleteRequest,
+    FlowHistoryOut,
     ForwardRequest,
     IssueRequest,
     LineOut,
@@ -48,11 +51,15 @@ from app.schemas.transmittals import (
     ReferRequest,
     AttachmentOut,
     ReferralOut,
+    ReplySheetCreate,
+    ReplySheetNoCommentRequest,
+    ReplySheetOut,
+    ReplySheetRowOut,
     TransmittalCreate,
     TransmittalDetail,
     TransmittalOut,
 )
-from app.services import acl, audit, notification, numbering, routing, transmittal_service
+from app.services import acl, audit, documents, notification, numbering, rendering, reply_sheet, routing, transmittal_service
 from app.services.project_settings import merge_settings
 from app.services.storage import build_key, get_storage
 from app.utils.jalali import format_jalali
@@ -64,19 +71,33 @@ _FINALIZED_ATTACHMENT_STATUSES = {
     TransmittalStatus.PARTIALLY_ACKNOWLEDGED.value,
     TransmittalStatus.ACKNOWLEDGED.value,
     TransmittalStatus.CLOSED.value,
+    TransmittalStatus.FINAL.value,
     TransmittalStatus.CANCELLED.value,
 }
 
+_RELATED_ATTACHMENT_TYPES = {
+    "letter",
+    "correspondence",
+    "meeting_minutes",
+    "image",
+}
 
-def _assert_attachments_editable(transmittal: Transmittal) -> None:
-    """Lock attachment bytes and metadata after final issue or cancellation.
 
-    The frontend hides the editing controls as a convenience, but this check is
-    deliberately server-side too: a stale tab, direct API client, project admin,
-    or superuser must not be able to alter the immutable finalized record.
+def _assert_attachments_editable(
+    transmittal: Transmittal, *, allow_related_append: bool = False
+) -> None:
+    """Lock existing document attachments after issue.
+
+    PDF and Native attachments remain immutable after final issue. A related
+    record is different: a later letter, meeting minute or site photograph is
+    an append-only addition to the transmittal history, so the dedicated related
+    upload route may opt into that narrow exception. Cancellation still closes
+    the record completely.
     """
     status_value = getattr(transmittal.status, "value", transmittal.status)
-    if str(status_value) in _FINALIZED_ATTACHMENT_STATUSES or transmittal.number:
+    if str(status_value) == TransmittalStatus.CANCELLED.value or (
+        not allow_related_append and (str(status_value) in _FINALIZED_ATTACHMENT_STATUSES or transmittal.number)
+    ):
         raise HTTPException(
             status_code=409,
             detail="پس از صدور قطعی ترانسمیتال، افزودن، ویرایش یا حذف فایل پیوست مجاز نیست.",
@@ -150,13 +171,69 @@ def _referral_out(referral) -> ReferralOut:
     )
 
 
+def _reply_sheet_out(db, sheet: ReplySheet | None) -> ReplySheetOut | None:
+    if sheet is None:
+        return None
+    history = reply_sheet.flow_history(db, sheet.transmittal_id, sheet.id)
+    actor_ids = {entry.actor_id for entry in history if entry.actor_id}
+    actor_names = {
+        actor.id: actor.full_name
+        for actor in db.execute(select(User).where(User.id.in_(actor_ids))).scalars()
+    } if actor_ids else {}
+    history_out = [
+        FlowHistoryOut(
+            id=entry.id,
+            action=entry.action,
+            status=(entry.after or {}).get("status") or (entry.after or {}).get("transmittal_status"),
+            actor_id=entry.actor_id,
+            actor_name=actor_names.get(entry.actor_id) if entry.actor_id else None,
+            actor_email=entry.actor_email,
+            created_at=entry.created_at,
+            before=entry.before or {},
+            after=entry.after or {},
+        )
+        for entry in history
+    ]
+    rows = [
+        ReplySheetRowOut(
+            **row.as_dict(),
+            view_url=f"/transmittals/{sheet.transmittal_id}/reply-sheet/{row.id}" if row.id else None,
+        )
+        for row in reply_sheet.reply_sheet_rows(db, sheet.transmittal)
+        if row.reply_sheet_id == sheet.id
+    ]
+    return ReplySheetOut(
+        id=sheet.id,
+        transmittal_id=sheet.transmittal_id,
+        number=sheet.number,
+        sequence_no=sheet.sequence_no,
+        status=sheet.status,
+        replied_by_id=sheet.replied_by_id,
+        replied_by_name=sheet.replied_by.full_name if sheet.replied_by else None,
+        created_by_id=sheet.created_by_id,
+        created_by_name=sheet.created_by.full_name if sheet.created_by else None,
+        assigned_to_id=sheet.assigned_to_id,
+        assigned_to_name=sheet.assigned_to.full_name if sheet.assigned_to else None,
+        created_at=sheet.created_at,
+        completed_at=sheet.completed_at,
+        judgment=sheet.judgment,
+        doc_status=sheet.doc_status,
+        doc_percent=sheet.doc_percent,
+        no_comment=sheet.no_comment,
+        remarks=sheet.remarks,
+        flow_history=history_out,
+        rows=rows,
+    )
+
+
 def _attachment_out(raw: dict) -> AttachmentOut:
     access_user_ids = [str(value) for value in (raw.get("access_user_ids") or [])]
     return AttachmentOut(
         id=raw["id"],
-        line_id=raw["line_id"],
+        line_id=raw.get("line_id"),
         revision_id=raw.get("revision_id"),
         kind=raw["kind"],
+        related_type=raw.get("related_type"),
         filename=raw["filename"],
         content_type=raw.get("content_type") or "application/octet-stream",
         size_bytes=int(raw.get("size_bytes") or 0),
@@ -230,6 +307,40 @@ def _is_transmittal_issuer(user: User, transmittal: Transmittal) -> bool:
     }
 
 
+def _is_afc_transmittal(transmittal: Transmittal) -> bool:
+    purpose = str(getattr(transmittal.purpose, "value", transmittal.purpose)).upper()
+    return purpose == "AFC" or any(
+        line.revision is not None
+        and line.revision.mdl_item is not None
+        and str(line.revision.mdl_item.poi or "").upper() == "AFC"
+        for line in transmittal.lines
+    )
+
+
+def _existing_os_for_afc(db, afc: Transmittal) -> Transmittal | None:
+    """Find the OS draft created from one finalized AFC.
+
+    The OS line points at the newly-created B-family revision, not at the AFC
+    revision that was on the source line.  Looking up by source metadata keeps
+    the action idempotent after the AFC revision is superseded, so refreshing or
+    double-clicking the toolbar cannot create B1, B2, ... duplicates.
+    """
+    source_id = str(afc.id)
+    candidates = db.execute(
+        select(Transmittal)
+        .where(
+            Transmittal.project_id == afc.project_id,
+            Transmittal.type == TransmittalType.FINAL_OS,
+        )
+        .order_by(Transmittal.created_at.desc())
+    ).scalars()
+    for candidate in candidates:
+        meta = candidate.meta or {}
+        if str(meta.get("source_afc_transmittal_id") or "") == source_id:
+            return candidate
+    return None
+
+
 def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
     base = _out(transmittal)
     project = db.get(Project, transmittal.project_id)
@@ -292,6 +403,8 @@ def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
                     else None
                 )
             ),
+            doc_percent=line.doc_percent,
+            poi=(line.revision.mdl_item.poi if line.revision and line.revision.mdl_item else None),
             due_date=line.due_date,
             note=line.note,
             doc_code=line.revision.mdl_item.doc_code if line.revision else None,
@@ -320,6 +433,20 @@ def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
             pdf_url = get_storage().presigned_url(transmittal.pdf_key)
         except Exception:  # noqa: BLE001
             pdf_url = None
+    current_sheet = reply_sheet.latest_reply_sheet(db, transmittal.id)
+    purpose_value = str(getattr(transmittal.purpose, "value", transmittal.purpose))
+    is_afc = purpose_value.upper() == "AFC" or any(
+        line.revision is not None and line.revision.mdl_item is not None
+        and str(line.revision.mdl_item.poi or "").upper() == "AFC"
+        for line in transmittal.lines
+    )
+    is_final = str(getattr(transmittal.status, "value", transmittal.status)) == TransmittalStatus.FINAL.value or bool(
+        (transmittal.meta or {}).get("final")
+    )
+    os_transmittal_id = None
+    if is_final and is_afc:
+        existing_os = _existing_os_for_afc(db, transmittal)
+        os_transmittal_id = existing_os.id if existing_os is not None else None
     return TransmittalDetail(
         **base.model_dump(),
         lines=lines,
@@ -329,7 +456,275 @@ def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
         pdf_url=pdf_url,
         preview_number=None if transmittal.number else preview,
         stage_label=routing.STAGE_LABELS.get(str(transmittal.stage)),
+        is_final=is_final,
+        reply_sheet=_reply_sheet_out(db, current_sheet),
+        os_available=is_final and is_afc and os_transmittal_id is None,
+        os_transmittal_id=os_transmittal_id,
     )
+
+
+def _transmittal_for_reply(db, user: User, transmittal_id: uuid.UUID) -> Transmittal:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    acl.require_transmittal(db, user, transmittal)
+    return transmittal
+
+
+@router.get(
+    "/transmittals/{transmittal_id}/reply-sheet",
+    response_model=list[ReplySheetRowOut],
+    summary="فهرست ردیف‌های Reply Sheet",
+)
+def get_reply_sheet_rows(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> list[ReplySheetRowOut]:
+    transmittal = _transmittal_for_reply(db, user, transmittal_id)
+    return [
+        ReplySheetRowOut(
+            **row.as_dict(),
+            view_url=f"/transmittals/{transmittal.id}/reply-sheet/{row.id}" if row.id else None,
+        )
+        for row in reply_sheet.reply_sheet_rows(db, transmittal)
+    ]
+
+
+@router.get(
+    "/transmittals/{transmittal_id}/reply-sheet.pdf",
+    summary="دریافت PDF برگه پاسخ",
+)
+def download_reply_sheet_pdf(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Response:
+    transmittal = _transmittal_for_reply(db, user, transmittal_id)
+    sheet = reply_sheet.latest_reply_sheet(db, transmittal.id)
+    rows = reply_sheet.reply_sheet_rows(db, transmittal)
+    project = db.get(Project, transmittal.project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="پروژه یافت نشد.")
+    context = rendering.build_reply_context(
+        number=sheet.number if sheet is not None else f"{transmittal.number or 'DRAFT'}-R01",
+        project_name=project.name,
+        from_org=transmittal.from_org or project.contractor_name or "",
+        to_org=transmittal.to_org or project.client_name or "",
+        transmittal_number=transmittal.number or "DRAFT",
+        issue_date=transmittal.issue_date or transmittal.issued_at,
+        created_at=sheet.created_at if sheet is not None else transmittal.created_at,
+        replied_by=sheet.replied_by.full_name if sheet is not None and sheet.replied_by else user.full_name,
+        status=sheet.status if sheet is not None else str(transmittal.status),
+        doc_percent=sheet.doc_percent if sheet is not None else 0,
+        rows=[row.as_dict() for row in rows],
+        transmittal_id=str(transmittal.id),
+    )
+    payload = rendering.render_reply_sheet(context)
+    filename = f"{sheet.number if sheet is not None else transmittal.number or 'transmittal'}-reply-sheet.pdf"
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/transmittals/{transmittal_id}/reply-sheet/record",
+    response_model=ReplySheetOut | None,
+    summary="مشاهده رکورد و Flow History آخرین Reply Sheet",
+)
+def get_reply_sheet_record(transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser) -> ReplySheetOut | None:
+    transmittal = _transmittal_for_reply(db, user, transmittal_id)
+    return _reply_sheet_out(db, reply_sheet.latest_reply_sheet(db, transmittal.id))
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/reply-sheet",
+    response_model=ReplySheetOut,
+    status_code=201,
+    summary="ایجاد و تکمیل Reply Sheet",
+)
+def create_reply_sheet(
+    transmittal_id: uuid.UUID,
+    payload: ReplySheetCreate,
+    db: DbSession,
+    user: CurrentUser,
+) -> ReplySheetOut:
+    transmittal = _transmittal_for_reply(db, user, transmittal_id)
+    try:
+        sheet = reply_sheet.create_reply_sheet(db, transmittal=transmittal, actor=user, payload=payload)
+        db.commit()
+        db.refresh(sheet)
+    except HTTPException:
+        db.rollback()
+        raise
+    return _reply_sheet_out(db, sheet)  # type: ignore[return-value]
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/reply-sheet/no-comment",
+    response_model=ReplySheetOut,
+    status_code=201,
+    summary="ثبت Reply Sheet بدون نظر",
+)
+def create_no_comment_reply_sheet(
+    transmittal_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    payload: ReplySheetNoCommentRequest | None = None,
+) -> ReplySheetOut:
+    transmittal = _transmittal_for_reply(db, user, transmittal_id)
+    try:
+        sheet = reply_sheet.create_reply_sheet(
+            db,
+            transmittal=transmittal,
+            actor=user,
+            no_comment_payload=payload or ReplySheetNoCommentRequest(),
+        )
+        db.commit()
+        db.refresh(sheet)
+    except HTTPException:
+        db.rollback()
+        raise
+    return _reply_sheet_out(db, sheet)  # type: ignore[return-value]
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/reply-sheet/no-comment-finalize",
+    response_model=TransmittalDetail,
+    summary="No Comment و نهایی‌سازی AFC توسط Project Manager",
+)
+@router.post(
+    "/transmittals/{transmittal_id}/no-comment-finalize",
+    response_model=TransmittalDetail,
+    include_in_schema=False,
+)
+def no_comment_finalize(
+    transmittal_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    payload: ReplySheetNoCommentRequest | None = None,
+) -> TransmittalDetail:
+    transmittal = _transmittal_for_reply(db, user, transmittal_id)
+    body = payload or ReplySheetNoCommentRequest()
+    try:
+        latest = reply_sheet.latest_reply_sheet(db, transmittal.id)
+        if latest is None or not latest.no_comment:
+            reply_sheet.create_reply_sheet(
+                db,
+                transmittal=transmittal,
+                actor=user,
+                no_comment_payload=body,
+            )
+        # A combined action is useful from the reference toolbar.  If a normal
+        # draft is being finalized, issue it first so the final record has a
+        # permanent transmittal number and an immutable PDF.
+        if transmittal.status in {TransmittalStatus.DRAFT, TransmittalStatus.PENDING_APPROVAL}:
+            transmittal_service.issue_transmittal(
+                db, transmittal=transmittal, actor=user, storage=get_storage()
+            )
+            routing.mark_issued(db, transmittal)
+        reply_sheet.mark_afc_no_comment_final(db, transmittal=transmittal, actor=user)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"نهایی‌سازی AFC ناموفق بود: {exc}") from exc
+    db.refresh(transmittal)
+    return _detail(db, transmittal)
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/reply-sheet/create-os",
+    response_model=TransmittalDetail,
+    summary="ایجاد پیش‌نویس OS از مدرک AFC نهایی",
+)
+@router.post(
+    "/transmittals/{transmittal_id}/create-os",
+    response_model=TransmittalDetail,
+    include_in_schema=False,
+)
+def create_os_from_final_afc(
+    transmittal_id: uuid.UUID, db: DbSession, user: CurrentUser
+) -> TransmittalDetail:
+    transmittal = _transmittal_for_reply(db, user, transmittal_id)
+    reply_sheet.assert_project_manager(db, user, transmittal.project_id)
+    purpose_value = str(getattr(transmittal.purpose, "value", transmittal.purpose)).upper()
+    is_afc = purpose_value == "AFC" or any(
+        line.revision is not None and line.revision.mdl_item is not None
+        and str(line.revision.mdl_item.poi or "").upper() == "AFC"
+        for line in transmittal.lines
+    )
+    if not is_afc or str(getattr(transmittal.status, "value", transmittal.status)) != TransmittalStatus.FINAL.value:
+        raise HTTPException(status_code=409, detail="ابتدا باید ترانسمیتال AFC با No Comment نهایی شده باشد.")
+
+    existing_os = _existing_os_for_afc(db, transmittal)
+    if existing_os is not None:
+        return _detail(db, existing_os)
+
+    try:
+        os_revisions = []
+        for line in transmittal.lines:
+            if line.revision is None or line.revision.mdl_item is None:
+                continue
+            revision = documents.register_revision(
+                db,
+                project=db.get(Project, transmittal.project_id),
+                mdl_item=line.revision.mdl_item,
+                rev=reply_sheet.next_os_revision(db, line.revision.mdl_item.id),
+                file_hash=hashlib.sha256(
+                    f"os|{transmittal.id}|{line.revision.mdl_item.id}|{uuid.uuid4()}".encode()
+                ).hexdigest(),
+                title=line.revision.mdl_item.title,
+                page_count=line.revision.page_count,
+                actor=user,
+                notes="پس از نهایی‌سازی AFC ایجاد شد",
+                transmittal_type=TransmittalType.FINAL_OS,
+            )
+            os_revisions.append(revision)
+        if not os_revisions:
+            raise HTTPException(status_code=422, detail="مدرک فعالی برای ایجاد OS وجود ندارد.")
+        project = db.get(Project, transmittal.project_id)
+        drafts = transmittal_service.create_draft_transmittals(
+            db,
+            project=project,
+            revisions=os_revisions,
+            purpose=PurposeOfIssue.AFC,
+            transmittal_type=TransmittalType.FINAL_OS,
+            actor=user,
+            remarks="ایجاد از AFC نهایی",
+            settings_override={"grouping_strategy": "one_per_session"},
+        )
+        if not drafts:
+            raise HTTPException(status_code=422, detail="پیش‌نویس OS ایجاد نشد.")
+        os_draft = drafts[0]
+        os_draft.manual_workflow = True
+        os_draft.final_approver_id = user.id
+        os_draft.meta = {
+            **(os_draft.meta or {}),
+            "creation_mode": "from_final_afc",
+            "source_afc_transmittal_id": str(transmittal.id),
+            "revision_family": "B",
+        }
+        for line in os_draft.lines:
+            line.doc_status = "Draft"
+            line.doc_percent = 0
+        audit.record(
+            db,
+            action="transmittal.os.create_from_afc",
+            entity_type="transmittal",
+            entity_id=os_draft.id,
+            actor=user,
+            project_id=transmittal.project_id,
+            after={"source_afc_transmittal_id": str(transmittal.id), "revision": [r.rev for r in os_revisions]},
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=422, detail=f"ایجاد OS ناموفق بود: {exc}") from exc
+    db.refresh(os_draft)
+    return _detail(db, os_draft)
 
 
 @router.get("/projects/{project_id}/transmittals", summary="فهرست برگه‌های ارسال")
@@ -863,6 +1258,139 @@ async def upload_attachment(
             os.unlink(temp_path)
 
 
+@router.post(
+    "/transmittals/{transmittal_id}/related-attachments",
+    status_code=201,
+    summary="پیوست نامه، مکاتبه، صورتجلسه یا تصویر به ترانسمیتال",
+)
+async def upload_related_attachment(
+    transmittal_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    related_type: str = Form(..., description="letter، correspondence، meeting_minutes یا image"),
+    file: UploadFile = File(...),
+) -> dict:
+    """Attach a transmittal-level supporting record from the Letters tab.
+
+    Unlike PDF and Native files, these files do not belong to one document line:
+    a request letter, meeting minutes or site photograph can describe the whole
+    transmittal. They therefore use ``kind=related`` and remain append-only after
+    issue while respecting the existing transmittal ACL.
+    """
+    related_type = related_type.strip().lower()
+    if related_type not in _RELATED_ATTACHMENT_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail="نوع پیوست باید نامه، مکاتبه، صورتجلسه یا تصویر باشد.",
+        )
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    project = acl.require_transmittal(db, user, transmittal)
+    _assert_attachments_editable(transmittal, allow_related_append=True)
+    can_manage_related = acl.has_role(
+        db,
+        user,
+        transmittal.project_id,
+        ProjectRole.DCC,
+        ProjectRole.PROJECT_CONTROL,
+        ProjectRole.PMO,
+        ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
+    ) or _is_transmittal_issuer(user, transmittal)
+    if not can_manage_related:
+        raise acl.AccessDenied("فقط مسئول کنترل یا صادرکننده ترانسمیتال مجاز به بارگذاری فایل مرتبط است.")
+
+    filename = os.path.basename((file.filename or "attachment").strip())[:500] or "attachment"
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    digest = hashlib.sha256()
+    size = 0
+    suffix = os.path.splitext(filename)[1] or ".bin"
+    temp_path = ""
+    storage_key = ""
+    try:
+        with tempfile.NamedTemporaryFile(prefix="edms-related-", suffix=suffix, delete=False) as temp:
+            temp_path = temp.name
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"حجم فایل بیشتر از حد مجاز ({settings.max_upload_mb} مگابایت) است.",
+                    )
+                digest.update(chunk)
+                temp.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=422, detail="فایل پیوست خالی است.")
+
+        attachment_id = uuid.uuid4()
+        storage_key = build_key(
+            project.code,
+            "transmittals",
+            str(transmittal.id),
+            "related",
+            f"{attachment_id}{suffix.lower()}",
+        )
+        detected_type = mimetypes.guess_type(filename)[0]
+        content_type = file.content_type or detected_type or "application/octet-stream"
+        if content_type == "application/octet-stream" and detected_type:
+            content_type = detected_type
+        get_storage().put_file(storage_key, temp_path, content_type=content_type)
+        attachment = {
+            "id": str(attachment_id),
+            "line_id": None,
+            "revision_id": None,
+            "kind": "related",
+            "related_type": related_type,
+            "filename": filename,
+            "content_type": content_type,
+            "size_bytes": size,
+            "sha256": digest.hexdigest(),
+            "storage_key": storage_key,
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "uploaded_by_id": str(user.id),
+            "uploaded_by_name": user.full_name,
+            "access_user_ids": [],
+        }
+        meta = dict(transmittal.meta or {})
+        meta["attachments"] = [*(meta.get("attachments") or []), attachment]
+        transmittal.meta = meta
+        audit.record(
+            db,
+            action="transmittal.related_attachment.upload",
+            entity_type="transmittal",
+            entity_id=transmittal.id,
+            actor=user,
+            project_id=transmittal.project_id,
+            after={
+                "attachment_id": str(attachment_id),
+                "related_type": related_type,
+                "filename": filename,
+            },
+        )
+        db.commit()
+        return {"attachment": _attachment_out(attachment).model_dump(mode="json")}
+    except HTTPException:
+        db.rollback()
+        if storage_key:
+            try:
+                get_storage().delete(storage_key)
+            except Exception:
+                pass
+        raise
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        if storage_key:
+            try:
+                get_storage().delete(storage_key)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"ذخیره فایل مرتبط ناموفق بود: {exc}") from exc
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
 @router.get(
     "/transmittals/{transmittal_id}/attachments/{attachment_id}/download",
     summary="دریافت پیوست مدرک",
@@ -1329,7 +1857,9 @@ def issue_transmittal(
         ProjectRole.PROJECT_MANAGER,
         ProjectRole.SYSTEM_ADMIN,
     )
-    if not can_manage and not (transmittal.manual_workflow and transmittal.created_by_id == user.id):
+    if _is_afc_transmittal(transmittal):
+        reply_sheet.assert_project_manager(db, user, transmittal.project_id)
+    elif not can_manage and not (transmittal.manual_workflow and transmittal.created_by_id == user.id):
         raise acl.AccessDenied("صدور نهایی فقط برای ایجادکننده ترانسمیتال دستی یا مسئول کنترل مجاز است.")
     if payload.remarks:
         transmittal.remarks = payload.remarks

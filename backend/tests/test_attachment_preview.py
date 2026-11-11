@@ -122,3 +122,36 @@ def test_native_issuer_does_not_need_dcc_role_to_upload(client: TestClient, db: 
     assert detail.status_code == 200, detail.text
     assert detail.json()["sender_id"] == str(users["submitter"].id)
     assert detail.json()["attachments"][0]["kind"] == "native"
+
+
+def test_related_letter_attachment_is_transmittal_scoped_and_downloadable(
+    client: TestClient, db: Session, project, users
+):
+    draft = _draft(client, db, project, users)
+    headers = auth_headers(client, "dcc@edms-test.com")
+    response = client.post(
+        f"/api/v1/transmittals/{draft.id}/related-attachments",
+        headers=headers,
+        data={"related_type": "meeting_minutes"},
+        files={"file": ("site-minutes.docx", b"meeting-minutes-bytes", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+    )
+    assert response.status_code == 201, response.text
+    attachment = response.json()["attachment"]
+    assert attachment["kind"] == "related"
+    assert attachment["related_type"] == "meeting_minutes"
+    assert attachment["line_id"] is None
+    assert attachment["revision_id"] is None
+
+    preview = client.get(
+        f"/api/v1/transmittals/{draft.id}/attachments/{attachment['id']}/preview",
+        headers=headers,
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.content == b"meeting-minutes-bytes"
+    assert preview.headers["content-disposition"].startswith("inline;")
+
+    detail = client.get(f"/api/v1/transmittals/{draft.id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    related = [item for item in detail.json()["attachments"] if item["kind"] == "related"]
+    assert len(related) == 1
+    assert related[0]["related_type"] == "meeting_minutes"

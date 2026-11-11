@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
-from app.models import DocumentRevision, ExtractionResult, MDLItem, Transmittal, TransmittalLine
+from app.models import AuditLog, DocumentRevision, ExtractionResult, MDLItem, Transmittal, TransmittalLine
 from app.schemas.transmittals import DocumentRecordOut, LineOut
 from app.services import acl, documents as document_service
 from app.utils.jalali import format_jalali
@@ -143,7 +143,15 @@ def item_document_records(
                 for referral in transmittal.referrals
                 if referral.to_user is not None and referral.to_user.full_name not in assigned
             )
-            flow_count = len(transmittal.referrals)
+            flow_count = len(transmittal.referrals) + len(
+                db.execute(
+                    select(AuditLog.id).where(
+                        AuditLog.project_id == item.project_id,
+                        AuditLog.entity_type == "transmittal",
+                        AuditLog.entity_id == str(transmittal.id),
+                    )
+                ).scalars().all()
+            )
         status_value = str(revision.status)
         if not revision.is_current:
             # Legacy rows may still carry ``superseded``; the business-facing
@@ -197,7 +205,9 @@ def revision_transmittals(revision_id: uuid.UUID, db: DbSession, user: CurrentUs
             mdl_item_id=revision.mdl_item.id if revision.mdl_item else None,
             action=str(line.action),
             status=str(line.status),
-            doc_status=(revision.mdl_item.status if revision.mdl_item and revision.mdl_item.status else extraction_status),
+            doc_status=(line.doc_status or (revision.mdl_item.status if revision.mdl_item and revision.mdl_item.status else extraction_status)),
+            doc_percent=line.doc_percent,
+            poi=revision.mdl_item.poi if revision.mdl_item else None,
             due_date=line.due_date,
             note=line.note,
             doc_code=revision.mdl_item.doc_code if revision.mdl_item else None,

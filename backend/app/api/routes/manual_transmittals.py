@@ -40,7 +40,7 @@ class ManualTransmittalLine(BaseModel):
 
 class ManualTransmittalCreate(BaseModel):
     rows: list[ManualTransmittalLine] = Field(min_length=1)
-    purpose: str = Field(default="IFR", pattern=r"^(IFR|IFA|IFC|IFI|IFE|IFP|IPC|RTC|ASB)$")
+    purpose: str = Field(default="IFR", pattern=r"^(IFR|IFA|IFC|IFI|IFE|IFP|IPC|AFC|RTC|ASB)$")
     # OT/OS are the current manual vocabulary. The two legacy values remain
     # accepted so already-integrated clients do not break during migration.
     type: str = Field(default="internal", pattern=r"^(OT|OS|internal|external)$")

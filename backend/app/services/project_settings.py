@@ -59,6 +59,16 @@ DEFAULT_PROJECT_SETTINGS: dict[str, Any] = {
     "transmittal_sequence_scope": "monthly",  # monthly | yearly | project
     "default_due_days": 14,
     "external_transmittal_requires_approval": True,
+    # ---- coordinator reply-sheet workflow ----
+    # Projects may turn off the comment gate for the first form; an explicit
+    # No Comment form remains valid in either configuration.
+    "reply_sheet": {
+        "first_form_requires_comment": True,
+        "coordinator_requires_controlled_comment": True,
+    },
+    # Flat aliases keep configuration imports from older installations working.
+    "first_reply_sheet_requires_comment": True,
+    "coordinator_requires_controlled_comment": True,
     # ---- extraction ----
     "ocr_fallback": True,
     "vlm_fallback": False,

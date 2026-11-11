@@ -85,6 +85,11 @@ def register_revision(
         .where(DocumentRevision.mdl_item_id == mdl_item.id, DocumentRevision.is_current.is_(True))
         .limit(1)
     ).scalar_one_or_none()
+    if current is not None and current.status == RevisionStatus.FINAL and type_token != "OS":
+        raise RevisionConflict(
+            "مدرک Final است؛ فقط مسیر رسمی ایجاد OS اجازه ثبت بازنگری بعدی را دارد.",
+            "final_document_locked",
+        )
     # OT/OS numbering is based on the append-only revision table. A legacy MDL
     # row may contain a plain ``A``/``B`` value without a DocumentRevision; it
     # must not prevent the first generated OT/OS token from being A0/B0.

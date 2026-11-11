@@ -13,7 +13,7 @@ from sqlalchemy import func, or_, select
 
 from app.api.deps import CurrentUser, DbSession, ProjectDep
 from app.models import DocumentRevision, Discipline, MDLImportBatch, MDLItem, Unit
-from app.models.enums import ProjectRole
+from app.models.enums import ProjectRole, RevisionStatus
 from app.schemas.mdl import (
     MDLItemCreate,
     MDLImportBatchOut,
@@ -200,6 +200,13 @@ def update_item(
     item = db.get(MDLItem, item_id)
     if item is None or item.project_id != project.id:
         raise HTTPException(status_code=404, detail="ردیف MDL یافت نشد.")
+    if db.execute(
+        select(DocumentRevision.id).where(
+            DocumentRevision.mdl_item_id == item.id,
+            DocumentRevision.status == RevisionStatus.FINAL,
+        ).limit(1)
+    ).scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="مدرک Final است و ویرایش MDL آن مجاز نیست.")
     before = {
         "title": item.title, "current_rev": item.current_rev, "status": item.status,
         "doc_type": item.doc_type, "weight": item.weight,

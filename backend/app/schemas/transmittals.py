@@ -30,6 +30,8 @@ class LineOut(ORMModel):
     action: str
     status: str
     doc_status: str | None = None
+    doc_percent: int | None = None
+    poi: str | None = None
     due_date: date | None = None
     note: str | None = None
     doc_code: str | None = None
@@ -60,11 +62,88 @@ class DocumentRecordOut(ORMModel):
     has_file: bool = False
 
 
+class FlowHistoryOut(BaseModel):
+    """One user/time/status event shown by a Reply Sheet or Document Record."""
+
+    id: uuid.UUID
+    action: str
+    status: str | None = None
+    actor_id: uuid.UUID | None = None
+    actor_name: str | None = None
+    actor_email: str | None = None
+    created_at: datetime
+    before: dict = Field(default_factory=dict)
+    after: dict = Field(default_factory=dict)
+
+
+class ReplySheetRowOut(BaseModel):
+    id: uuid.UUID | None = None
+    reply_sheet_id: uuid.UUID | None = None
+    transmittal_line_id: uuid.UUID | None = None
+    revision_id: uuid.UUID | None = None
+    comment_id: uuid.UUID | None = None
+    line_no: int
+    doc_code: str | None = None
+    title: str | None = None
+    rev: str | None = None
+    discipline: str | None = None
+    comment_code: str | None = None
+    comment_text: str | None = None
+    author_name: str | None = None
+    response_text: str | None = None
+    disposition: str | None = None
+    status: str
+    judgment: str | None = None
+    owner_comments: str | None = None
+    provider_clarification: str | None = None
+    assign_user_id: uuid.UUID | None = None
+    assign_user_name: str | None = None
+    doc_status: str | None = None
+    doc_percent: int | None = None
+    created_at: datetime | None = None
+    number: str | None = None
+    replied_by_id: uuid.UUID | None = None
+    replied_by_name: str | None = None
+    sheet_created_at: datetime | None = None
+    sheet_status: str | None = None
+    flow_history_count: int = 0
+    view_url: str | None = None
+
+
+class ReplySheetItemInput(BaseModel):
+    line_id: uuid.UUID
+    status: str = Field(default="Commented", max_length=48)
+    judgment: str | None = Field(default=None, max_length=32)
+    comment_ids: list[uuid.UUID] = Field(default_factory=list, max_length=5000)
+    assign_user_id: uuid.UUID | None = None
+    owner_comments: str | None = Field(default=None, max_length=4000)
+    provider_clarification: str | None = Field(default=None, max_length=4000)
+    doc_status: str | None = Field(default=None, max_length=64)
+    doc_percent: int | None = Field(default=None, ge=0, le=100)
+
+
+class ReplySheetCreate(BaseModel):
+    mode: str = Field(default="commented", pattern=r"^(commented|no_comment)$")
+    completed: bool = True
+    assigned_to_id: uuid.UUID | None = None
+    remarks: str | None = Field(default=None, max_length=4000)
+    documents: list[ReplySheetItemInput] = Field(default_factory=list, max_length=5000)
+
+
+class ReplySheetNoCommentRequest(BaseModel):
+    assigned_to_id: uuid.UUID | None = None
+    remarks: str | None = Field(default=None, max_length=4000)
+    revision_ids: list[uuid.UUID] | None = Field(default=None, max_length=5000)
+
+
 class AttachmentOut(BaseModel):
     id: uuid.UUID
-    line_id: uuid.UUID
+    # Line-scoped PDF/Native files have a line id; related Letters files are
+    # attached to the transmittal itself and intentionally leave it empty.
+    line_id: uuid.UUID | None = None
     revision_id: uuid.UUID | None = None
     kind: str
+    related_type: str | None = None
     filename: str
     content_type: str
     size_bytes: int
@@ -197,6 +276,33 @@ class TransmittalDetail(TransmittalOut):
     preview_number: str | None = None
     stage: str = "draft"
     stage_label: str | None = None
+    is_final: bool = False
+    reply_sheet: "ReplySheetOut | None" = None
+    os_available: bool = False
+    os_transmittal_id: uuid.UUID | None = None
+
+
+class ReplySheetOut(BaseModel):
+    id: uuid.UUID
+    transmittal_id: uuid.UUID
+    number: str | None = None
+    sequence_no: int
+    status: str
+    replied_by_id: uuid.UUID | None = None
+    replied_by_name: str | None = None
+    created_by_id: uuid.UUID | None = None
+    created_by_name: str | None = None
+    assigned_to_id: uuid.UUID | None = None
+    assigned_to_name: str | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+    judgment: str | None = None
+    doc_status: str | None = None
+    doc_percent: int = 0
+    no_comment: bool = False
+    remarks: str | None = None
+    flow_history: list[FlowHistoryOut] = Field(default_factory=list)
+    rows: list[ReplySheetRowOut] = Field(default_factory=list)
 
 
 class AcknowledgeRequest(BaseModel):

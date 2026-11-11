@@ -645,6 +645,7 @@ def respond(comment_id: uuid.UUID, payload: CommentRespond, db: DbSession, user:
         raise HTTPException(status_code=404, detail="نظر یافت نشد.")
     revision = db.get(DocumentRevision, comment.revision_id)
     project = acl.require_project(db, user, revision.project_id)
+    before_status = str(comment.status)
     comment.response_text = payload.response_text
     comment.responded_by_id = user.id
     comment.responded_at = datetime.now(timezone.utc)
@@ -666,6 +667,8 @@ def respond(comment_id: uuid.UUID, payload: CommentRespond, db: DbSession, user:
     audit.record(
         db, action="comment.respond", entity_type="comment", entity_id=comment.id, actor=user,
         project_id=project.id,
+        before={"status": before_status},
+        after={"status": str(comment.status)},
     )
     db.commit()
     db.refresh(comment)
@@ -685,6 +688,7 @@ def close(
     revision = db.get(DocumentRevision, comment.revision_id)
     project = acl.require_project(db, user, revision.project_id)
     acl.assert_can_review(db, user, project.id)
+    before_status = str(comment.status)
     # `status` is loaded as a plain string, so compare by value — an identity
     # check against the StrEnum member is silently always False and made this
     # guard dead code.
@@ -710,6 +714,8 @@ def close(
     audit.record(
         db, action="comment.close", entity_type="comment", entity_id=comment.id, actor=user,
         project_id=project.id,
+        before={"status": before_status},
+        after={"status": str(comment.status), "disposition": comment.disposition},
     )
     db.commit()
     db.refresh(comment)

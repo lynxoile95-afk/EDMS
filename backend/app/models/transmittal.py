@@ -154,6 +154,10 @@ class Transmittal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="transmittal", cascade="all, delete-orphan", lazy="selectin",
         order_by="TransmittalReferral.created_at",
     )
+    reply_sheets: Mapped[list["ReplySheet"]] = relationship(
+        back_populates="transmittal", cascade="all, delete-orphan", lazy="selectin",
+        order_by="ReplySheet.sequence_no",
+    )
 
 
 class TransmittalLine(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -171,6 +175,8 @@ class TransmittalLine(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[TransmittalLineStatus] = mapped_column(String(16), default=TransmittalLineStatus.DRAFT)
     #: Manual transmittals keep the coordinator's explicit per-document status.
     doc_status: Mapped[str | None] = mapped_column(String(64))
+    #: Completion percentage printed on the Reply Sheet (No Comment = 100).
+    doc_percent: Mapped[int | None] = mapped_column(Integer)
     note: Mapped[str | None] = mapped_column(Text)
     discipline_code: Mapped[str | None] = mapped_column(String(32))
 
@@ -197,6 +203,79 @@ class TransmittalRecipient(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     transmittal: Mapped[Transmittal] = relationship(back_populates="recipients")
     user: Mapped["User"] = relationship(lazy="joined")  # noqa: F821
+
+
+class ReplySheet(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """One coordinator reply form for a transmittal.
+
+    Reply Sheets are deliberately persisted instead of being inferred from the
+    latest comment values.  That keeps completed forms, ignored comments and
+    their flow history immutable while allowing a later form to be opened only
+    after the previous one is complete.
+    """
+
+    __tablename__ = "reply_sheets"
+    __table_args__ = (
+        UniqueConstraint("transmittal_id", "sequence_no", name="uq_reply_sheet_sequence"),
+        Index("ix_reply_sheet_transmittal_status", "transmittal_id", "status"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    transmittal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("transmittals.id", ondelete="CASCADE"), index=True)
+    sequence_no: Mapped[int] = mapped_column(Integer, default=1)
+    number: Mapped[str | None] = mapped_column(String(96), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    replied_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    assigned_to_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    completed_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    judgment: Mapped[str | None] = mapped_column(String(32))
+    doc_status: Mapped[str | None] = mapped_column(String(64))
+    doc_percent: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    no_comment: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    remarks: Mapped[str | None] = mapped_column(Text)
+
+    transmittal: Mapped[Transmittal] = relationship(back_populates="reply_sheets")
+    replied_by: Mapped["User | None"] = relationship(foreign_keys=[replied_by_id], lazy="joined")  # noqa: F821
+    created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_id], lazy="joined")  # noqa: F821
+    assigned_to: Mapped["User | None"] = relationship(foreign_keys=[assigned_to_id], lazy="joined")  # noqa: F821
+    completed_by: Mapped["User | None"] = relationship(foreign_keys=[completed_by_id], lazy="joined")  # noqa: F821
+    items: Mapped[list["ReplySheetItem"]] = relationship(
+        back_populates="reply_sheet", cascade="all, delete-orphan", lazy="selectin",
+        order_by="ReplySheetItem.line_no, ReplySheetItem.created_at",
+    )
+
+
+class ReplySheetItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A document/comment row captured by one Reply Sheet form."""
+
+    __tablename__ = "reply_sheet_items"
+    __table_args__ = (
+        Index("ix_reply_sheet_item_sheet", "reply_sheet_id"),
+        Index("ix_reply_sheet_item_comment", "comment_id"),
+    )
+
+    reply_sheet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("reply_sheets.id", ondelete="CASCADE"))
+    transmittal_line_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("transmittal_lines.id", ondelete="CASCADE"))
+    revision_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_revisions.id", ondelete="CASCADE"))
+    comment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("comments.id", ondelete="SET NULL"))
+    line_no: Mapped[int] = mapped_column(Integer, default=1)
+    included: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    status: Mapped[str] = mapped_column(String(48), default="pending")
+    judgment: Mapped[str | None] = mapped_column(String(32))
+    owner_comments: Mapped[str | None] = mapped_column(Text)
+    provider_clarification: Mapped[str | None] = mapped_column(Text)
+    assign_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    doc_status: Mapped[str | None] = mapped_column(String(64))
+    doc_percent: Mapped[int | None] = mapped_column(Integer)
+    excluded_reason: Mapped[str | None] = mapped_column(String(255))
+
+    reply_sheet: Mapped[ReplySheet] = relationship(back_populates="items")
+    transmittal_line: Mapped[TransmittalLine] = relationship(lazy="joined")
+    revision: Mapped["DocumentRevision"] = relationship(lazy="joined")  # noqa: F821
+    comment: Mapped["Comment | None"] = relationship(lazy="joined")  # noqa: F821
+    assign_user: Mapped["User | None"] = relationship(foreign_keys=[assign_user_id], lazy="joined")  # noqa: F821
 
 
 class CommentList(UUIDPrimaryKeyMixin, TimestampMixin, Base):

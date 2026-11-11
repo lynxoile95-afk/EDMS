@@ -102,15 +102,13 @@
     text-align: left;
   }
   .masthead-logo {
-    width: 46px;
-    height: 46px;
-    display: grid;
-    place-items: center;
-    background: linear-gradient(135deg, #1f4e79, #2f6ea5);
-    color: #fff;
-    font-weight: 700;
-    font-size: 13px;
-    border: 1px solid #17385a;
+    width: 58px;
+    height: 58px;
+    display: block;
+    flex: 0 0 auto;
+    object-fit: contain;
+    background: #ffffff;
+    border: 1px solid #c5cfd8;
   }
   .top-band {
     height: 6px;

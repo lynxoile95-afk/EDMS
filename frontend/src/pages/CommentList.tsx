@@ -235,7 +235,11 @@ function CommentRegistrationModal({
       </div>
 
       <div className="mb-1 border border-[#9aa8b4] bg-gradient-to-l from-[#f8fafc] to-white px-3 py-2 text-center">
-        <div className="text-[15px] font-black tracking-wide text-[#1f3864]">EDMS</div>
+        <img
+          className="mx-auto h-10 w-28 object-contain"
+          src="/aidana-logo.png"
+          alt="AIDANA — سامانه هوشمند مدیریت اسناد مهندسی"
+        />
         <div className="text-[11px] font-bold text-[#4a5a67]">Comment Registration — ثبت نظر جدید</div>
       </div>
 
@@ -368,6 +372,7 @@ function CommentRegistrationModal({
         <FField label="Judgment:">
           <select className="input" value={form.judgment} onChange={(event) => set("judgment", event.target.value)} disabled={!canEditCoordinator}>
             <option value="draft">Draft — پیش‌نویس</option>
+            <option value="OK">OK — تأیید هماهنگ‌کننده</option>
             <option value="accepted">Accepted — پذیرفته</option>
             <option value="rejected">Rejected — رد‌شده</option>
             <option value="commented">Commented — دارای نظر</option>

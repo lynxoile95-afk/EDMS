@@ -325,6 +325,7 @@ export type TransmittalStatus =
   | "draft"
   | "pending_approval"
   | "issued"
+  | "final"
   | "partially_acknowledged"
   | "acknowledged"
   | "closed"
@@ -395,6 +396,8 @@ export interface TransmittalLine {
   action: string;
   status: string;
   doc_status?: string | null;
+  doc_percent?: number | null;
+  poi?: string | null;
   due_date: string | null;
   note: string | null;
   doc_code: string | null;
@@ -416,9 +419,11 @@ export interface TransmittalRecipient {
 
 export interface DocumentAttachment {
   id: string;
-  line_id: string;
+  /** Null for transmittal-level related files shown in the Letters tab. */
+  line_id: string | null;
   revision_id: string | null;
-  kind: "pdf" | "native";
+  kind: "pdf" | "native" | "related";
+  related_type?: "letter" | "correspondence" | "meeting_minutes" | "image" | string | null;
   filename: string;
   content_type: string;
   size_bytes: number;
@@ -427,6 +432,75 @@ export interface DocumentAttachment {
   uploaded_by_name?: string | null;
   access_user_ids?: string[];
   access_restricted?: boolean;
+}
+
+export interface FlowHistory {
+  id: string;
+  action: string;
+  status: string | null;
+  actor_id: string | null;
+  actor_name: string | null;
+  actor_email: string | null;
+  created_at: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+}
+
+export interface ReplySheetRow {
+  id: string | null;
+  reply_sheet_id: string | null;
+  transmittal_line_id: string | null;
+  revision_id: string | null;
+  comment_id: string | null;
+  line_no: number;
+  doc_code: string | null;
+  title: string | null;
+  rev: string | null;
+  discipline: string | null;
+  comment_code: string | null;
+  comment_text: string | null;
+  author_name: string | null;
+  response_text: string | null;
+  disposition: string | null;
+  status: string;
+  judgment: string | null;
+  owner_comments: string | null;
+  provider_clarification: string | null;
+  assign_user_id: string | null;
+  assign_user_name: string | null;
+  doc_status: string | null;
+  doc_percent: number | null;
+  created_at: string | null;
+  number: string | null;
+  replied_by_id: string | null;
+  replied_by_name: string | null;
+  sheet_created_at: string | null;
+  sheet_status: string | null;
+  flow_history_count: number;
+  view_url: string | null;
+}
+
+export interface ReplySheet {
+  id: string;
+  transmittal_id: string;
+  number: string | null;
+  sequence_no: number;
+  status: string;
+  replied_by_id: string | null;
+  replied_by_name: string | null;
+  created_by_id: string | null;
+  created_by_name: string | null;
+  assigned_to_id: string | null;
+  assigned_to_name: string | null;
+  created_at: string;
+  completed_at: string | null;
+  judgment: string | null;
+  doc_status: string | null;
+  doc_percent: number;
+  no_comment: boolean;
+  remarks: string | null;
+  flow_history: FlowHistory[];
+  rows: ReplySheetRow[];
 }
 
 export interface TransmittalDetail extends Transmittal {
@@ -438,6 +512,10 @@ export interface TransmittalDetail extends Transmittal {
   preview_number: string | null;
   stage: TransmittalStage;
   stage_label: string | null;
+  is_final: boolean;
+  reply_sheet: ReplySheet | null;
+  os_available: boolean;
+  os_transmittal_id: string | null;
 }
 
 export interface CommentAttachment {

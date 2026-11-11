@@ -31,7 +31,11 @@ export function Login() {
       <div className="flag-band" />
       <header className="masthead">
         <div className="flex items-center gap-3">
-          <div className="masthead-logo">EDMS</div>
+          <img
+            className="masthead-logo"
+            src="/aidana-logo.png"
+            alt="AIDANA — سامانه هوشمند مدیریت اسناد مهندسی"
+          />
           <div>
             <h1 className="masthead-title">سامانه هوشمند مدیریت اسناد مهندسی</h1>
             <p className="masthead-sub">Engineering Document Management System — EDMS-AI</p>

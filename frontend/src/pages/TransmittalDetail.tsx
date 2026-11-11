@@ -122,6 +122,8 @@ function flowEventSummary(event: FlowHistory): string {
   ].filter(Boolean).join(" · ") || "—";
 }
 
+type PersonnelReferralScope = "transmittal" | "reply_sheet";
+
 interface PersonnelReferralDraft {
   action: PersonnelReferralAction;
   note: string;
@@ -149,6 +151,7 @@ export function TransmittalDetail() {
   const [referForm, setReferForm] = useState({ discipline_id: "", note: "", due_days: "14" });
   const [referError, setReferError] = useState<string | null>(null);
   const [personnelReferOpen, setPersonnelReferOpen] = useState(false);
+  const [personnelReferralScope, setPersonnelReferralScope] = useState<PersonnelReferralScope>("transmittal");
   const [personnelQuery, setPersonnelQuery] = useState("");
   const [personnelIds, setPersonnelIds] = useState<string[]>([]);
   const [personnelDrafts, setPersonnelDrafts] = useState<Record<string, PersonnelReferralDraft>>({});
@@ -256,8 +259,15 @@ export function TransmittalDetail() {
   const attachmentsLocked = issued || data.status === "cancelled";
   const isManualOwner = data.manual_workflow && data.created_by_id === user?.id;
   const isProjectManager = hasRole("project_manager");
+  const isCoordinator = canManage || hasRole("coordinator");
   const isAfc = data.purpose === "AFC" || data.lines.some((line) => line.poi === "AFC");
   const canFinalizeAfc = isAfc && isProjectManager && !isFinal && data.status !== "cancelled";
+  const canReferReplySheet = Boolean(
+    replySheetRecord &&
+      ["completed", "final"].includes(replySheetRecord.status) &&
+      isCoordinator &&
+      data.status !== "cancelled",
+  );
   const canFinalIssue = canManage || isManualOwner;
   // Any authenticated project member who can view this sheet may refer it;
   // the backend still enforces project membership and access-circle ACLs.
@@ -392,7 +402,8 @@ export function TransmittalDetail() {
     }
   };
 
-  const openPersonnelRefer = async () => {
+  const openPersonnelRefer = async (scope: PersonnelReferralScope = "transmittal") => {
+    setPersonnelReferralScope(scope);
     setPersonnelReferError(null);
     setPersonnelQuery("");
     setPersonnelIds([]);
@@ -435,26 +446,45 @@ export function TransmittalDetail() {
       setPersonnelReferError("حداقل یک نفر از پرسنل پروژه را انتخاب کنید.");
       return;
     }
+    if (personnelReferralScope === "reply_sheet" && personnelIds.length !== 1) {
+      setPersonnelReferError("Reply Sheet فقط به یک شخص قابل ارجاع است.");
+      return;
+    }
     setPersonnelReferBusy(true);
     setPersonnelReferError(null);
     try {
-      await api.post(`/transmittals/${data.id}/refer-people`, {
-        // Keep user_ids for older API instances while the current backend uses
-        // people[] for each person's independent action and note.
-        user_ids: personnelIds,
-        people: personnelIds.map((userId) => ({
-          user_id: userId,
-          action: personnelDrafts[userId]?.action ?? "review",
+      if (personnelReferralScope === "reply_sheet") {
+        const userId = personnelIds[0];
+        await api.post(`/transmittals/${data.id}/reply-sheet/refer`, {
+          to_user_id: userId,
           note: personnelDrafts[userId]?.note.trim() || null,
-        })),
-        due_days: 14,
-      });
+        });
+      } else {
+        await api.post(`/transmittals/${data.id}/refer-people`, {
+          // Keep user_ids for older API instances while the current backend uses
+          // people[] for each person's independent action and note.
+          user_ids: personnelIds,
+          people: personnelIds.map((userId) => ({
+            user_id: userId,
+            action: personnelDrafts[userId]?.action ?? "review",
+            note: personnelDrafts[userId]?.note.trim() || null,
+          })),
+          due_days: 14,
+        });
+      }
       setPersonnelReferOpen(false);
       setPersonnelIds([]);
       setPersonnelDrafts({});
+      setPersonnelReferralScope("transmittal");
       await load();
     } catch (err) {
-      setPersonnelReferError(err instanceof ApiError ? err.detail : "ارجاع مدرک ناموفق بود.");
+      setPersonnelReferError(
+        err instanceof ApiError
+          ? err.detail
+          : personnelReferralScope === "reply_sheet"
+            ? "ارجاع Reply Sheet ناموفق بود."
+            : "ارجاع مدرک ناموفق بود.",
+      );
     } finally {
       setPersonnelReferBusy(false);
     }
@@ -1601,9 +1631,23 @@ export function TransmittalDetail() {
                 <div className="p-[3px]">
                   <div className="mb-1 flex items-center justify-between border border-[#a8a284] bg-white px-2 py-1">
                     <span className="text-[11px] font-bold text-[#1f3864]">Reply Sheet — برگه پاسخ</span>
-                    <span className="ltr text-[10px] text-[#33475b]">
-                      Reply Sheet No.: {replySheetRecord?.number ?? (data.number ? `${data.number}-R01` : "—")}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {canReferReplySheet ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-sm border border-[#b29a00] bg-[#fff200] px-2 py-1 text-[10px] font-bold text-[#1f3864] shadow-sm hover:bg-[#ffe600] disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={personnelReferBusy || busy}
+                          onClick={() => void openPersonnelRefer("reply_sheet")}
+                          title="ارجاع Reply Sheet به یک عضو فعال پروژه"
+                        >
+                          <IconArrow className="h-3.5 w-3.5" />
+                          ارجاع Reply Sheet
+                        </button>
+                      ) : null}
+                      <span className="ltr text-[10px] text-[#33475b]">
+                        Reply Sheet No.: {replySheetRecord?.number ?? (data.number ? `${data.number}-R01` : "—")}
+                      </span>
+                    </div>
                   </div>
                   <div className="mb-1 flex flex-wrap items-center gap-1 border border-[#d4ceb0] bg-[#fffdf3] px-2 py-1 text-[9.5px]">
                     <span className="font-bold text-[#1f3864]">Document result:</span>
@@ -2173,10 +2217,10 @@ export function TransmittalDetail() {
         </p>
       </Modal>
 
-      {/* ---------- ارجاع پس از صدور به چند عضو فعال پروژه ---------- */}
+      {/* ---------- ارجاع به عضو یا اعضای فعال پروژه ---------- */}
       <Modal
         open={personnelReferOpen}
-        title="ارجاع مدرک به پرسنل پروژه"
+        title={personnelReferralScope === "reply_sheet" ? "ارجاع Reply Sheet به پرسنل پروژه" : "ارجاع مدرک به پرسنل پروژه"}
         onClose={() => setPersonnelReferOpen(false)}
         width="max-w-2xl"
         footer={
@@ -2189,21 +2233,23 @@ export function TransmittalDetail() {
               disabled={personnelReferBusy || personnelIds.length === 0}
               onClick={() => void submitPersonnelRefer()}
             >
-              {personnelReferBusy ? "در حال ثبت…" : "ثبت ارجاع"}
+              {personnelReferBusy ? "در حال ثبت…" : personnelReferralScope === "reply_sheet" ? "ثبت ارجاع Reply Sheet" : "ثبت ارجاع"}
             </Button>
           </div>
         }
       >
         {personnelReferError ? <ErrorBox message={personnelReferError} /> : null}
         <div className="mb-2 border border-[#a8a284] bg-[#fffdf3] px-2 py-1.5 text-[10px] leading-5 text-[#5c4b18]">
-          این عملیات فقط پس از صدور نهایی انجام می‌شود. یک یا چند عضو فعال همین پروژه را انتخاب کنید؛ هر نفر ارجاع مستقل و اعلان جداگانه دریافت می‌کند.
+          {personnelReferralScope === "reply_sheet"
+            ? "این Reply Sheet فقط پس از تکمیل یا نهایی‌شدن به یک عضو فعال همین پروژه ارجاع می‌شود؛ گیرنده اعلان و نتیجه Reply Sheet را دریافت می‌کند."
+            : "این عملیات فقط پس از صدور نهایی انجام می‌شود. یک یا چند عضو فعال همین پروژه را انتخاب کنید؛ هر نفر ارجاع مستقل و اعلان جداگانه دریافت می‌کند."}
         </div>
         <FieldGrid>
           <FField label="برگه ارسال:">
             <span className="ltr">{data.number ?? data.preview_number ?? "Draft"}</span>
           </FField>
-          <FField label="افراد انتخاب‌شده:">
-            <span>{persianDigits(personnelIds.length)} نفر</span>
+          <FField label={personnelReferralScope === "reply_sheet" ? "گیرنده Reply Sheet:" : "افراد انتخاب‌شده:"}>
+            <span>{personnelReferralScope === "reply_sheet" ? (personnelIds.length ? "۱ نفر" : "انتخاب نشده") : `${persianDigits(personnelIds.length)} نفر`}</span>
           </FField>
           <FField label="جست‌وجوی پرسنل:" full>
             <input
@@ -2231,6 +2277,7 @@ export function TransmittalDetail() {
                         <input
                           type="checkbox"
                           checked={personnelIds.includes(member.user_id)}
+                          disabled={personnelReferralScope === "reply_sheet" && personnelIds.length >= 1 && !personnelIds.includes(member.user_id)}
                           onChange={() => togglePersonnel(member.user_id)}
                         />
                         <span className="min-w-0 flex-1">

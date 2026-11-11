@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth";
 import type {
   CommentList as CommentListType,
   DocumentRecord,
+  FlowHistory,
   ProjectMember,
   ReplySheet,
   ReplySheetRow,
@@ -74,6 +75,53 @@ function relatedAttachmentLabel(value: string | null | undefined): string {
   return RELATED_ATTACHMENT_TYPES.find((item) => item.value === value)?.label ?? value ?? "پیوست مرتبط";
 }
 
+const FLOW_ACTION_LABELS: Record<string, string> = {
+  "registration.create": "ایجاد ترانسمیتال",
+  "registration.save": "ثبت اطلاعات ترانسمیتال",
+  "transmittal.create_draft": "ایجاد پیش‌نویس",
+  "transmittal.issue": "صدور ترانسمیتال",
+  "transmittal.acknowledge": "ثبت تأییدیه دریافت",
+  "transmittal.forward": "ارسال به مدیریت",
+  "transmittal.refer": "ارجاع به دیسیپلین",
+  "transmittal.manual_refer": "ارجاع به پرسنل",
+  "transmittal.referral_complete": "پایان بررسی ارجاع",
+  "transmittal.afc_no_comment_finalize": "نهایی‌سازی AFC",
+  "transmittal.os.create_from_afc": "ایجاد OS از AFC",
+  "transmittal.cancel": "ابطال ترانسمیتال",
+  "transmittal.remind": "ارسال یادآوری",
+  "transmittal.attachment.upload": "افزودن پیوست",
+  "transmittal.related_attachment.upload": "افزودن پیوست مرتبط",
+  "transmittal.attachment.update": "ویرایش پیوست",
+  "transmittal.attachment.access.update": "تغییر سطح دسترسی پیوست",
+  "transmittal.attachment.delete": "حذف پیوست",
+  "reply_sheet.create": "ایجاد Reply Sheet",
+  "reply_sheet.complete": "تکمیل Reply Sheet",
+  "reply_sheet.document_status": "تغییر وضعیت مدرک در Reply Sheet",
+  "reply_sheet.status_change": "تغییر وضعیت Reply Sheet",
+  "reply_sheet.finalize": "نهایی‌سازی Reply Sheet",
+  "reply_sheet.refer": "ارجاع Reply Sheet",
+};
+
+function flowActionLabel(action: string): string {
+  return FLOW_ACTION_LABELS[action] ?? action;
+}
+
+function flowEventSummary(event: FlowHistory): string {
+  const after = event.after ?? {};
+  const value = (key: string): string => {
+    const raw = after[key];
+    return raw === null || raw === undefined ? "" : String(raw);
+  };
+  const target = value("to_user_name") || value("to") || value("recipient");
+  const note = value("note") || value("response_note") || value("reason");
+  const number = value("number");
+  return [
+    number ? `شماره: ${number}` : "",
+    target ? `مقصد: ${target}` : "",
+    note ? `توضیح: ${note}` : "",
+  ].filter(Boolean).join(" · ") || "—";
+}
+
 interface PersonnelReferralDraft {
   action: PersonnelReferralAction;
   note: string;
@@ -100,8 +148,6 @@ export function TransmittalDetail() {
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [referForm, setReferForm] = useState({ discipline_id: "", note: "", due_days: "14" });
   const [referError, setReferError] = useState<string | null>(null);
-  const [forwardOpen, setForwardOpen] = useState(false);
-  const [forwardForm, setForwardForm] = useState({ to_user_id: "", note: "", due_days: "7" });
   const [personnelReferOpen, setPersonnelReferOpen] = useState(false);
   const [personnelQuery, setPersonnelQuery] = useState("");
   const [personnelIds, setPersonnelIds] = useState<string[]>([]);
@@ -211,14 +257,6 @@ export function TransmittalDetail() {
   const isManualOwner = data.manual_workflow && data.created_by_id === user?.id;
   const isProjectManager = hasRole("project_manager");
   const isAfc = data.purpose === "AFC" || data.lines.some((line) => line.poi === "AFC");
-  const canCoordinator = canManage || hasRole("coordinator");
-  const canNoComment = canCoordinator && !isFinal && data.status !== "cancelled";
-  const canReferReplySheet = Boolean(
-    replySheetRecord &&
-      ["completed", "final"].includes(replySheetRecord.status) &&
-      canCoordinator &&
-      data.status !== "cancelled",
-  );
   const canFinalizeAfc = isAfc && isProjectManager && !isFinal && data.status !== "cancelled";
   const canFinalIssue = canManage || isManualOwner;
   // Any authenticated project member who can view this sheet may refer it;
@@ -303,10 +341,8 @@ export function TransmittalDetail() {
 
   // --- review route -------------------------------------------------------
   const stage = data.stage ?? "draft";
-  const isDcc = hasRole("dcc") || hasRole("project_control") || hasRole("pmo");
   const isManagement =
     hasRole("engineering_manager") || hasRole("project_control") || hasRole("pmo") || hasRole("project_manager");
-  const canForward = isDcc && ["dcc", "draft"].includes(stage);
   const canRefer = isManagement && stage === "management";
   const pendingReferrals = (data.referrals ?? []).filter((item) => item.status === "pending");
   /** A referral only the assignee may close — the API enforces the same rule. */
@@ -332,18 +368,6 @@ export function TransmittalDetail() {
     setReferOpen(true);
   };
 
-  const openForward = async () => {
-    setReferError(null);
-    const roster = await loadMembers();
-    const manager =
-      roster.find((member) => member.role === "engineering_manager") ??
-      roster.find((member) => member.role === "project_control") ??
-      roster.find((member) => member.role === "pmo") ??
-      roster.find((member) => member.role === "project_manager");
-    setForwardForm((form) => ({ ...form, to_user_id: form.to_user_id || manager?.user_id || "" }));
-    setForwardOpen(true);
-  };
-
   const submitRefer = async () => {
     setReferError(null);
     if (!referForm.discipline_id) {
@@ -363,25 +387,6 @@ export function TransmittalDetail() {
       await load();
     } catch (err) {
       setReferError(err instanceof ApiError ? err.detail : "ارجاع ناموفق بود.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submitForward = async () => {
-    setReferError(null);
-    setBusy(true);
-    try {
-      await api.post(`/transmittals/${data.id}/forward`, {
-        to_user_id: forwardForm.to_user_id || null,
-        note: forwardForm.note || null,
-        due_days: Number(forwardForm.due_days) || 7,
-      });
-      setForwardOpen(false);
-      setForwardForm({ to_user_id: "", note: "", due_days: "7" });
-      await load();
-    } catch (err) {
-      setReferError(err instanceof ApiError ? err.detail : "ارجاع به مدیریت ناموفق بود.");
     } finally {
       setBusy(false);
     }
@@ -1070,33 +1075,16 @@ export function TransmittalDetail() {
         <Ribbon
           items={[
             { label: "بازخوانی", icon: <IconRefresh />, onClick: () => void load(), disabled: busy },
-            {
-              label: "وضعیت گردش کارها",
-              icon: <IconFlow />,
-              onClick: () => setActiveTab("comments"),
-            },
             { label: "WorkSpace", icon: <IconDoc />, onClick: () => setActiveTab("letters") },
             { label: "گردش مدارک", icon: <IconChain />, groupStart: true, disabled: true, title: "فاز ۲" },
             { label: "لیست پاراف", icon: <IconEdit />, disabled: true, title: "فاز ۲" },
             // --- the review route: only the role that owns the step sees the button
-            ...(canForward
-              ? [
-                  {
-                    label: "ارسال به مدیریت",
-                    icon: <IconArrow />,
-                    groupStart: true,
-                    disabled: busy,
-                    title: "گردش مدرک — کنترل اسناد ← مدیر مهندسی/مدیر پروژه",
-                    onClick: () => void openForward(),
-                  },
-                ]
-              : []),
             ...(canRefer
               ? [
                   {
                     label: "ارجاع به دیسیپلین",
                     icon: <IconFlow />,
-                    groupStart: !canForward,
+                    groupStart: true,
                     disabled: busy,
                     title: "گردش مدرک — مدیر مهندسی ← کارشناس دیسیپلین",
                     onClick: () => void openRefer(),
@@ -1144,40 +1132,6 @@ export function TransmittalDetail() {
               disabled: busy || !issued,
               onClick: () => void act(`/transmittals/${data.id}/acknowledge`, { note: null }),
             },
-            ...(canNoComment
-              ? [
-                  {
-                    label: "ثبت No Comment",
-                    icon: <IconComment />,
-                    groupStart: true,
-                    disabled: busy,
-                    title: "تکمیل Reply Sheet با Judgment = OK و Doc % = 100",
-                    onClick: () =>
-                      void act(
-                        `/transmittals/${data.id}/reply-sheet/no-comment`,
-                        { remarks: remarks || null },
-                        "برای همه مدارک این ترانسمیتال No Comment و Judgment = OK ثبت شود؟",
-                      ),
-                  },
-                ]
-              : []),
-            ...(canReferReplySheet
-              ? [
-                  {
-                    label: "ارجاع Reply Sheet",
-                    icon: <IconArrow />,
-                    groupStart: true,
-                    disabled: busy,
-                    title: "ارجاع نتیجه Reply Sheet به تهیه‌کننده نقشه",
-                    onClick: () =>
-                      void act(
-                        `/transmittals/${data.id}/reply-sheet/refer`,
-                        { note: remarks || null },
-                        "نتیجه Reply Sheet به تهیه‌کننده نقشه ارجاع شود؟",
-                      ),
-                  },
-                ]
-              : []),
             ...(canFinalizeAfc
               ? [
                   {
@@ -1828,7 +1782,7 @@ export function TransmittalDetail() {
       {/* ---------- گردش مدرک — the full referral history ---------- */}
       <Modal
         open={flowOpen}
-        title={`گردش مدرک — ${flowLine?.doc_code ?? data.number ?? "برگه ارسال"} — Flow History`}
+        title={`گردش مدرک — ${data.number ?? data.preview_number ?? "برگه ارسال"} — گردش کامل ترانسمیتال`}
         onClose={() => { setFlowOpen(false); setFlowLine(null); }}
         width="max-w-4xl"
         footer={
@@ -1843,12 +1797,60 @@ export function TransmittalDetail() {
         }
       >
         <div className="mb-1 border border-[#a8a284] bg-[#fffdf3] px-2 py-1 text-[10px] leading-5 text-[#3b4b57]">
-          <span className="font-bold text-[#1f3864]">مدرک منتخب:</span>{" "}
-          <span className="ltr font-bold">{flowLine?.doc_code ?? "—"}</span>{" "}
-          <span>{flowLine?.title ?? "گردش کامل برگه ارسال"}</span>
+          <span className="font-bold text-[#1f3864]">ترانسمیتال:</span>{" "}
+          <span className="ltr font-bold">{data.number ?? data.preview_number ?? "پیش‌نویس"}</span>
+          {flowLine ? (
+            <>
+              <span className="mx-1 text-[#7a8794]">·</span>
+              <span className="font-bold">مدرک منتخب:</span>{" "}
+              <span className="ltr">{flowLine.doc_code ?? "—"}</span>
+              <span>{flowLine.title ? ` — ${flowLine.title}` : ""}</span>
+            </>
+          ) : null}
           <span className="mx-1 text-[#7a8794]">·</span>
-          <span>تاریخچه ارجاع‌های همین برگه ارسال در زیر نمایش داده می‌شود.</span>
+          <span>گردش کامل تمام مراحل، وضعیت‌ها و ارجاع‌های این ترانسمیتال نمایش داده می‌شود.</span>
         </div>
+        <div className="section-bar">تاریخچه کامل ترانسمیتال</div>
+        <div className="max-h-[28vh] overflow-auto border border-[#a8a284] bg-white">
+          <table className="table-base">
+            <thead>
+              <tr>
+                <th style={{ width: 34 }}>ردیف</th>
+                <th style={{ width: 112 }}>تاریخ و ساعت</th>
+                <th style={{ width: 166 }}>عملیات</th>
+                <th style={{ width: 100 }}>وضعیت</th>
+                <th style={{ width: 150 }}>کاربر</th>
+                <th>جزئیات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.flow_history.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="cell-center text-[10px] text-[#5c6b78]">
+                    هنوز رویداد گردش ثبت نشده است.
+                  </td>
+                </tr>
+              ) : (
+                data.flow_history.map((event, index) => (
+                  <tr key={event.id}>
+                    <td className="cell-center">{persianDigits(index + 1)}</td>
+                    <td className="cell-center whitespace-nowrap text-[9.5px]">
+                      {jalaliDateTime(event.created_at)}
+                    </td>
+                    <td className="font-bold">{flowActionLabel(event.action)}</td>
+                    <td className="text-center">{event.status ? (STATUS_LABELS[event.status] ?? event.status) : "—"}</td>
+                    <td>
+                      <span className="font-bold">{event.actor_name ?? "—"}</span>
+                      {event.actor_email ? <span className="ltr block text-[9px] text-[#5c6b78]">{event.actor_email}</span> : null}
+                    </td>
+                    <td className="max-w-[18rem] truncate" title={flowEventSummary(event)}>{flowEventSummary(event)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="section-bar mt-1">گردش ارجاع گیرندگان</div>
         <table className="table-base">
           <thead>
             <tr>
@@ -2300,66 +2302,6 @@ export function TransmittalDetail() {
                 </div>
               </section>
             </div>
-          </FField>
-        </FieldGrid>
-      </Modal>
-
-      {/* ---------- ارسال به مدیریت (کارشناس کنترل اسناد) ---------- */}
-      <Modal
-        open={forwardOpen}
-        title="ارجاع به مدیر مهندسی — Forward To Management"
-        onClose={() => setForwardOpen(false)}
-        width="max-w-2xl"
-        footer={
-          <div className="flex items-center justify-end gap-2">
-            <Button className="btn-sm" onClick={() => setForwardOpen(false)}>
-              انصراف
-            </Button>
-            <Button className="btn-sm btn-primary" disabled={busy} onClick={() => void submitForward()}>
-              ارسال
-            </Button>
-          </div>
-        }
-      >
-        {referError ? <ErrorBox message={referError} /> : null}
-        <FieldGrid>
-          <FField label="برگه ارسال:">
-            <span className="ltr">{data.number ?? data.preview_number ?? "Draft"}</span>
-          </FField>
-          <FField label="مدیر مقصد:">
-            <select
-              className="input"
-              value={forwardForm.to_user_id}
-              onChange={(event) => setForwardForm({ ...forwardForm, to_user_id: event.target.value })}
-            >
-              <option value="">— پیش‌فرض: مدیر مهندسی / PMO —</option>
-              {members
-                .filter((member) => ["engineering_manager", "project_control", "pmo", "project_manager"].includes(member.role))
-                .map((member) => (
-                  <option key={member.user_id} value={member.user_id}>
-                    {member.role === "engineering_manager" ? "مدیر مهندسی" : member.role === "project_control" ? "کنترل پروژه" : member.role === "pmo" ? "واحد PMO" : "مدیر پروژه"} —{" "}
-                    {member.full_name}
-                  </option>
-                ))}
-            </select>
-          </FField>
-          <FField label="توضیح کنترل:" full>
-            <input
-              className="input"
-              value={forwardForm.note}
-              placeholder="مثلاً: مدارک کنترل و پیوست شد؛ جهت بررسی و ارجاع"
-              onChange={(event) => setForwardForm({ ...forwardForm, note: event.target.value })}
-            />
-          </FField>
-          <FField label="مهلت (روز):">
-            <input
-              className="input ltr"
-              type="number"
-              min={1}
-              max={90}
-              value={forwardForm.due_days}
-              onChange={(event) => setForwardForm({ ...forwardForm, due_days: event.target.value })}
-            />
           </FField>
         </FieldGrid>
       </Modal>

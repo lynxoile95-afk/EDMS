@@ -172,16 +172,13 @@ def _referral_out(referral) -> ReferralOut:
     )
 
 
-def _reply_sheet_out(db, sheet: ReplySheet | None) -> ReplySheetOut | None:
-    if sheet is None:
-        return None
-    history = reply_sheet.flow_history(db, sheet.transmittal_id, sheet.id)
+def _flow_history_out(db, history) -> list[FlowHistoryOut]:
     actor_ids = {entry.actor_id for entry in history if entry.actor_id}
     actor_names = {
         actor.id: actor.full_name
         for actor in db.execute(select(User).where(User.id.in_(actor_ids))).scalars()
     } if actor_ids else {}
-    history_out = [
+    return [
         FlowHistoryOut(
             id=entry.id,
             action=entry.action,
@@ -195,6 +192,13 @@ def _reply_sheet_out(db, sheet: ReplySheet | None) -> ReplySheetOut | None:
         )
         for entry in history
     ]
+
+
+def _reply_sheet_out(db, sheet: ReplySheet | None) -> ReplySheetOut | None:
+    if sheet is None:
+        return None
+    history = reply_sheet.flow_history(db, sheet.transmittal_id, sheet.id)
+    history_out = _flow_history_out(db, history)
     referral_event = next(
         (entry for entry in reversed(history) if entry.action == "reply_sheet.refer"),
         None,
@@ -469,6 +473,7 @@ def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
         stage_label=routing.STAGE_LABELS.get(str(transmittal.stage)),
         is_final=is_final,
         reply_sheet=_reply_sheet_out(db, current_sheet),
+        flow_history=_flow_history_out(db, reply_sheet.transmittal_flow_history(db, transmittal.id)),
         os_available=is_final and is_afc and os_transmittal_id is None,
         os_transmittal_id=os_transmittal_id,
     )

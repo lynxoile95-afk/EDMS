@@ -123,6 +123,10 @@ def test_full_referral_chain(client: TestClient, db, project, users, ddm_rules):
     assert referred.status_code == 200, referred.text
     body = referred.json()
     assert body["stage"] == "discipline"
+    flow_actions = [event["action"] for event in body["flow_history"]]
+    assert "transmittal.issue" in flow_actions
+    assert "transmittal.forward" in flow_actions
+    assert "transmittal.refer" in flow_actions
     assert body["referrals"][-1]["to_user_id"] == str(civil.id)
     assert body["referrals"][-1]["status"] == "pending"
 

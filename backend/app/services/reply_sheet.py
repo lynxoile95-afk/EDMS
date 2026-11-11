@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.config import settings
 from sqlalchemy.orm import Session
@@ -196,6 +196,42 @@ def flow_history(db: Session, transmittal_id: uuid.UUID, reply_sheet_id: uuid.UU
                 AuditLog.project_id == db.get(Transmittal, transmittal_id).project_id,
                 AuditLog.entity_type.in_(entity_types),
                 AuditLog.entity_id.in_(entity_ids),
+            )
+            .order_by(AuditLog.created_at, AuditLog.id)
+        ).scalars()
+    )
+
+
+def transmittal_flow_history(db: Session, transmittal_id: uuid.UUID) -> list[AuditLog]:
+    """Return the complete audited circulation of a transmittal.
+
+    A transmittal's route is recorded on the transmittal itself, while Reply
+    Sheet lifecycle events are recorded against their individual sheets.  The
+    workspace flow dialog must show both, including older Reply Sheets, rather
+    than only the latest referral row.
+    """
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        return []
+    sheet_ids = [
+        str(sheet_id)
+        for sheet_id in db.execute(
+            select(ReplySheet.id).where(ReplySheet.transmittal_id == transmittal_id)
+        ).scalars()
+    ]
+    entity_filters = [
+        (AuditLog.entity_type == "transmittal") & (AuditLog.entity_id == str(transmittal_id)),
+    ]
+    if sheet_ids:
+        entity_filters.append(
+            (AuditLog.entity_type == "reply_sheet") & AuditLog.entity_id.in_(sheet_ids)
+        )
+    return list(
+        db.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.project_id == transmittal.project_id,
+                or_(*entity_filters),
             )
             .order_by(AuditLog.created_at, AuditLog.id)
         ).scalars()

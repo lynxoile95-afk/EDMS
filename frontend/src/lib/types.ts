@@ -512,6 +512,7 @@ export interface TransmittalDetail extends Transmittal {
   lines: TransmittalLine[];
   recipients: TransmittalRecipient[];
   referrals: TransmittalReferral[];
+  flow_history: FlowHistory[];
   attachments: DocumentAttachment[];
   pdf_url: string | null;
   preview_number: string | null;

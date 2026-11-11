@@ -285,6 +285,7 @@ class TransmittalDetail(TransmittalOut):
     stage_label: str | None = None
     is_final: bool = False
     reply_sheet: "ReplySheetOut | None" = None
+    flow_history: list[FlowHistoryOut] = Field(default_factory=list)
     os_available: bool = False
     os_transmittal_id: uuid.UUID | None = None
 

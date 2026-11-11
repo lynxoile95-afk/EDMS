@@ -499,6 +499,11 @@ export interface ReplySheet {
   doc_percent: number;
   no_comment: boolean;
   remarks: string | null;
+  referred_to_id: string | null;
+  referred_to_name: string | null;
+  referred_at: string | null;
+  referral_note: string | null;
+  referral_status: string | null;
   flow_history: FlowHistory[];
   rows: ReplySheetRow[];
 }

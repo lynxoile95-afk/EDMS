@@ -37,7 +37,6 @@ import {
 import { Tabs } from "@/components/Tabs";
 import {
   ACTION_LABELS,
-  DISPOSITION_LABELS,
   DOC_STATUS_OPTIONS,
   PURPOSE_LABELS,
   REFERRAL_STATUS_LABELS,
@@ -214,6 +213,12 @@ export function TransmittalDetail() {
   const isAfc = data.purpose === "AFC" || data.lines.some((line) => line.poi === "AFC");
   const canCoordinator = canManage || hasRole("coordinator");
   const canNoComment = canCoordinator && !isFinal && data.status !== "cancelled";
+  const canReferReplySheet = Boolean(
+    replySheetRecord &&
+      ["completed", "final"].includes(replySheetRecord.status) &&
+      canCoordinator &&
+      data.status !== "cancelled",
+  );
   const canFinalizeAfc = isAfc && isProjectManager && !isFinal && data.status !== "cancelled";
   const canFinalIssue = canManage || isManualOwner;
   // Any authenticated project member who can view this sheet may refer it;
@@ -267,6 +272,31 @@ export function TransmittalDetail() {
         flow_history_count: 0,
         view_url: null,
       }));
+  const replyStatusLabels: Record<string, string> = {
+    Commented: "COMMENTED",
+    commented: "COMMENTED",
+    "No Comment": "NO COMMENT",
+    no_comment: "NO COMMENT",
+    "no comment": "NO COMMENT",
+    Rejected: "REJECTED",
+    rejected: "REJECTED",
+    Reject: "REJECTED",
+    reject: "REJECTED",
+    "Under Review by Provider": "UNDER REVIEW",
+    under_review: "UNDER REVIEW",
+    Ignore: "IGNORE",
+    ignore: "IGNORE",
+  };
+  const replyStatusText = (row: ReplySheetRow) => {
+    const workflowStatus = ["open", "answered", "closed", "pending"].includes(row.status);
+    const rawStatus = workflowStatus && row.disposition ? row.disposition : row.status;
+    return replyStatusLabels[rawStatus] ?? replyStatusLabels[row.disposition ?? ""] ?? rawStatus;
+  };
+  const replyStatusCounts = displayedReplyRows.reduce<Record<string, number>>((counts, row) => {
+    const key = replyStatusText(row);
+    counts[key] = (counts[key] ?? 0) + 1;
+    return counts;
+  }, {});
   const revisionIds = Array.from(new Set(data.lines.map((line) => line.revision_id)));
   const nativeAttachments = (data.attachments ?? []).filter((attachment) => attachment.kind === "native");
   const relatedAttachments = (data.attachments ?? []).filter((attachment) => attachment.kind === "related");
@@ -1131,6 +1161,23 @@ export function TransmittalDetail() {
                   },
                 ]
               : []),
+            ...(canReferReplySheet
+              ? [
+                  {
+                    label: "ارجاع Reply Sheet",
+                    icon: <IconArrow />,
+                    groupStart: true,
+                    disabled: busy,
+                    title: "ارجاع نتیجه Reply Sheet به تهیه‌کننده نقشه",
+                    onClick: () =>
+                      void act(
+                        `/transmittals/${data.id}/reply-sheet/refer`,
+                        { note: remarks || null },
+                        "نتیجه Reply Sheet به تهیه‌کننده نقشه ارجاع شود؟",
+                      ),
+                  },
+                ]
+              : []),
             ...(canFinalizeAfc
               ? [
                   {
@@ -1604,6 +1651,32 @@ export function TransmittalDetail() {
                       Reply Sheet No.: {replySheetRecord?.number ?? (data.number ? `${data.number}-R01` : "—")}
                     </span>
                   </div>
+                  <div className="mb-1 flex flex-wrap items-center gap-1 border border-[#d4ceb0] bg-[#fffdf3] px-2 py-1 text-[9.5px]">
+                    <span className="font-bold text-[#1f3864]">Document result:</span>
+                    {Object.entries(replyStatusCounts).length === 0 ? (
+                      <span className="text-[#7a8794]">—</span>
+                    ) : (
+                      Object.entries(replyStatusCounts).map(([label, count]) => (
+                        <span
+                          key={label}
+                          className={`rounded-sm border px-1.5 py-0.5 font-bold ${
+                            label === "REJECTED"
+                              ? "border-[#c98a86] bg-[#fdeeee] text-[#8a2b25]"
+                              : label === "NO COMMENT"
+                                ? "border-[#8eb598] bg-[#eef8ef] text-[#286437]"
+                                : "border-[#9aa8b4] bg-[#eef3f8] text-[#1f3864]"
+                          }`}
+                        >
+                          {label}: {persianDigits(count)}
+                        </span>
+                      ))
+                    )}
+                    {replySheetRecord?.referred_to_name ? (
+                      <span className="mr-auto text-[#4a5a67]">
+                        ارجاع به: <b>{replySheetRecord.referred_to_name}</b>
+                      </span>
+                    ) : null}
+                  </div>
                   <FieldGrid>
                     <FField label="Subject:" full>
                       {data.lines[0]?.title ?? "—"}
@@ -1619,6 +1692,8 @@ export function TransmittalDetail() {
                     <FField label="Created:">{replySheetRecord?.created_at ? jalaliDateTime(replySheetRecord.created_at) : "—"}</FField>
                     <FField label="Status:">{replySheetRecord ? (STATUS_LABELS[replySheetRecord.status] ?? replySheetRecord.status) : "—"}</FField>
                     <FField label="Assign:">{replySheetRecord?.assigned_to_name ?? "—"}</FField>
+                    <FField label="Referred to:">{replySheetRecord?.referred_to_name ?? "—"}</FField>
+                    <FField label="Referral note:">{replySheetRecord?.referral_note ?? "—"}</FField>
                     <FField label="Flow History:">
                       {persianDigits(replySheetRecord?.flow_history.length ?? 0)}
                     </FField>
@@ -1672,8 +1747,8 @@ export function TransmittalDetail() {
                               <td className="text-center">{row.discipline ?? "—"}</td>
                               <td className="whitespace-nowrap text-center text-[10px]">{row.created_at ? jalali(row.created_at) : "—"}</td>
                               <td className="text-[10px]">{row.author_name ?? row.replied_by_name ?? "—"}</td>
-                              <td className="text-center text-[10px]">
-                                {row.disposition ? (DISPOSITION_LABELS[row.disposition] ?? row.disposition) : row.status}
+                              <td className="text-center text-[10px] font-bold">
+                                {replyStatusText(row)}
                               </td>
                               <td className="cell-center text-[10px]">{row.judgment ?? "—"}</td>
                               <td className="max-w-[9rem] truncate text-[10px]">{row.owner_comments ?? row.comment_text ?? "—"}</td>

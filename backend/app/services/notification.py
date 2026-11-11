@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import smtplib
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Protocol
@@ -79,6 +78,15 @@ TEMPLATES: dict[str, dict[str, str]] = {
     "comment.answered": {
         "subject": "پاسخ به نظر شما روی مدرک {doc_code}",
         "body": "پاسخ ثبت‌شده روی مدرک {doc_code}:\n\n{text}\n\n{link}\n",
+    },
+    "reply_sheet.referred": {
+        "subject": "Reply Sheet {number} — نتیجه بررسی مدرک",
+        "body": (
+            "برگه پاسخ {number} برای اطلاع و اقدام به شما ارجاع شد.\n"
+            "وضعیت مدارک: {status_summary}\n"
+            "یادداشت هماهنگ‌کننده: {note}\n\n"
+            "مشاهده برگه پاسخ و وضعیت هر مدرک:\n{link}\n"
+        ),
     },
 }
 

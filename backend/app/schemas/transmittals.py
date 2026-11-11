@@ -136,6 +136,13 @@ class ReplySheetNoCommentRequest(BaseModel):
     revision_ids: list[uuid.UUID] | None = Field(default=None, max_length=5000)
 
 
+class ReplySheetReferRequest(BaseModel):
+    """Route a completed Reply Sheet to its drawing preparer or a named member."""
+
+    to_user_id: uuid.UUID | None = None
+    note: str | None = Field(default=None, max_length=4000)
+
+
 class AttachmentOut(BaseModel):
     id: uuid.UUID
     # Line-scoped PDF/Native files have a line id; related Letters files are
@@ -301,6 +308,11 @@ class ReplySheetOut(BaseModel):
     doc_percent: int = 0
     no_comment: bool = False
     remarks: str | None = None
+    referred_to_id: uuid.UUID | None = None
+    referred_to_name: str | None = None
+    referred_at: datetime | None = None
+    referral_note: str | None = None
+    referral_status: str | None = None
     flow_history: list[FlowHistoryOut] = Field(default_factory=list)
     rows: list[ReplySheetRowOut] = Field(default_factory=list)
 

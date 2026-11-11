@@ -107,6 +107,67 @@ def test_new_reply_form_waits_for_previous_completion(client, project, users, db
     assert second.status_code == 409, second.text
 
 
+def test_rejected_status_is_visible_to_drawing_preparer_after_referral(client, project, users, db):
+    from app.models import NotificationLog
+
+    body = _manual_afc(client, project, users, db)
+    revision_id = body["lines"][0]["revision_id"]
+    comment = client.post(
+        f"/api/v1/revisions/{revision_id}/comments",
+        headers=auth_headers(client, "reviewer@edms-test.com"),
+        json={"revision_id": revision_id, "text": "ایراد عمده در نقشه وجود دارد", "code": "1", "page_no": 1},
+    )
+    assert comment.status_code == 201, comment.text
+
+    dcc = auth_headers(client, "dcc@edms-test.com")
+    completed = client.post(
+        f"/api/v1/transmittals/{body['id']}/reply-sheet",
+        headers=dcc,
+        json={
+            "mode": "commented",
+            "completed": True,
+            "documents": [
+                {
+                    "line_id": body["lines"][0]["id"],
+                    "status": "Rejected",
+                    "judgment": "Rejected",
+                    "comment_ids": [comment.json()["id"]],
+                }
+            ],
+        },
+    )
+    assert completed.status_code == 201, completed.text
+    assert completed.json()["rows"][0]["status"] == "Rejected"
+    assert completed.json()["rows"][0]["doc_status"] == "Rejected"
+    assert completed.json()["rows"][0]["doc_percent"] == 0
+
+    referred = client.post(
+        f"/api/v1/transmittals/{body['id']}/reply-sheet/refer",
+        headers=dcc,
+        json={"to_user_id": str(users["submitter"].id), "note": "لطفاً اصلاح و ارسال مجدد شود."},
+    )
+    assert referred.status_code == 200, referred.text
+    referred_body = referred.json()
+    assert referred_body["referred_to_id"] == str(users["submitter"].id)
+    assert referred_body["referred_to_name"] == "submitter"
+    assert referred_body["assigned_to_id"] == str(users["submitter"].id)
+    assert referred_body["referral_note"] == "لطفاً اصلاح و ارسال مجدد شود."
+    assert any(event["action"] == "reply_sheet.refer" for event in referred_body["flow_history"])
+
+    notification_row = db.query(NotificationLog).filter_by(
+        user_id=users["submitter"].id,
+        template="reply_sheet.referred",
+        entity_id=body["id"],
+    ).first()
+    assert notification_row is not None
+    recipient_view = client.get(
+        f"/api/v1/transmittals/{body['id']}",
+        headers=auth_headers(client, "submitter@edms-test.com"),
+    )
+    assert recipient_view.status_code == 200, recipient_view.text
+    assert recipient_view.json()["reply_sheet"]["rows"][0]["status"] == "Rejected"
+
+
 def test_final_afc_creates_idempotent_os_revision_b0(client, project, users, db):
     body = _manual_afc(client, project, users, db)
     dcc = auth_headers(client, "dcc@edms-test.com")

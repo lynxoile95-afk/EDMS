@@ -54,6 +54,7 @@ from app.schemas.transmittals import (
     ReplySheetCreate,
     ReplySheetNoCommentRequest,
     ReplySheetOut,
+    ReplySheetReferRequest,
     ReplySheetRowOut,
     TransmittalCreate,
     TransmittalDetail,
@@ -194,6 +195,11 @@ def _reply_sheet_out(db, sheet: ReplySheet | None) -> ReplySheetOut | None:
         )
         for entry in history
     ]
+    referral_event = next(
+        (entry for entry in reversed(history) if entry.action == "reply_sheet.refer"),
+        None,
+    )
+    referral_after = referral_event.after or {} if referral_event is not None else {}
     rows = [
         ReplySheetRowOut(
             **row.as_dict(),
@@ -221,6 +227,11 @@ def _reply_sheet_out(db, sheet: ReplySheet | None) -> ReplySheetOut | None:
         doc_percent=sheet.doc_percent,
         no_comment=sheet.no_comment,
         remarks=sheet.remarks,
+        referred_to_id=referral_after.get("to_user_id"),
+        referred_to_name=referral_after.get("to_user_name"),
+        referred_at=referral_event.created_at if referral_event is not None else None,
+        referral_note=referral_after.get("note"),
+        referral_status="referred" if referral_event is not None else None,
         flow_history=history_out,
         rows=rows,
     )
@@ -573,6 +584,38 @@ def create_no_comment_reply_sheet(
             transmittal=transmittal,
             actor=user,
             no_comment_payload=payload or ReplySheetNoCommentRequest(),
+        )
+        db.commit()
+        db.refresh(sheet)
+    except HTTPException:
+        db.rollback()
+        raise
+    return _reply_sheet_out(db, sheet)  # type: ignore[return-value]
+
+
+@router.post(
+    "/transmittals/{transmittal_id}/reply-sheet/refer",
+    response_model=ReplySheetOut,
+    summary="ارجاع Reply Sheet به تهیه‌کننده نقشه",
+)
+@router.post(
+    "/transmittals/{transmittal_id}/reply-sheet/refer-to-preparer",
+    response_model=ReplySheetOut,
+    include_in_schema=False,
+)
+def refer_reply_sheet(
+    transmittal_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+    payload: ReplySheetReferRequest | None = None,
+) -> ReplySheetOut:
+    transmittal = _transmittal_for_reply(db, user, transmittal_id)
+    try:
+        sheet = reply_sheet.refer_reply_sheet(
+            db,
+            transmittal=transmittal,
+            actor=user,
+            payload=payload,
         )
         db.commit()
         db.refresh(sheet)

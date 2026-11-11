@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select
+
+from app.core.config import settings
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -26,13 +28,14 @@ from app.models import (
     ProjectMember,
     ReplySheet,
     ReplySheetItem,
+    SourceFile,
     Transmittal,
     TransmittalLine,
     User,
 )
 from app.models.enums import ProjectRole, PurposeOfIssue, RevisionStatus, TransmittalLineStatus, TransmittalStatus
-from app.schemas.transmittals import ReplySheetCreate, ReplySheetNoCommentRequest
-from app.services import acl, audit
+from app.schemas.transmittals import ReplySheetCreate, ReplySheetNoCommentRequest, ReplySheetReferRequest
+from app.services import acl, audit, notification
 from app.services.project_settings import merge_settings
 
 
@@ -42,6 +45,7 @@ REPLY_FINAL = "final"
 NO_COMMENT = "No Comment"
 COMMENTED = "Commented"
 UNDER_REVIEW = "Under Review by Provider"
+REJECTED = "Rejected"
 IGNORE = "Ignore"
 
 
@@ -126,6 +130,8 @@ def _normal_status(value: str | None) -> str:
         "commented": COMMENTED,
         "under review by provider": UNDER_REVIEW,
         "under review": UNDER_REVIEW,
+        "reject": REJECTED,
+        "rejected": REJECTED,
         "ignore": IGNORE,
         "ignored": IGNORE,
     }.get(token, value.strip() if value and value.strip() else COMMENTED)
@@ -221,6 +227,136 @@ def _project_member(db: Session, project_id: uuid.UUID, user_id: uuid.UUID | Non
     if row is None:
         raise HTTPException(status_code=422, detail="کاربر Assign باید عضو فعال همین پروژه باشد.")
     return row
+
+
+def _active_project_user(db: Session, project_id: uuid.UUID, user_id: uuid.UUID | None) -> User | None:
+    if user_id is None:
+        return None
+    return db.execute(
+        select(User)
+        .join(ProjectMember, ProjectMember.user_id == User.id)
+        .where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+            User.is_active.is_(True),
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _default_preparer(db: Session, transmittal: Transmittal) -> User | None:
+    """Resolve the person who uploaded/registered the drawing for a Reply Sheet."""
+    candidate_ids: list[uuid.UUID] = []
+    for line in sorted(transmittal.lines, key=lambda item: item.line_no):
+        revision = line.revision
+        if revision is None:
+            continue
+        if revision.source_file_id is not None:
+            source_file = db.get(SourceFile, revision.source_file_id)
+            if source_file is not None and source_file.uploaded_by_id is not None:
+                candidate_ids.append(source_file.uploaded_by_id)
+        if revision.registered_by_id is not None:
+            candidate_ids.append(revision.registered_by_id)
+    if transmittal.created_by_id is not None:
+        candidate_ids.append(transmittal.created_by_id)
+
+    seen: set[uuid.UUID] = set()
+    for user_id in candidate_ids:
+        if user_id in seen:
+            continue
+        seen.add(user_id)
+        user = _active_project_user(db, transmittal.project_id, user_id)
+        if user is not None:
+            return user
+    return None
+
+
+def status_summary(sheet: ReplySheet) -> str:
+    """Compact, human-readable status summary used in referral notifications."""
+    counts: dict[str, int] = {}
+    for item in sheet.items:
+        if not item.included:
+            continue
+        label = _normal_status(item.status)
+        counts[label] = counts.get(label, 0) + 1
+    return " | ".join(f"{label}: {count}" for label, count in counts.items()) or "بدون ردیف"
+
+
+def refer_reply_sheet(
+    db: Session,
+    *,
+    transmittal: Transmittal,
+    actor: User,
+    payload: ReplySheetReferRequest | None = None,
+) -> ReplySheet:
+    """Refer the completed Reply Sheet to the drawing preparer.
+
+    The default recipient is the source-file uploader, then the revision
+    registrar, with the transmittal creator as a final fallback.  An explicit
+    project member can be selected for controlled hand-offs.  The normal ACL
+    boundary is still enforced; referral never grants access outside a circle.
+    """
+    project = db.get(Project, transmittal.project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="پروژه یافت نشد.")
+    assert_coordinator(db, actor, project.id)
+    sheet = latest_reply_sheet(db, transmittal.id)
+    if sheet is None or sheet.status not in {REPLY_COMPLETED, REPLY_FINAL}:
+        raise HTTPException(status_code=409, detail="فقط Reply Sheet تکمیل‌شده قابل ارجاع است.")
+
+    request = payload or ReplySheetReferRequest()
+    target = (
+        _active_project_user(db, project.id, request.to_user_id)
+        if request.to_user_id is not None
+        else _default_preparer(db, transmittal)
+    )
+    if target is None:
+        raise HTTPException(status_code=422, detail="تهیه‌کننده فعال و عضو همین پروژه برای ارجاع یافت نشد.")
+    try:
+        acl.assert_can_route_to(db, actor, target, transmittal)
+    except acl.AccessDenied:
+        raise
+
+    before = {
+        "assigned_to_id": str(sheet.assigned_to_id) if sheet.assigned_to_id else None,
+        "status": sheet.status,
+    }
+    sheet.assigned_to_id = target.id
+    after = {
+        "assigned_to_id": str(target.id),
+        "to_user_id": str(target.id),
+        "to_user_name": target.full_name,
+        "status": sheet.status,
+        "status_summary": status_summary(sheet),
+        "note": request.note,
+    }
+    audit.record(
+        db,
+        action="reply_sheet.refer",
+        entity_type="reply_sheet",
+        entity_id=sheet.id,
+        actor=actor,
+        project_id=project.id,
+        before=before,
+        after=after,
+    )
+    notification.queue(
+        db,
+        user=target,
+        template="reply_sheet.referred",
+        context={
+            "number": sheet.number or f"Reply Sheet R{sheet.sequence_no:02d}",
+            "project": project.name,
+            "status_summary": after["status_summary"],
+            "note": request.note or "—",
+            "link": f"{settings.public_base_url}/transmittals/{transmittal.id}",
+        },
+        project_id=project.id,
+        entity_type="transmittal",
+        entity_id=str(transmittal.id),
+    )
+    db.flush()
+    return sheet
 
 
 def _line_comments(db: Session, revision_id: uuid.UUID) -> list[Comment]:
@@ -472,7 +608,7 @@ def create_reply_sheet(
         status = NO_COMMENT if payload.mode == "no_comment" else _normal_status(
             getattr(decision, "status", COMMENTED)
         )
-        if status not in {NO_COMMENT, COMMENTED, UNDER_REVIEW, IGNORE}:
+        if status not in {NO_COMMENT, COMMENTED, UNDER_REVIEW, REJECTED, IGNORE}:
             raise HTTPException(status_code=422, detail="وضعیت Reply Sheet نامعتبر است.")
         line_comments = comments_by_line.get(line.id, [])
         assign_user_id = getattr(decision, "assign_user_id", None) if decision is not None else None
@@ -496,7 +632,7 @@ def create_reply_sheet(
         previous_doc_status = line.doc_status
         percent = getattr(decision, "doc_percent", None)
         if percent is None:
-            percent = 100 if status == NO_COMMENT or payload.completed else 0
+            percent = 100 if status == NO_COMMENT or (payload.completed and status != REJECTED) else 0
         doc_status = getattr(decision, "doc_status", None) or (NO_COMMENT if status == NO_COMMENT else status)
         if status == NO_COMMENT:
             percent = 100

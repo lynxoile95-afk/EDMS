@@ -24,6 +24,7 @@ import {
   IconDoc,
   IconEdit,
   IconFlow,
+  IconLock,
   IconMail,
   IconPaperclip,
   IconPrint,
@@ -100,6 +101,11 @@ export function TransmittalDetail() {
   const [attachmentEditForm, setAttachmentEditForm] = useState({ filename: "", kind: "pdf" as "pdf" | "native" });
   const [attachmentEditFile, setAttachmentEditFile] = useState<File | null>(null);
   const [attachmentEditError, setAttachmentEditError] = useState<string | null>(null);
+  const [accessAttachment, setAccessAttachment] = useState<Detail["attachments"][number] | null>(null);
+  const [accessMembers, setAccessMembers] = useState<ProjectMember[]>([]);
+  const [accessUserIds, setAccessUserIds] = useState<string[]>([]);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [accessBusy, setAccessBusy] = useState(false);
   const [previewAttachment, setPreviewAttachment] = useState<Detail["attachments"][number] | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -193,6 +199,7 @@ export function TransmittalDetail() {
     ),
   );
   const revisionIds = Array.from(new Set(data.lines.map((line) => line.revision_id)));
+  const nativeAttachments = (data.attachments ?? []).filter((attachment) => attachment.kind === "native");
 
   // --- review route -------------------------------------------------------
   const stage = data.stage ?? "draft";
@@ -369,6 +376,10 @@ export function TransmittalDetail() {
   // the backend guard; the UI also removes upload/edit/delete controls to avoid
   // misleading clicks.
   const canManageAttachments = !attachmentsLocked && (canManage || isManualOwner);
+  const isTransmittalIssuer = Boolean(
+    user && (user.is_superuser || [data.created_by_id, data.issued_by_id].includes(user.id)),
+  );
+  const canManageNative = canManageAttachments && isTransmittalIssuer;
 
   const openFlowForLine = (line?: TransmittalLine) => {
     setFlowLine(line ?? null);
@@ -530,6 +541,48 @@ export function TransmittalDetail() {
     }
   };
 
+  const canViewAttachment = (attachment: Detail["attachments"][number]) => {
+    if (attachment.kind !== "native" || !attachment.access_restricted) return true;
+    const currentUserId = user?.id;
+    return Boolean(
+      currentUserId &&
+        (user?.is_superuser ||
+          attachment.access_user_ids?.includes(currentUserId) ||
+          [data.created_by_id, data.issued_by_id].includes(currentUserId)),
+    );
+  };
+
+  const openAttachmentAccess = async (attachment: Detail["attachments"][number]) => {
+    setAccessError(null);
+    setAccessAttachment(attachment);
+    setAccessUserIds(attachment.access_user_ids ?? (attachment.uploaded_by_id ? [attachment.uploaded_by_id] : []));
+    const roster = await loadMembers();
+    setAccessMembers(roster.filter((member) => member.is_active));
+  };
+
+  const saveAttachmentAccess = async () => {
+    if (!accessAttachment) return;
+    setAccessBusy(true);
+    setAccessError(null);
+    try {
+      await api.patch(`/transmittals/${data.id}/attachments/${accessAttachment.id}/access`, {
+        user_ids: accessUserIds,
+      });
+      setAccessAttachment(null);
+      await load();
+    } catch (err) {
+      setAccessError(err instanceof ApiError ? err.detail : "ذخیره سطح دسترسی فایل ناموفق بود.");
+    } finally {
+      setAccessBusy(false);
+    }
+  };
+
+  const toggleAttachmentAccess = (userId: string) => {
+    setAccessUserIds((current) =>
+      current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId],
+    );
+  };
+
   const disciplinesWithEngineer = members.filter(
     (member) => member.role === "reviewer" && member.discipline_id,
   );
@@ -686,7 +739,7 @@ export function TransmittalDetail() {
           <button
             type="button"
             className="flex items-center gap-1 border border-[#8fa2b4] bg-[#eef3f8] px-1.5 py-0.5 text-[10px] font-bold text-[#1f3864] disabled:opacity-50"
-            disabled={!canManageAttachments || busy || data.lines.length === 0}
+            disabled={!canManageNative || busy || data.lines.length === 0}
             onClick={() => data.lines[0] && chooseAttachment(data.lines[0], "native")}
             title="ابتدا مدرک را از فهرست پیوست‌ها انتخاب کنید؛ این دکمه برای مدرک اول است"
           >
@@ -694,7 +747,13 @@ export function TransmittalDetail() {
           </button>
           <span className="text-[9px] text-[#8a97a3]">از دکمه‌های هر ردیف برای انتخاب مدرک دقیق استفاده کنید.</span>
           <input ref={pdfInputRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(event) => void uploadAttachment(event)} />
-          <input ref={nativeInputRef} type="file" className="hidden" onChange={(event) => void uploadAttachment(event)} />
+          <input
+            ref={nativeInputRef}
+            type="file"
+            accept=".doc,.docx,.xls,.xlsx,.xlsm,.dwg,.dxf,.zip,.rar,.7z,.png,.jpg,.jpeg,.psd,.tif,.tiff,.ppt,.pptx,.csv,.txt,.ifc,.rvt,.skp,.step,.stp,.igs,.iges,.sldprt,.sldasm"
+            className="hidden"
+            onChange={(event) => void uploadAttachment(event)}
+          />
         </div>
 
         {/* documents grid — the columns printed by the reference system */}
@@ -825,7 +884,7 @@ export function TransmittalDetail() {
                   <button
                     type="button"
                     className="flex items-center gap-1 border border-[#8fa2b4] bg-[#f7f8f2] px-1.5 py-0.5 text-[9.5px] font-bold text-[#1f3864] disabled:opacity-50"
-                    disabled={!canManageAttachments || busy}
+                    disabled={!canManageNative || busy}
                     onClick={() => chooseAttachment(line, "native")}
                   >
                     <IconArchive className="h-3 w-3" /> افزودن Native
@@ -834,30 +893,24 @@ export function TransmittalDetail() {
                     <span className="text-[9.5px] text-[#8a97a3]">پیوستی ثبت نشده است.</span>
                   ) : (
                     <div className="flex min-w-full flex-wrap items-center gap-1 border-t border-dashed border-[#d4ceb0] pt-1">
-                      {lineAttachments.map((attachment) => (
-                        <div key={attachment.id} className="flex items-center gap-1 border border-[#b9c5cf] bg-[#fbfaf2] px-1 py-0.5 text-[9.5px]">
-                          <span className="rounded-sm border border-[#a8a284] bg-white px-1 font-bold text-[#33475b]">{attachment.kind.toUpperCase()}</span>
-                          <span className="max-w-[18rem] truncate" title={attachment.filename}>{attachment.filename}</span>
-                          <span className="text-[#7a8794]">{fileSize(attachment.size_bytes)}</span>
-                          <IconButton icon={<IconView />} label="مشاهده پیوست" onClick={() => void openAttachmentPreview(attachment)} />
-                          <a
-                            className="icon-btn no-underline"
-                            href={api.downloadUrl(`/transmittals/${data.id}/attachments/${attachment.id}/download`)}
-                            download={attachment.filename}
-                            rel="noopener"
-                            title="دانلود پیوست"
-                            aria-label="دانلود پیوست"
-                          >
-                            <IconArchive />
-                          </a>
-                          {canManageAttachments ? (
-                            <IconButton icon={<IconEdit />} label="ویرایش پیوست" onClick={() => openAttachmentEdit(attachment)} />
-                          ) : null}
-                          {canManageAttachments ? (
-                            <IconButton icon={<IconDelete />} label="حذف پیوست" disabled={busy} onClick={() => void deleteAttachment(attachment)} />
-                          ) : null}
-                        </div>
-                      ))}
+                      {lineAttachments.map((attachment) => {
+                        const accessible = canViewAttachment(attachment);
+                        return (
+                          <div key={attachment.id} className="flex items-center gap-1 border border-[#b9c5cf] bg-[#fbfaf2] px-1 py-0.5 text-[9.5px]">
+                            <span className="rounded-sm border border-[#a8a284] bg-white px-1 font-bold text-[#33475b]">{attachment.kind.toUpperCase()}</span>
+                            <span className="max-w-[18rem] truncate" title={attachment.filename}>{attachment.filename}</span>
+                            <span className="text-[#7a8794]">{fileSize(attachment.size_bytes)}</span>
+                            <IconButton icon={accessible ? <IconView /> : <IconLock />} label={accessible ? "مشاهده پیوست" : "دسترسی مشاهده ندارید"} disabled={!accessible || busy} onClick={() => void openAttachmentPreview(attachment)} />
+                            <IconButton icon={<IconArchive />} label={accessible ? "دانلود پیوست" : "دسترسی دانلود ندارید"} disabled={!accessible || busy} onClick={() => void downloadAttachment(attachment)} />
+                            {canManageAttachments && (attachment.kind !== "native" || canManageNative) ? (
+                              <IconButton icon={<IconEdit />} label="ویرایش پیوست" onClick={() => openAttachmentEdit(attachment)} />
+                            ) : null}
+                            {canManageAttachments && (attachment.kind !== "native" || canManageNative) ? (
+                              <IconButton icon={<IconDelete />} label="حذف پیوست" disabled={busy} onClick={() => void deleteAttachment(attachment)} />
+                            ) : null}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1131,77 +1184,75 @@ export function TransmittalDetail() {
               label: "Native Files",
               content: (
                 <div>
-                  <table className="table-base">
-                    <thead>
-                      <tr>
-                        <th style={{ width: 30 }}>Row</th>
-                        <th>Title</th>
-                        <th style={{ width: 130 }}>Doc. No.</th>
-                        <th style={{ width: 150 }}>Rev</th>
-                        <th className="cell-center" style={{ width: 90 }}>Download</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.lines.map((line) => (
-                        <tr key={line.id}>
-                          <td className="cell-center">{persianDigits(line.line_no)}</td>
-                          <td>{line.title ?? "—"}</td>
-                          <td className="ltr">{line.doc_code ?? "—"}</td>
-                          <td className="cell-center">{line.rev ?? "—"}</td>
-                          <td className="cell-center">
-                            <button
-                              className="btn btn-sm"
-                              onClick={() =>
-                                api.download(`/files/revisions/${line.revision_id}`, `${line.doc_code ?? "document"}-Rev${line.rev ?? ""}.pdf`)
-                              }
-                            >
-                              ⤓
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <div className="mt-1 border-t border-[#a8a284]">
-                    <div className="bg-[#fbfaf2] px-2 py-1 text-[10px] font-bold text-[#1f3864]">پیوست‌های ثبت‌شده برای هر مدرک</div>
+                  <div className="flex flex-wrap items-center gap-2 border-b border-[#a8a284] bg-[#fbfaf2] px-2 py-1">
+                    <span className="flex items-center gap-1 text-[10.5px] font-bold text-[#1f3864]">
+                      <IconArchive className="h-4 w-4" /> Add Native File
+                    </span>
+                    <span className="text-[9.5px] text-[#5c6b78]">
+                      فایل اصلی طراحی و تولید مدرک؛ فقط صادرکننده می‌تواند آن را بارگذاری کند.
+                    </span>
+                    <span className="flex-1" />
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 border border-[#71869a] bg-gradient-to-b from-[#fdfefe] to-[#d8e1e8] px-2 py-1 text-[10px] font-bold text-[#1f3864] disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={!canManageNative || busy || data.lines.length === 0}
+                      onClick={() => data.lines[0] && chooseAttachment(data.lines[0], "native")}
+                      title="افزودن فایل Native برای اولین مدرک این ترانسمیتال"
+                    >
+                      <IconAdd className="h-3.5 w-3.5" /> افزودن Native File
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
                     <table className="table-base">
                       <thead>
                         <tr>
-                          <th style={{ width: 130 }}>Doc. No.</th>
-                          <th>Filename</th>
-                          <th style={{ width: 74 }}>Type</th>
-                          <th style={{ width: 82 }}>Size</th>
-                          <th style={{ width: 92 }} className="cell-center">Operations</th>
+                          <th style={{ width: 42 }}>Row</th>
+                          <th>Title</th>
+                          <th style={{ width: 92 }}>Publish Date</th>
+                          <th style={{ width: 110 }}>Publisher</th>
+                          <th>Details</th>
+                          <th className="cell-center" style={{ width: 48 }}>Edit</th>
+                          <th className="cell-center" style={{ width: 48 }}>View</th>
+                          <th className="cell-center" style={{ width: 62 }}>Download</th>
+                          <th className="cell-center" style={{ width: 72 }}>Set Access</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {(data.attachments ?? []).length === 0 ? (
-                          <tr><td colSpan={5} className="cell-center text-[10px] text-[#5c6b78]">پیوست PDF یا Native ثبت نشده است.</td></tr>
+                        {nativeAttachments.length === 0 ? (
+                          <tr>
+                            <td colSpan={9} className="cell-center py-4 text-[10px] text-[#5c6b78]">
+                              فایل Native ثبت نشده است.
+                            </td>
+                          </tr>
                         ) : (
-                          (data.attachments ?? []).map((attachment) => {
+                          nativeAttachments.map((attachment, index) => {
                             const line = data.lines.find((item) => item.id === attachment.line_id);
+                            const accessible = canViewAttachment(attachment);
                             return (
                               <tr key={attachment.id}>
-                                <td className="ltr font-bold">{line?.doc_code ?? "—"}</td>
-                                <td className="truncate" title={attachment.filename}>{attachment.filename}</td>
-                                <td className="cell-center">{attachment.kind.toUpperCase()}</td>
-                                <td className="cell-center">{fileSize(attachment.size_bytes)}</td>
+                                <td className="cell-center">{persianDigits(index + 1)}</td>
+                                <td>
+                                  <div className="font-bold">{line?.title ?? attachment.filename}</div>
+                                  <div className="ltr text-[9px] text-[#5c6b78]">{line?.doc_code ?? "—"}</div>
+                                </td>
+                                <td className="whitespace-nowrap text-[10px]">{jalali(attachment.uploaded_at)}</td>
+                                <td className="text-[10px]">{attachment.uploaded_by_name ?? "—"}</td>
+                                <td>
+                                  <div className="ltr truncate font-mono text-[10px]" title={attachment.filename}>{attachment.filename}</div>
+                                  <div className="text-[9px] text-[#5c6b78]">{fileSize(attachment.size_bytes)} · {attachment.content_type}</div>
+                                  {!accessible ? <span className="mt-0.5 inline-flex items-center gap-1 text-[9px] font-bold text-[#9a3d32]"><IconLock className="h-3 w-3" /> دسترسی محدود</span> : null}
+                                </td>
                                 <td className="cell-center">
-                                  <span className="flex items-center justify-center gap-1">
-                                    <IconButton icon={<IconView />} label="مشاهده پیوست" onClick={() => void openAttachmentPreview(attachment)} />
-                                    <a
-                                      className="icon-btn no-underline"
-                                      href={api.downloadUrl(`/transmittals/${data.id}/attachments/${attachment.id}/download`)}
-                                      download={attachment.filename}
-                                      rel="noopener"
-                                      title="دانلود پیوست"
-                                      aria-label="دانلود پیوست"
-                                    >
-                                      <IconArchive />
-                                    </a>
-                                    {canManageAttachments ? <IconButton icon={<IconEdit />} label="ویرایش پیوست" disabled={busy} onClick={() => openAttachmentEdit(attachment)} /> : null}
-                                    {canManageAttachments ? <IconButton icon={<IconDelete />} label="حذف پیوست" disabled={busy} onClick={() => void deleteAttachment(attachment)} /> : null}
-                                  </span>
+                                  {canManageNative ? <IconButton icon={<IconEdit />} label="ویرایش فایل Native" disabled={busy} onClick={() => openAttachmentEdit(attachment)} /> : <span>—</span>}
+                                </td>
+                                <td className="cell-center">
+                                  <IconButton icon={<IconView />} label={accessible ? "مشاهده فایل Native" : "دسترسی مشاهده ندارید"} disabled={!accessible || busy} onClick={() => void openAttachmentPreview(attachment)} />
+                                </td>
+                                <td className="cell-center">
+                                  <IconButton icon={<IconArchive />} label={accessible ? "دانلود فایل Native" : "دسترسی دانلود ندارید"} disabled={!accessible || busy} onClick={() => void downloadAttachment(attachment)} />
+                                </td>
+                                <td className="cell-center">
+                                  {canManageNative ? <IconButton icon={<IconLock />} label="تعیین سطح دسترسی" disabled={busy} onClick={() => void openAttachmentAccess(attachment)} /> : <span>—</span>}
                                 </td>
                               </tr>
                             );
@@ -1210,8 +1261,8 @@ export function TransmittalDetail() {
                       </tbody>
                     </table>
                   </div>
-                  <p className="px-2 py-1 text-[9.5px] text-[#5c6b78]">
-                    فایل اصلی PDF هر خط و فایل‌های Native پیوست‌شده از انبار اسناد و با احراز هویت دریافت می‌شوند.
+                  <p className="px-2 py-1 text-[9.5px] leading-5 text-[#5c6b78]">
+                    فایل‌های Native شامل Word، Excel، DWG، ZIP، RAR، PNG، PSD و سایر فایل‌های اصلی هستند. مشاهده و دانلود فقط برای کاربران تعیین‌شده و با احراز هویت انجام می‌شود.
                   </p>
                 </div>
               ),
@@ -1552,6 +1603,51 @@ export function TransmittalDetail() {
         </p>
       </Modal>
 
+      {/* ---------- سطح دسترسی فایل Native ---------- */}
+      <Modal
+        open={Boolean(accessAttachment)}
+        title={accessAttachment ? `Set Access — ${accessAttachment.filename}` : "Set Access"}
+        onClose={() => {
+          if (!accessBusy) setAccessAttachment(null);
+        }}
+        width="max-w-2xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button className="btn-sm" disabled={accessBusy} onClick={() => setAccessAttachment(null)}>
+              انصراف
+            </Button>
+            <Button className="btn-sm btn-primary" disabled={accessBusy || !accessAttachment} onClick={() => void saveAttachmentAccess()}>
+              {accessBusy ? "در حال ذخیره…" : "ذخیره سطح دسترسی"}
+            </Button>
+          </div>
+        }
+      >
+        {accessError ? <ErrorBox message={accessError} /> : null}
+        <div className="mb-2 border border-[#a8a284] bg-[#fffdf3] px-2 py-1.5 text-[10px] leading-5 text-[#5c4b18]">
+          فقط کاربران انتخاب‌شده می‌توانند فایل Native را مشاهده یا دانلود کنند. صادرکننده و بارگذار فایل همیشه دسترسی خود را حفظ می‌کنند.
+        </div>
+        <div className="max-h-72 overflow-auto border border-[#c3ccd6] bg-white">
+          {accessMembers.length === 0 ? (
+            <p className="px-2 py-4 text-center text-[10px] text-[#5c6b78]">عضو فعالی برای تعیین دسترسی پیدا نشد.</p>
+          ) : (
+            accessMembers.map((member) => (
+              <label key={member.user_id} className="flex cursor-pointer items-center gap-2 border-b border-[#e6e1c8] px-2 py-1.5 text-[10px] last:border-b-0 hover:bg-[#f7f8f2]">
+                <input
+                  type="checkbox"
+                  checked={accessUserIds.includes(member.user_id)}
+                  onChange={() => toggleAttachmentAccess(member.user_id)}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-bold text-[#20365c]">{member.full_name}</span>
+                  <span className="block truncate text-[9px] text-[#5c6b78]">{member.role} · {member.email}</span>
+                </span>
+                {accessUserIds.includes(member.user_id) ? <span className="text-[9px] font-bold text-[#3f8f45]">مجاز</span> : null}
+              </label>
+            ))
+          )}
+        </div>
+      </Modal>
+
       {/* ---------- مشاهده واقعی PDF و فایل Native ---------- */}
       <Modal
         open={Boolean(previewAttachment)}
@@ -1565,14 +1661,9 @@ export function TransmittalDetail() {
             </span>
             <div className="flex items-center gap-2">
               {previewAttachment ? (
-                <a
-                  className="btn btn-sm no-underline"
-                  href={api.downloadUrl(`/transmittals/${data.id}/attachments/${previewAttachment.id}/download`)}
-                  download={previewAttachment.filename}
-                  rel="noopener"
-                >
+                <Button className="btn-sm" onClick={() => void downloadAttachment(previewAttachment)}>
                   دریافت فایل
-                </a>
+                </Button>
               ) : null}
               <Button className="btn-sm" onClick={closeAttachmentPreview}>
                 بستن

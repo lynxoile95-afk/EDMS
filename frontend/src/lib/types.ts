@@ -404,6 +404,9 @@ export interface DocumentAttachment {
   size_bytes: number;
   uploaded_at: string;
   uploaded_by_id: string | null;
+  uploaded_by_name?: string | null;
+  access_user_ids?: string[];
+  access_restricted?: boolean;
 }
 
 export interface TransmittalDetail extends Transmittal {

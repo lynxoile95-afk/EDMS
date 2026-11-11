@@ -80,6 +80,25 @@ def test_pdf_and_native_attachment_previews_are_authenticated_and_inline(
     assert native_preview.status_code == 200, native_preview.text
     assert native_preview.headers["content-disposition"].startswith("inline;")
     assert native_preview.content == b"native-cad-bytes"
+    assert uploaded_native.json()["attachment"]["access_restricted"] is True
+
+    reviewer_headers = auth_headers(client, "reviewer@edms-test.com")
+    reviewer_denied = client.get(
+        f"/api/v1/transmittals/{draft.id}/attachments/{native_id}/preview", headers=reviewer_headers
+    )
+    assert reviewer_denied.status_code == 403
+
+    granted = client.patch(
+        f"/api/v1/transmittals/{draft.id}/attachments/{native_id}/access",
+        headers=headers,
+        json={"user_ids": [str(users["reviewer"].id)]},
+    )
+    assert granted.status_code == 200, granted.text
+    reviewer_allowed = client.get(
+        f"/api/v1/transmittals/{draft.id}/attachments/{native_id}/preview", headers=reviewer_headers
+    )
+    assert reviewer_allowed.status_code == 200
+    assert reviewer_allowed.content == b"native-cad-bytes"
 
     client.cookies.clear()
     unauthenticated = client.get(

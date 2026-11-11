@@ -49,6 +49,13 @@ class AttachmentOut(BaseModel):
     size_bytes: int
     uploaded_at: datetime
     uploaded_by_id: uuid.UUID | None = None
+    uploaded_by_name: str | None = None
+    access_user_ids: list[uuid.UUID] = Field(default_factory=list)
+    access_restricted: bool = False
+
+
+class AttachmentAccessUpdate(BaseModel):
+    user_ids: list[uuid.UUID] = Field(default_factory=list, max_length=500)
 
 
 class TransmittalCreate(BaseModel):

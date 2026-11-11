@@ -36,6 +36,7 @@ from app.models.enums import (
 )
 from app.schemas.transmittals import (
     AcknowledgeRequest,
+    AttachmentAccessUpdate,
     CancelRequest,
     CompleteRequest,
     ForwardRequest,
@@ -149,6 +150,7 @@ def _referral_out(referral) -> ReferralOut:
 
 
 def _attachment_out(raw: dict) -> AttachmentOut:
+    access_user_ids = [str(value) for value in (raw.get("access_user_ids") or [])]
     return AttachmentOut(
         id=raw["id"],
         line_id=raw["line_id"],
@@ -159,7 +161,72 @@ def _attachment_out(raw: dict) -> AttachmentOut:
         size_bytes=int(raw.get("size_bytes") or 0),
         uploaded_at=raw["uploaded_at"],
         uploaded_by_id=raw.get("uploaded_by_id"),
+        uploaded_by_name=raw.get("uploaded_by_name"),
+        access_user_ids=access_user_ids,
+        access_restricted=raw.get("kind") == "native" and bool(access_user_ids),
     )
+
+
+def _attachment_access_ids(raw: dict) -> set[str]:
+    return {str(value) for value in (raw.get("access_user_ids") or [])}
+
+
+def _native_attachment_accessible(db, user: User, transmittal: Transmittal, attachment: dict) -> bool:
+    """Native files may be narrower than the transmittal's general ACL.
+
+    Legacy attachments without an explicit list continue to use the transmittal
+    access-circle rule. New native files get an explicit list at upload time;
+    the uploader and the transmittal's issuer/creator remain emergency owners so
+    an access mistake cannot lock the source file away from its custodian.
+    """
+    if attachment.get("kind") != "native":
+        return True
+    access_ids = _attachment_access_ids(attachment)
+    if not access_ids or user.is_superuser:
+        return True
+    owner_ids = {
+        str(value)
+        for value in (
+            attachment.get("uploaded_by_id"),
+            transmittal.created_by_id,
+            transmittal.sender_id,
+            transmittal.issued_by_id,
+        )
+        if value
+    }
+    return str(user.id) in access_ids or str(user.id) in owner_ids
+
+
+def _assert_native_attachment_access(db, user: User, transmittal: Transmittal, attachment: dict) -> None:
+    if not _native_attachment_accessible(db, user, transmittal, attachment):
+        raise acl.AccessDenied("دسترسی مشاهده یا دریافت این فایل Native برای شما مجاز نیست.")
+
+
+def _can_manage_attachments(db, user: User, transmittal: Transmittal) -> bool:
+    if acl.has_role(
+        db,
+        user,
+        transmittal.project_id,
+        ProjectRole.DCC,
+        ProjectRole.PROJECT_CONTROL,
+        ProjectRole.PMO,
+        ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
+    ):
+        return True
+    return bool(
+        transmittal.manual_workflow
+        and transmittal.created_by_id == user.id
+        and str(transmittal.status) == str(TransmittalStatus.DRAFT)
+    )
+
+
+def _is_transmittal_issuer(user: User, transmittal: Transmittal) -> bool:
+    return user.is_superuser or user.id in {
+        transmittal.created_by_id,
+        transmittal.sender_id,
+        transmittal.issued_by_id,
+    }
 
 
 def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
@@ -691,25 +758,10 @@ async def upload_attachment(
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     project = acl.require_transmittal(db, user, transmittal)
     _assert_attachments_editable(transmittal)
-    can_manage = acl.has_role(
-        db,
-        user,
-        transmittal.project_id,
-        ProjectRole.DCC,
-        ProjectRole.PROJECT_CONTROL,
-        ProjectRole.PMO,
-        ProjectRole.PROJECT_MANAGER,
-        ProjectRole.SYSTEM_ADMIN,
-    )
-    is_manual_owner = (
-        transmittal.manual_workflow
-        and transmittal.created_by_id == user.id
-        and str(transmittal.status) == str(TransmittalStatus.DRAFT)
-    )
-    if not can_manage and not is_manual_owner:
-        raise acl.AccessDenied("فقط ایجادکننده پیش‌نویس یا مسئول کنترل می‌تواند پیوست بارگذاری کند.")
-    if transmittal.manual_workflow and kind != "pdf":
-        raise HTTPException(status_code=422, detail="در ترانسمیتال دستی فقط فایل PDF پذیرفته می‌شود.")
+    if not _can_manage_attachments(db, user, transmittal):
+        raise acl.AccessDenied("فقط مسئول کنترل یا ایجادکننده مجاز به بارگذاری پیوست است.")
+    if kind == "native" and not _is_transmittal_issuer(user, transmittal):
+        raise acl.AccessDenied("بارگذاری فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")
     line = db.get(TransmittalLine, line_id)
     if line is None or line.transmittal_id != transmittal.id:
         raise HTTPException(status_code=404, detail="ردیف مدرک این برگه ارسال یافت نشد.")
@@ -766,6 +818,10 @@ async def upload_attachment(
             "storage_key": storage_key,
             "uploaded_at": datetime.now(timezone.utc).isoformat(),
             "uploaded_by_id": str(user.id),
+            "uploaded_by_name": user.full_name,
+            # Native files start private to their issuer. The issuer can grant
+            # access explicitly through the Set Access action in the table.
+            "access_user_ids": [str(user.id)] if kind == "native" else [],
         }
         meta = dict(transmittal.meta or {})
         attachments = list(meta.get("attachments") or [])
@@ -823,6 +879,7 @@ def download_attachment(
     )
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    _assert_native_attachment_access(db, user, transmittal, attachment)
     audit.record(
         db,
         action="transmittal.attachment.download",
@@ -881,6 +938,7 @@ def preview_attachment(
     )
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    _assert_native_attachment_access(db, user, transmittal, attachment)
 
     storage = get_storage()
     storage_key = attachment.get("storage_key")
@@ -938,29 +996,14 @@ async def update_attachment(
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     project = acl.require_transmittal(db, user, transmittal)
     _assert_attachments_editable(transmittal)
-    can_manage = acl.has_role(
-        db,
-        user,
-        transmittal.project_id,
-        ProjectRole.DCC,
-        ProjectRole.PROJECT_CONTROL,
-        ProjectRole.PMO,
-        ProjectRole.PROJECT_MANAGER,
-        ProjectRole.SYSTEM_ADMIN,
-    )
-    is_manual_owner = (
-        transmittal.manual_workflow
-        and transmittal.created_by_id == user.id
-        and str(transmittal.status) == str(TransmittalStatus.DRAFT)
-    )
-    if not can_manage and not is_manual_owner:
-        raise acl.AccessDenied("فقط ایجادکننده پیش‌نویس یا مسئول کنترل می‌تواند پیوست را ویرایش کند.")
-    if transmittal.manual_workflow and kind != "pdf":
-        raise HTTPException(status_code=422, detail="در ترانسمیتال دستی فقط فایل PDF پذیرفته می‌شود.")
+    if not _can_manage_attachments(db, user, transmittal):
+        raise acl.AccessDenied("فقط مسئول کنترل یا ایجادکننده مجاز به ویرایش پیوست است.")
     attachments = list((transmittal.meta or {}).get("attachments") or [])
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    if attachment.get("kind") == "native" and not _is_transmittal_issuer(user, transmittal):
+        raise acl.AccessDenied("ویرایش فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")
 
     safe_filename = os.path.basename(filename.strip())[:500]
     if not safe_filename:
@@ -1012,6 +1055,7 @@ async def update_attachment(
             new_size = size
             new_sha256 = digest.hexdigest()
 
+        existing_access_ids = _attachment_access_ids(attachment)
         updated = {
             **attachment,
             "filename": safe_filename,
@@ -1020,6 +1064,12 @@ async def update_attachment(
             "size_bytes": new_size,
             "sha256": new_sha256,
             "storage_key": new_storage_key,
+            "uploaded_by_name": attachment.get("uploaded_by_name") or user.full_name,
+            "access_user_ids": (
+                sorted(existing_access_ids or {str(attachment.get("uploaded_by_id") or user.id)})
+                if kind == "native"
+                else []
+            ),
         }
         meta = dict(transmittal.meta or {})
         meta["attachments"] = [updated if str(item.get("id")) == str(attachment_id) else item for item in attachments]
@@ -1062,6 +1112,79 @@ async def update_attachment(
             os.unlink(temp_path)
 
 
+@router.patch(
+    "/transmittals/{transmittal_id}/attachments/{attachment_id}/access",
+    response_model=AttachmentOut,
+    summary="تعیین سطح دسترسی فایل Native",
+)
+def update_attachment_access(
+    transmittal_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    payload: AttachmentAccessUpdate,
+    db: DbSession,
+    user: CurrentUser,
+) -> AttachmentOut:
+    transmittal = db.get(Transmittal, transmittal_id)
+    if transmittal is None:
+        raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
+    project = acl.require_transmittal(db, user, transmittal)
+    _assert_attachments_editable(transmittal)
+    if not _can_manage_attachments(db, user, transmittal) or not _is_transmittal_issuer(user, transmittal):
+        raise acl.AccessDenied("فقط صادرکننده ترانسمیتال می‌تواند سطح دسترسی فایل را تعیین کند.")
+
+    attachments = list((transmittal.meta or {}).get("attachments") or [])
+    attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    if attachment.get("kind") != "native":
+        raise HTTPException(status_code=422, detail="سطح دسترسی جداگانه فقط برای فایل Native قابل تعیین است.")
+
+    requested_uuid_ids = set(payload.user_ids)
+    requested_ids = {str(value) for value in requested_uuid_ids}
+    project_user_ids = {
+        str(value)
+        for value in db.execute(
+            select(ProjectMember.user_id).where(
+                ProjectMember.project_id == transmittal.project_id,
+                *([ProjectMember.user_id.in_(list(requested_uuid_ids))] if requested_uuid_ids else []),
+            )
+        ).scalars()
+    }
+    if requested_ids and project_user_ids != requested_ids:
+        raise HTTPException(status_code=422, detail="همه کاربران انتخاب‌شده باید عضو فعال همین پروژه باشند.")
+    for user_id in requested_uuid_ids:
+        target = db.get(User, user_id)
+        if target is None or not target.is_active or not acl.can_access_transmittal(db, target, transmittal):
+            raise HTTPException(status_code=422, detail="یکی از کاربران انتخاب‌شده به این ترانسمیتال دسترسی ندارد.")
+
+    owner_ids = {
+        str(value)
+        for value in (
+            attachment.get("uploaded_by_id"),
+            transmittal.created_by_id,
+            transmittal.sender_id,
+            transmittal.issued_by_id,
+        )
+        if value
+    }
+    access_ids = sorted(requested_ids | owner_ids)
+    updated = {**attachment, "access_user_ids": access_ids}
+    meta = dict(transmittal.meta or {})
+    meta["attachments"] = [updated if str(item.get("id")) == str(attachment_id) else item for item in attachments]
+    transmittal.meta = meta
+    audit.record(
+        db,
+        action="transmittal.attachment.access.update",
+        entity_type="transmittal",
+        entity_id=transmittal.id,
+        actor=user,
+        project_id=project.id,
+        after={"attachment_id": str(attachment_id), "user_ids": access_ids},
+    )
+    db.commit()
+    return _attachment_out(updated)
+
+
 @router.delete(
     "/transmittals/{transmittal_id}/attachments/{attachment_id}",
     response_model=TransmittalDetail,
@@ -1099,6 +1222,8 @@ def delete_attachment(
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    if attachment.get("kind") == "native" and not _is_transmittal_issuer(user, transmittal):
+        raise acl.AccessDenied("حذف فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")
     try:
         get_storage().delete(attachment["storage_key"])
     except Exception:

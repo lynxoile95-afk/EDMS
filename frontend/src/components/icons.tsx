@@ -49,6 +49,22 @@ export const IconDoc = (p: IconProps) => (
   </svg>
 );
 
+export const IconClipboard = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="5" y="4" width="14" height="17" rx="2" />
+    <path d="M9 4V2h6v2M9 10h6M9 14h4" />
+  </svg>
+);
+
+export const IconValidation = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5 3h9l5 5v10a3 3 0 0 1-3 3H5z" />
+    <path d="M14 3v5h5" />
+    <circle cx="17" cy="17" r="4" fill="currentColor" stroke="none" opacity=".16" />
+    <path d="m15.2 17 1.2 1.2 2.5-2.7" />
+  </svg>
+);
+
 export const IconDocs = (p: IconProps) => (
   <svg {...base} {...p}>
     <path d="M8 2h7l4 4v13H8z" />

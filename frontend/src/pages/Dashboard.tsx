@@ -9,6 +9,7 @@ import { Ribbon } from "@/components/window";
 import {
   IconArchive,
   IconArrow,
+  IconClipboard,
   IconChain,
   IconClock,
   IconComment,
@@ -20,6 +21,7 @@ import {
   IconPrint,
   IconRefresh,
   IconSearch,
+  IconValidation,
   IconView,
 } from "@/components/icons";
 import { ACTION_LABELS, PURPOSE_LABELS, RULE_LABELS, STAGE_LABELS, STATUS_LABELS, jalali, jalaliDateTime, percent, persianDigits } from "@/lib/format";
@@ -413,10 +415,13 @@ export function Dashboard() {
 
       {/* ---------- inbox ---------- */}
       <Card className="is-main">
-        <div className="card-header">
-          <h2>
-            کارتابل وظایف سازمانی —{" "}
-            {data.review_queue > 0 ? `${persianDigits(data.review_queue)} وظیفه در انتظار` : "همه وظایف انجام شده"}
+        <div className="card-header dashboard-inbox-header">
+          <h2 className="dashboard-card-title">
+            <IconClipboard />
+            <span>
+              کارتابل وظایف سازمانی —{" "}
+              {data.review_queue > 0 ? `${persianDigits(data.review_queue)} وظیفه در انتظار` : "همه وظایف انجام شده"}
+            </span>
           </h2>
           <div className="flex items-center gap-2 text-[10px] text-[#1f3864]">
             <span>
@@ -475,7 +480,7 @@ export function Dashboard() {
             description={`هیچ مدرک یا برگه ارسالی برای «${project.name}» ثبت نشده است.`}
           />
         ) : (
-          <div className="max-h-[52vh] overflow-auto">
+          <div className="dashboard-table-scroll max-h-[52vh] overflow-auto">
             <table className="table-base">
               <thead>
                 <tr>
@@ -652,7 +657,7 @@ export function Dashboard() {
           </div>
         )}
 
-        {visibleRows.length > 0 ? (
+        {visibleRows.length > INBOX_PAGE_SIZE ? (
           <div className="table-pagination" aria-label="صفحه‌بندی کارتابل">
             <span className="table-pagination-summary">
               نمایش {persianDigits((page - 1) * INBOX_PAGE_SIZE + 1)} تا {persianDigits(Math.min(page * INBOX_PAGE_SIZE, visibleRows.length))} از {persianDigits(visibleRows.length)} ردیف
@@ -785,7 +790,7 @@ export function Dashboard() {
             },
           ]}
         />
-        <div className="flex items-center justify-between px-2 py-1 text-[9.5px] text-[#5c6b78]">
+        <div className="dashboard-selection-bar flex items-center justify-between px-2 py-1 text-[9.5px] text-[#5c6b78]">
           <span>{current ? `انتخاب‌شده: ${current.title}` : "یک ردیف را انتخاب کنید"}</span>
           <span className="flex items-center gap-1">
             <IconClock className="h-3 w-3" /> {jalali(new Date())}
@@ -796,9 +801,12 @@ export function Dashboard() {
 
       {/* ---------- progress + validation issues ---------- */}
       <div className="grid gap-2 lg:grid-cols-2">
-        <Card>
+        <Card className="dashboard-status-card">
           <div className="card-header">
-            <h2>وضعیت جاری پروژه</h2>
+            <h2 className="dashboard-card-title">
+              <IconFlow />
+              <span>وضعیت جاری پروژه</span>
+            </h2>
             <span className="text-[10px] text-[#5c6b78]">آخرین به‌روزرسانی: {jalali(new Date())}</span>
           </div>
           <div className="p-2">
@@ -830,14 +838,20 @@ export function Dashboard() {
           </div>
         </Card>
 
-        <Card>
+        <Card className="dashboard-validation-card">
           <div className="card-header">
-            <h2>پرتکرارترین ایرادهای اعتبارسنجی</h2>
-            <span className="text-[10px] text-[#5c6b78]">قواعد R01–R22</span>
+            <h2 className="dashboard-card-title">
+              <IconValidation />
+              <span>پرتکرارترین ایرادهای اعتبارسنجی</span>
+            </h2>
+            <span className="rules-badge">قواعد R01–R22</span>
           </div>
           <div className="p-2">
             {Object.keys(data.issues_by_rule).length === 0 ? (
-              <p className="text-[10.5px] text-[#5c6b78]">ایرادی ثبت نشده است.</p>
+              <div className="validation-empty-state">
+                <IconValidation />
+                <p>ایرادی ثبت نشده است.</p>
+              </div>
             ) : (
               <table className="table-base">
                 <thead>

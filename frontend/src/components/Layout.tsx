@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { useProject } from "@/lib/project";
 import type { Notification } from "@/lib/types";
 import { persianDigits } from "@/lib/format";
-import { IconArchive, IconBell, IconComment, IconDoc, IconEdit, IconFlow, IconGrid, IconHome, IconUpload, IconUsers } from "@/components/icons";
+import { IconArchive, IconBell, IconComment, IconDoc, IconEdit, IconFlow, IconGrid, IconHome, IconSearch, IconUpload, IconUsers } from "@/components/icons";
 
 const TOP_LINKS: { to: string; label: string; icon: ReactNode }[] = [
   { to: "/projects", label: "پروژه‌ها", icon: <IconGrid /> },
@@ -19,15 +19,17 @@ const TOP_LINKS: { to: string; label: string; icon: ReactNode }[] = [
   { to: "/registration", label: "ثبت برگه", icon: <IconEdit /> },
 ];
 
-const MENU: { title: string; items: { to: string; label: string; icon: ReactNode; badge?: "queue" | "unread" }[] }[] = [
+const MENU: { title: string; icon: ReactNode; items: { to: string; label: string; icon: ReactNode; badge?: "queue" | "unread" }[] }[] = [
   {
     title: "Project Control",
+    icon: <IconGrid />,
     items: [
       { to: "/projects", label: "تعریف و انتخاب پروژه", icon: <IconGrid /> },
     ],
   },
   {
     title: "Engineering Documents",
+    icon: <IconDoc />,
     items: [
       { to: "/dashboard", label: "کارتابل من", icon: <IconHome />, badge: "unread" },
       { to: "/transmittals", label: "برگه‌های ارسال", icon: <IconDoc /> },
@@ -41,6 +43,7 @@ const MENU: { title: string; items: { to: string; label: string; icon: ReactNode
   },
   {
     title: "Documents Center",
+    icon: <IconArchive />,
     items: [
       { to: "/mdl", label: "فهرست مدارک (MDL)", icon: <IconArchive /> },
       { to: "/transmittals", label: "پیگیری ارسال‌ها", icon: <IconBell /> },
@@ -124,7 +127,7 @@ export function Layout() {
 
       {/* ---------- masthead ---------- */}
       <header className="masthead">
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="masthead-brand flex min-w-0 items-center gap-3">
           <img
             className="masthead-logo"
             src="/aidana-logo.png"
@@ -136,30 +139,55 @@ export function Layout() {
           </div>
         </div>
         <div className="masthead-tools flex items-center gap-2">
-          <input
-            className="input w-52"
-            aria-label="جست‌وجوی سراسری"
-            placeholder="جستجو در سایت…"
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                const value = (event.target as HTMLInputElement).value.trim();
-                navigate(`/mdl${value ? `?q=${encodeURIComponent(value)}` : ""}`);
-              }
-            }}
-          />
-          <span className="text-[10px] text-[#5c6b78]">پروژه:</span>
-          <select
-            className="input w-40"
-            value={project?.id ?? ""}
-            onChange={(event) => select(event.target.value)}
+          <div className="masthead-search">
+            <IconSearch />
+            <input
+              className="input"
+              aria-label="جست‌وجوی سراسری"
+              placeholder="جستجو در سایت…"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  const value = (event.target as HTMLInputElement).value.trim();
+                  navigate(`/mdl${value ? `?q=${encodeURIComponent(value)}` : ""}`);
+                }
+              }}
+            />
+          </div>
+          <div className="project-picker">
+            <span>پروژه:</span>
+            <select
+              className="input"
+              value={project?.id ?? ""}
+              onChange={(event) => select(event.target.value)}
+              aria-label="پروژه فعال"
+            >
+              {projects.length === 0 ? <option value="">—</option> : null}
+              {projects.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.code} — {item.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="masthead-utilities">
+          <div className="masthead-user">
+            <span className="masthead-user-avatar"><IconUsers /></span>
+            <span className="masthead-user-name">{user?.full_name ?? "کاربر"}</span>
+            <span className="online-dot" />
+          </div>
+          <button
+            type="button"
+            className="masthead-icon-button masthead-notification-button"
+            aria-label="اعلان‌ها"
+            onClick={() => setPanelOpen((open) => !open)}
           >
-            {projects.length === 0 ? <option value="">—</option> : null}
-            {projects.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.code} — {item.name}
-              </option>
-            ))}
-          </select>
+            <IconBell />
+            {unread > 0 ? <span className="masthead-notification-count">{persianDigits(unread)}</span> : null}
+          </button>
+          <button type="button" className="masthead-icon-button" aria-label="راهنما" title="راهنمای سامانه">
+            ?
+          </button>
         </div>
       </header>
 
@@ -276,12 +304,18 @@ export function Layout() {
             aria-label={sidebarCollapsed ? "باز کردن منوی کناری" : "جمع کردن منوی کناری"}
             title={sidebarCollapsed ? "باز کردن منوی کناری" : "جمع کردن منوی کناری"}
           >
-            <span>{sidebarCollapsed ? "‹" : "›"}</span>
-            {!sidebarCollapsed ? <span>منوی سامانه</span> : null}
+            <span>{sidebarCollapsed ? "‹" : "⌄"}</span>
+            {!sidebarCollapsed ? <span className="sr-only">منوی سامانه</span> : null}
           </button>
           {MENU.map((group) => (
             <div key={group.title}>
-              {!sidebarCollapsed ? <p className="menu-group-title">{group.title}</p> : null}
+              {!sidebarCollapsed ? (
+                <p className="menu-group-title">
+                  <span className="menu-group-title-icon">{group.icon}</span>
+                  <span>{group.title}</span>
+                  <span className="menu-group-title-chevron">⌄</span>
+                </p>
+              ) : null}
               {group.items.map((item) => (
                 <NavLink
                   key={`${group.title}-${item.label}`}
@@ -305,7 +339,13 @@ export function Layout() {
               ))}
             </div>
           ))}
-          {!sidebarCollapsed ? <p className="menu-group-title">System</p> : null}
+          {!sidebarCollapsed ? (
+            <p className="menu-group-title">
+              <span className="menu-group-title-icon"><IconFlow /></span>
+              <span>System</span>
+              <span className="menu-group-title-chevron">⌄</span>
+            </p>
+          ) : null}
           <Link className="menu-item" to="/review" title={sidebarCollapsed ? "پردازش هوشمند" : undefined}>
             <span className="menu-item-content">
               <span className="menu-item-icon"><IconFlow /></span>

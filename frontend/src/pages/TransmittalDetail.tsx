@@ -377,9 +377,11 @@ export function TransmittalDetail() {
   // misleading clicks.
   const canManageAttachments = !attachmentsLocked && (canManage || isManualOwner);
   const isTransmittalIssuer = Boolean(
-    user && (user.is_superuser || [data.created_by_id, data.issued_by_id].includes(user.id)),
+    user && (user.is_superuser || [data.created_by_id, data.sender_id, data.issued_by_id].includes(user.id)),
   );
-  const canManageNative = canManageAttachments && isTransmittalIssuer;
+  // Native files are owned by the issuer. Do not require a DCC role here:
+  // legitimate issuers can be submitters or senders without document-control privileges.
+  const canManageNative = !attachmentsLocked && isTransmittalIssuer;
 
   const openFlowForLine = (line?: TransmittalLine) => {
     setFlowLine(line ?? null);
@@ -548,7 +550,7 @@ export function TransmittalDetail() {
       currentUserId &&
         (user?.is_superuser ||
           attachment.access_user_ids?.includes(currentUserId) ||
-          [data.created_by_id, data.issued_by_id].includes(currentUserId)),
+          [data.created_by_id, data.sender_id, data.issued_by_id].includes(currentUserId)),
     );
   };
 
@@ -1185,21 +1187,18 @@ export function TransmittalDetail() {
               content: (
                 <div>
                   <div className="flex flex-wrap items-center gap-2 border-b border-[#a8a284] bg-[#fbfaf2] px-2 py-1">
-                    <span className="flex items-center gap-1 text-[10.5px] font-bold text-[#1f3864]">
-                      <IconArchive className="h-4 w-4" /> Add Native File
-                    </span>
                     <span className="text-[9.5px] text-[#5c6b78]">
                       فایل اصلی طراحی و تولید مدرک؛ فقط صادرکننده می‌تواند آن را بارگذاری کند.
                     </span>
                     <span className="flex-1" />
                     <button
                       type="button"
-                      className="flex items-center gap-1 border border-[#71869a] bg-gradient-to-b from-[#fdfefe] to-[#d8e1e8] px-2 py-1 text-[10px] font-bold text-[#1f3864] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex items-center gap-1 border border-[#1a5327] bg-gradient-to-b from-[#6fba72] to-[#2f7838] px-2 py-1 text-[10px] font-bold text-white shadow-sm hover:from-[#82c883] hover:to-[#3f8f45] disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={!canManageNative || busy || data.lines.length === 0}
                       onClick={() => data.lines[0] && chooseAttachment(data.lines[0], "native")}
                       title="افزودن فایل Native برای اولین مدرک این ترانسمیتال"
                     >
-                      <IconAdd className="h-3.5 w-3.5" /> افزودن Native File
+                      <IconAdd className="h-4 w-4 rounded-full bg-[#2b6e34] p-0.5 text-white" /> Add Native File
                     </button>
                   </div>
                   <div className="overflow-x-auto">

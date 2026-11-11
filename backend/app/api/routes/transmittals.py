@@ -104,6 +104,7 @@ def _out(transmittal: Transmittal) -> TransmittalOut:
         due_date=transmittal.due_date,
         issue_date=transmittal.issue_date,
         issued_at=transmittal.issued_at,
+        sender_id=transmittal.sender_id,
         created_by_id=transmittal.created_by_id,
         created_by_name=transmittal.created_by.full_name if transmittal.created_by else None,
         issued_by_id=transmittal.issued_by_id,
@@ -758,10 +759,13 @@ async def upload_attachment(
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     project = acl.require_transmittal(db, user, transmittal)
     _assert_attachments_editable(transmittal)
-    if not _can_manage_attachments(db, user, transmittal):
+    # Native files belong to the issuer, not merely to a document-control role.
+    # PDF attachments keep the existing DCC/project-control permission model.
+    if kind == "native":
+        if not _is_transmittal_issuer(user, transmittal):
+            raise acl.AccessDenied("بارگذاری فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")
+    elif not _can_manage_attachments(db, user, transmittal):
         raise acl.AccessDenied("فقط مسئول کنترل یا ایجادکننده مجاز به بارگذاری پیوست است.")
-    if kind == "native" and not _is_transmittal_issuer(user, transmittal):
-        raise acl.AccessDenied("بارگذاری فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")
     line = db.get(TransmittalLine, line_id)
     if line is None or line.transmittal_id != transmittal.id:
         raise HTTPException(status_code=404, detail="ردیف مدرک این برگه ارسال یافت نشد.")
@@ -996,14 +1000,15 @@ async def update_attachment(
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     project = acl.require_transmittal(db, user, transmittal)
     _assert_attachments_editable(transmittal)
-    if not _can_manage_attachments(db, user, transmittal):
-        raise acl.AccessDenied("فقط مسئول کنترل یا ایجادکننده مجاز به ویرایش پیوست است.")
     attachments = list((transmittal.meta or {}).get("attachments") or [])
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
-    if attachment.get("kind") == "native" and not _is_transmittal_issuer(user, transmittal):
-        raise acl.AccessDenied("ویرایش فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")
+    if attachment.get("kind") == "native":
+        if not _is_transmittal_issuer(user, transmittal):
+            raise acl.AccessDenied("ویرایش فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")
+    elif not _can_manage_attachments(db, user, transmittal):
+        raise acl.AccessDenied("فقط مسئول کنترل یا ایجادکننده مجاز به ویرایش پیوست است.")
 
     safe_filename = os.path.basename(filename.strip())[:500]
     if not safe_filename:
@@ -1129,15 +1134,14 @@ def update_attachment_access(
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     project = acl.require_transmittal(db, user, transmittal)
     _assert_attachments_editable(transmittal)
-    if not _can_manage_attachments(db, user, transmittal) or not _is_transmittal_issuer(user, transmittal):
-        raise acl.AccessDenied("فقط صادرکننده ترانسمیتال می‌تواند سطح دسترسی فایل را تعیین کند.")
-
     attachments = list((transmittal.meta or {}).get("attachments") or [])
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
     if attachment.get("kind") != "native":
         raise HTTPException(status_code=422, detail="سطح دسترسی جداگانه فقط برای فایل Native قابل تعیین است.")
+    if not _is_transmittal_issuer(user, transmittal):
+        raise acl.AccessDenied("فقط صادرکننده ترانسمیتال می‌تواند سطح دسترسی فایل را تعیین کند.")
 
     requested_uuid_ids = set(payload.user_ids)
     requested_ids = {str(value) for value in requested_uuid_ids}
@@ -1216,14 +1220,15 @@ def delete_attachment(
         and transmittal.created_by_id == user.id
         and str(transmittal.status) == str(TransmittalStatus.DRAFT)
     )
-    if not can_manage and not is_manual_owner:
-        raise acl.AccessDenied("فقط ایجادکننده پیش‌نویس یا مسئول کنترل می‌تواند پیوست را حذف کند.")
     attachments = list((transmittal.meta or {}).get("attachments") or [])
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
-    if attachment.get("kind") == "native" and not _is_transmittal_issuer(user, transmittal):
-        raise acl.AccessDenied("حذف فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")
+    if attachment.get("kind") == "native":
+        if not _is_transmittal_issuer(user, transmittal):
+            raise acl.AccessDenied("حذف فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")
+    elif not can_manage and not is_manual_owner:
+        raise acl.AccessDenied("فقط ایجادکننده پیش‌نویس یا مسئول کنترل می‌تواند پیوست را حذف کند.")
     try:
         get_storage().delete(attachment["storage_key"])
     except Exception:

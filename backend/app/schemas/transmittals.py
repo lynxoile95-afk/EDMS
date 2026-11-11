@@ -143,6 +143,7 @@ class TransmittalOut(ORMModel):
     due_date: date | None = None
     issue_date: date | None = None
     issued_at: datetime | None = None
+    sender_id: uuid.UUID | None = None
     created_by_id: uuid.UUID | None = None
     created_by_name: str | None = None
     issued_by_id: uuid.UUID | None = None

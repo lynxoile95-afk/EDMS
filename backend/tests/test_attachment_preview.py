@@ -16,7 +16,7 @@ from tests.conftest import auth_headers
 FAKE_PDF = b"%PDF-1.4\n% attachment preview fixture\n%%EOF\n"
 
 
-def _draft(client: TestClient, db: Session, project, users):
+def _draft(client: TestClient, db: Session, project, users, actor_key: str = "dcc"):
     item = db.query(MDLItem).filter_by(project_id=project.id, doc_code_norm="TST-CIV-DR-001").one()
     revision = DocumentRevision(
         project_id=project.id,
@@ -35,7 +35,7 @@ def _draft(client: TestClient, db: Session, project, users):
         revisions=[revision],
         purpose=PurposeOfIssue.IFR,
         transmittal_type=TransmittalType.INTERNAL,
-        actor=users["dcc"],
+        actor=users[actor_key],
     )[0]
     db.commit()
     return draft
@@ -105,3 +105,20 @@ def test_pdf_and_native_attachment_previews_are_authenticated_and_inline(
         f"/api/v1/transmittals/{draft.id}/attachments/{pdf_id}/preview"
     )
     assert unauthenticated.status_code == 401
+
+
+def test_native_issuer_does_not_need_dcc_role_to_upload(client: TestClient, db: Session, project, users):
+    """The Native action follows the transmittal issuer, not a UI-only role list."""
+    draft = _draft(client, db, project, users, actor_key="submitter")
+    headers = auth_headers(client, "submitter@edms-test.com")
+    response = client.post(
+        f"/api/v1/transmittals/{draft.id}/attachments",
+        headers=headers,
+        data={"line_id": str(draft.lines[0].id), "kind": "native"},
+        files={"file": ("source.dwg", b"issuer-native-bytes", "application/octet-stream")},
+    )
+    assert response.status_code == 201, response.text
+    detail = client.get(f"/api/v1/transmittals/{draft.id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["sender_id"] == str(users["submitter"].id)
+    assert detail.json()["attachments"][0]["kind"] == "native"

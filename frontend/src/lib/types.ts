@@ -345,6 +345,7 @@ export interface Transmittal {
   due_date: string | null;
   issue_date: string | null;
   issued_at: string | null;
+  sender_id: string | null;
   created_by_id: string | null;
   created_by_name: string | null;
   issued_by_id: string | null;

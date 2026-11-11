@@ -234,7 +234,7 @@ function CommentRegistrationModal({
         </div>
       </div>
 
-      <div className="mb-1 border border-[#9aa8b4] bg-gradient-to-l from-[#f8fafc] to-white px-3 py-2 text-center">
+      <div className="comment-brand-panel mb-1 px-3 py-2 text-center">
         <img
           className="mx-auto h-10 w-28 object-contain"
           src="/aidana-logo.png"

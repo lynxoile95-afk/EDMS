@@ -229,7 +229,7 @@ export function ProgressBar({ value, className }: { value: number; className?: s
   return (
     <div className={clsx("h-2 w-full overflow-hidden border border-[#9aa8b4] bg-[#eef2f6]", className)}>
       <div
-        className="h-full bg-gradient-to-b from-[#5a9b5f] to-[#2f6b38] transition-all"
+        className="progress-fill h-full transition-all"
         style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }}
       />
     </div>

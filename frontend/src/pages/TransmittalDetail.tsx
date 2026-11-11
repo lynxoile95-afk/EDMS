@@ -1441,12 +1441,12 @@ export function TransmittalDetail() {
                     <span className="flex-1" />
                     <button
                       type="button"
-                      className="flex items-center gap-1 border border-[#1a5327] bg-gradient-to-b from-[#6fba72] to-[#2f7838] px-2 py-1 text-[10px] font-bold text-white shadow-sm hover:from-[#82c883] hover:to-[#3f8f45] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="btn btn-primary native-file-add-button"
                       disabled={!canManageNative || busy || data.lines.length === 0}
                       onClick={() => data.lines[0] && chooseAttachment(data.lines[0], "native")}
                       title="افزودن فایل Native برای اولین مدرک این ترانسمیتال"
                     >
-                      <IconAdd className="h-4 w-4 rounded-full bg-[#2b6e34] p-0.5 text-white" /> Add Native File
+                      <IconAdd className="native-file-add-icon" /> Add Native File
                     </button>
                   </div>
                   <div className="overflow-x-auto">

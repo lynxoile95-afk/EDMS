@@ -697,7 +697,7 @@ export function Team() {
           <div className="space-y-2 p-2">
             {circles.map((circle) => (
               <div key={circle.id} className="border border-[#a8b6c2] bg-[#f7f9fb]">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#c3ccd6] bg-gradient-to-b from-[#eaf1f7] to-[#d7e2ec] px-2 py-1.5">
+                <div className="team-circle-header flex flex-wrap items-center justify-between gap-2 px-2 py-1.5">
                   <div>
                     <span className="font-bold text-[#1f3864]">{circle.name}</span>
                     <span className="mr-2 ltr font-mono text-[10px] text-[#5c6b78]">{circle.code}</span>

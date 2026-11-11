@@ -346,7 +346,7 @@ export function Layout() {
         </main>
       </div>
 
-      <footer className="border-t border-[#b9c3cd] bg-gradient-to-b from-[#f4f7fa] to-[#e2e8ee] px-3 py-1.5 text-center text-[9.5px] text-[#5c6b78]">
+      <footer className="site-footer border-t px-3 py-1.5 text-center text-[9.5px]">
         سامانه هوشمند مدیریت اسناد مهندسی — نسخه ۱.۰ · تاریخ شمسی · Asia/Tehran
       </footer>
     </div>

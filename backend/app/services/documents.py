@@ -25,6 +25,7 @@ from app.services.revisions import (
     EQUAL,
     LOWER,
     compare_revs,
+    next_family_revision,
     rev_to_seq,
 )
 
@@ -49,13 +50,21 @@ def register_revision(
     extraction_result_id: uuid.UUID | None = None,
     notes: str | None = None,
     allow_equal_revision: bool = False,
+    transmittal_type: str | None = None,
 ) -> DocumentRevision:
     """Register a new revision. Idempotent on (mdl_item, rev) and on file hash.
 
     Raises 409 when the revision contradicts the register, so the API layer can
     return a precise message instead of a generic database error.
     """
-    rev_token = normalize_rev(rev)
+    type_token = str(getattr(transmittal_type, "value", transmittal_type) or "").strip().upper()
+    if type_token in {"OT", "OS"}:
+        stored_revisions = db.execute(
+            select(DocumentRevision.rev).where(DocumentRevision.mdl_item_id == mdl_item.id)
+        ).scalars().all()
+        rev_token = next_family_revision(stored_revisions, "B" if type_token == "OS" else "A")
+    else:
+        rev_token = normalize_rev(rev)
     if not rev_token:
         raise RevisionConflict("شماره بازنگری معتبر نیست.", "invalid_revision")
 
@@ -76,7 +85,10 @@ def register_revision(
         .where(DocumentRevision.mdl_item_id == mdl_item.id, DocumentRevision.is_current.is_(True))
         .limit(1)
     ).scalar_one_or_none()
-    current_rev = current.rev if current else mdl_item.current_rev
+    # OT/OS numbering is based on the append-only revision table. A legacy MDL
+    # row may contain a plain ``A``/``B`` value without a DocumentRevision; it
+    # must not prevent the first generated OT/OS token from being A0/B0.
+    current_rev = current.rev if current else None if type_token in {"OT", "OS"} else mdl_item.current_rev
 
     verdict = compare_revs(current_rev, rev_token, scheme)
     if verdict == LOWER:
@@ -101,9 +113,10 @@ def register_revision(
             )
         return duplicate
 
-    # --- supersede previous -------------------------------------------------
+    # --- preserve previous revision as immutable history -------------------
     if current is not None:
         current.is_current = False
+        current.status = RevisionStatus.VOID
 
     revision = DocumentRevision(
         project_id=project.id,

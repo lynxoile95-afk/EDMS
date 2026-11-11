@@ -459,7 +459,7 @@ def save_rows(
         if verdict in {"GREATER", "SKIP"}:
             for old in previous_current:
                 old.is_current = False
-                old.status = RevisionStatus.SUPERSEDED
+                old.status = RevisionStatus.VOID
                 old.superseded_by_id = revision.id
 
         mdl_item.current_rev = version

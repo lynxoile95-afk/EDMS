@@ -172,7 +172,11 @@ def create_manual_transmittal(
         for row in payload.rows:
             item = items_by_id[row.mdl_item_id]
             revision_token = normalize_rev(row.revision)
-            if not revision_token:
+            is_ot_os = payload.type in {
+                TransmittalType.ENGINEERING_OT.value,
+                TransmittalType.FINAL_OS.value,
+            }
+            if not revision_token and not is_ot_os:
                 raise HTTPException(
                     status_code=422,
                     detail=f"بازنگری مدرک «{item.doc_code}» معتبر نیست.",
@@ -187,7 +191,30 @@ def create_manual_transmittal(
                 .limit(1)
             ).scalar_one_or_none()
 
-            if current is not None and current.rev == revision_token:
+            # OT/OS revision allocation is authoritative in the data layer:
+            # every new OT gets A0/A1/…, while OS starts its own B0 family.
+            # The value typed by the UI is retained only for legacy internal
+            # transmittals and is never allowed to rewind an OT/OS history.
+            if is_ot_os:
+                file_hash = hashlib.sha256(
+                    f"manual-transmittal|{project.id}|{item.id}|{payload.type}|{uuid.uuid4()}".encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                revision = register_revision(
+                    db,
+                    project=project,
+                    mdl_item=item,
+                    rev=revision_token or "A0",
+                    file_hash=file_hash,
+                    title=item.title,
+                    page_count=row.page_count,
+                    actor=user,
+                    notes=row.note or "بازنگری ثبت‌شده از مسیر ترانسمیتال دستی",
+                    allow_equal_revision=False,
+                    transmittal_type=payload.type,
+                )
+            elif current is not None and current.rev == revision_token:
                 revision = current
             else:
                 file_hash = hashlib.sha256(

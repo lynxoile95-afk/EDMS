@@ -14,6 +14,7 @@ combining the alphabetic part and the numeric part into one comparable integer.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 from rapidfuzz import fuzz
 
@@ -89,6 +90,28 @@ def next_expected_rev(current: str | None, scheme: str = "auto") -> str:
     if not normalize_rev(current):
         return seq_to_rev(1, scheme)
     return seq_to_rev(rev_to_seq(current, scheme) + 1, scheme)
+
+
+def next_family_revision(revisions: Iterable[str | None], family: str) -> str:
+    """Return the next ``A0``/``A1`` or ``B0``/``B1`` style revision.
+
+    OT and OS are two revision families in the reference workflow: engineering
+    sheets start at A0, while the first final/site sheet starts a B-family at
+    B0. The calculation deliberately looks at persisted revisions rather than
+    the mutable MDL ``current_rev`` value, so historical rows remain the source
+    of truth and a new revision can never overwrite an old one.
+    """
+    token_family = normalize_rev(family)[:1] or "A"
+    highest: int | None = None
+    pattern = re.compile(rf"^{re.escape(token_family)}(\d+)?$")
+    for raw in revisions:
+        token = normalize_rev(raw)
+        match = pattern.fullmatch(token)
+        if match is None:
+            continue
+        number = int(match.group(1) or 0)
+        highest = number if highest is None else max(highest, number)
+    return f"{token_family}{0 if highest is None else highest + 1}"
 
 
 def compare_revs(current: str | None, new: str | None, scheme: str = "auto") -> str:

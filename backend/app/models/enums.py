@@ -105,6 +105,10 @@ class ReviewStatus(StrEnum):
 class RevisionStatus(StrEnum):
     REGISTERED = "registered"
     ISSUED = "issued"
+    #: The immutable historical state of a revision replaced by a newer one.
+    VOID = "void"
+    # Kept for compatibility with legacy line/status data; new revision
+    # lifecycle transitions use VOID so Document Records can print "Void".
     SUPERSEDED = "superseded"
     REJECTED = "rejected"
 

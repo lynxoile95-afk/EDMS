@@ -76,6 +76,63 @@ def test_manual_ot_stores_jalali_issue_date_and_line_status(client: TestClient, 
     assert body["lines"][0]["doc_status"] == "Approve As Note"
 
 
+def test_ot_os_revision_history_is_append_only_and_exposed_as_document_records(client: TestClient, project, users, db):
+    """A0/A1/A2 remain visible as Void rows when B0 (OS) is created."""
+    from app.models import MDLItem
+
+    item = db.query(MDLItem).filter_by(project_id=project.id, doc_code_norm="TST-CIV-DR-001").one()
+    dcc = auth_headers(client, "dcc@edms-test.com")
+
+    def create_and_issue(transmittal_type: str) -> dict:
+        created = client.post(
+            f"/api/v1/projects/{project.id}/transmittals/manual",
+            headers=dcc,
+            json={
+                "rows": [{"mdl_item_id": str(item.id), "revision": "A", "doc_status": "No Comment"}],
+                "type": transmittal_type,
+                "issue_date": "1405/08/02",
+                "final_approver_id": str(users["pm"].id),
+            },
+        )
+        assert created.status_code == 201, created.text
+        body = created.json()
+        issued = client.post(
+            f"/api/v1/transmittals/{body['id']}/issue",
+            headers=dcc,
+            json={"notify": False},
+        )
+        assert issued.status_code == 200, issued.text
+        return body
+
+    first = create_and_issue("OT")
+    second = create_and_issue("OT")
+    third = create_and_issue("OT")
+    assert [first["lines"][0]["rev"], second["lines"][0]["rev"], third["lines"][0]["rev"]] == ["A0", "A1", "A2"]
+
+    before_os = client.get(
+        f"/api/v1/mdl-items/{item.id}/document-records", headers=dcc
+    )
+    assert before_os.status_code == 200, before_os.text
+    assert [row["version"] for row in before_os.json()] == ["A2", "A1", "A0"]
+    assert [row["status"] for row in before_os.json()] == ["issued", "void", "void"]
+    assert before_os.json()[0]["is_latest"] is True
+
+    os_transmittal = create_and_issue("OS")
+    assert os_transmittal["lines"][0]["rev"] == "B0"
+    after_os = client.get(f"/api/v1/mdl-items/{item.id}/document-records", headers=dcc)
+    assert after_os.status_code == 200, after_os.text
+    assert [row["version"] for row in after_os.json()] == ["B0", "A2", "A1", "A0"]
+    assert [row["status"] for row in after_os.json()] == ["issued", "void", "void", "void"]
+    assert after_os.json()[0]["is_latest"] is True
+
+    second_os = create_and_issue("OS")
+    assert second_os["lines"][0]["rev"] == "B1"
+    after_second_os = client.get(f"/api/v1/mdl-items/{item.id}/document-records", headers=dcc)
+    assert [row["version"] for row in after_second_os.json()] == ["B1", "B0", "A2", "A1", "A0"]
+    assert [row["status"] for row in after_second_os.json()] == ["issued", "void", "void", "void", "void"]
+    assert after_second_os.json()[0]["is_latest"] is True
+
+
 def test_manual_referral_accepts_per_person_action_and_note(client: TestClient, project, users, db):
     from app.models import MDLItem
 

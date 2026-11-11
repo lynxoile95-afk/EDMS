@@ -39,6 +39,27 @@ class LineOut(ORMModel):
     discipline_code: str | None = None
 
 
+class DocumentRecordOut(ORMModel):
+    """One immutable revision row printed by a transmittal's Document Records tab."""
+
+    id: uuid.UUID
+    revision_id: uuid.UUID
+    doc_code: str | None = None
+    title: str | None = None
+    transmittal_id: uuid.UUID | None = None
+    transmittal_number: str | None = None
+    transmittal_type: str | None = None
+    transmittal_status: str | None = None
+    discipline: str | None = None
+    version: str
+    status: str
+    is_latest: bool = False
+    chain_count: int = 0
+    assigned_to: str | None = None
+    flow_history_count: int = 0
+    has_file: bool = False
+
+
 class AttachmentOut(BaseModel):
     id: uuid.UUID
     line_id: uuid.UUID

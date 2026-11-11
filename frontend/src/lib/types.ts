@@ -366,6 +366,25 @@ export interface Transmittal {
   line_action?: string | null;
 }
 
+export interface DocumentRecord {
+  id: string;
+  revision_id: string;
+  doc_code: string | null;
+  title: string | null;
+  transmittal_id: string | null;
+  transmittal_number: string | null;
+  transmittal_type: string | null;
+  transmittal_status: string | null;
+  discipline: string | null;
+  version: string;
+  status: string;
+  is_latest: boolean;
+  chain_count: number;
+  assigned_to: string | null;
+  flow_history_count: number;
+  has_file: boolean;
+}
+
 export interface TransmittalLine {
   id: string;
   line_no: number;

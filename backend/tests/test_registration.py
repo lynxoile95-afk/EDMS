@@ -260,7 +260,7 @@ def test_a_higher_revision_supersedes_the_old_one(
     assert item.current_rev == "A1"
     revisions = {rev.rev: rev for rev in db.query(DocumentRevision).filter(DocumentRevision.mdl_item_id == item.id)}
     assert revisions["A0"].is_current is False
-    assert revisions["A0"].status == "superseded"
+    assert revisions["A0"].status == "void"
     assert revisions["A0"].superseded_by_id == revisions["A1"].id
     assert revisions["A1"].is_current is True
 

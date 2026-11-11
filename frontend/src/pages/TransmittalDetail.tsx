@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type {
   CommentList as CommentListType,
+  DocumentRecord,
   ProjectMember,
   TransmittalDetail as Detail,
   TransmittalLine,
@@ -66,6 +67,7 @@ interface PersonnelReferralDraft {
 
 export function TransmittalDetail() {
   const { transmittalId } = useParams<{ transmittalId: string }>();
+  const navigate = useNavigate();
   const { hasRole, user } = useAuth();
   const [data, setData] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,7 +76,7 @@ export function TransmittalDetail() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [remarks, setRemarks] = useState("");
   const [comments, setComments] = useState<Record<string, CommentListType[]>>({});
-  const [records, setRecords] = useState<Record<string, TransmittalLine[]>>({});
+  const [documentRecords, setDocumentRecords] = useState<DocumentRecord[]>([]);
   const [activeTab, setActiveTab] = useState("letters");
   // review route: flow history, referral dialog, and the roster the dialog needs
   const [flowOpen, setFlowOpen] = useState(false);
@@ -124,6 +126,9 @@ export function TransmittalDetail() {
       setData(detail);
       setRemarks(detail.remarks ?? "");
       const revisionIds = Array.from(new Set(detail.lines.map((line) => line.revision_id)));
+      const mdlItemIds = Array.from(
+        new Set(detail.lines.map((line) => line.mdl_item_id).filter((id): id is string => Boolean(id))),
+      );
       const [commentResults, recordResults] = await Promise.all([
         Promise.all(
           revisionIds.map((id) =>
@@ -133,13 +138,13 @@ export function TransmittalDetail() {
           ),
         ),
         Promise.all(
-          revisionIds.map((id) =>
-            api.get<TransmittalLine[]>(`/revisions/${id}/transmittals`).catch(() => [] as TransmittalLine[]),
+          mdlItemIds.map((id) =>
+            api.get<DocumentRecord[]>(`/mdl-items/${id}/document-records`).catch(() => [] as DocumentRecord[]),
           ),
         ),
       ]);
       setComments(Object.fromEntries(revisionIds.map((id, index) => [id, commentResults[index]])));
-      setRecords(Object.fromEntries(revisionIds.map((id, index) => [id, recordResults[index]])));
+      setDocumentRecords(recordResults.flat());
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "بارگذاری برگه ارسال ناموفق بود.");
     } finally {
@@ -455,6 +460,22 @@ export function TransmittalDetail() {
       );
     } catch (err) {
       setAttachmentError(err instanceof ApiError ? err.detail : "دریافت پیوست ناموفق بود.");
+    }
+  };
+
+  const viewDocumentRecord = async (record: DocumentRecord) => {
+    if (!record.has_file) {
+      if (record.transmittal_id) navigate(`/transmittals/${record.transmittal_id}`);
+      else setActionError("فایل این بازنگری برای مشاهده در انبار اسناد موجود نیست.");
+      return;
+    }
+    try {
+      await api.download(
+        `/files/revisions/${record.revision_id}`,
+        `${record.doc_code ?? "document"}-Rev${record.version}.pdf`,
+      );
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.detail : "مشاهده بازنگری ناموفق بود.");
     }
   };
 
@@ -1302,59 +1323,109 @@ export function TransmittalDetail() {
               key: "records",
               label: "Document Records",
               content: (
-                <table className="table-base">
-                  <thead>
-                    <tr>
-                      <th style={{ width: 30 }}>Row</th>
-                      <th style={{ width: 150 }}>Doc. No.</th>
-                      <th>Doc. Title</th>
-                      <th style={{ width: 110 }}>Transmittal Type</th>
-                      <th style={{ width: 70 }}>Version</th>
-                      <th style={{ width: 90 }}>Status</th>
-                      <th className="cell-center" style={{ width: 90 }}>View</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.lines.flatMap((line) => {
-                      const list = records[line.revision_id] ?? [];
-                      if (list.length === 0) {
-                        return [
-                          <tr key={`${line.id}-none`}>
-                            <td className="cell-center">{persianDigits(line.line_no)}</td>
-                            <td className="ltr">{line.doc_code ?? "—"}</td>
-                            <td>{line.title ?? "—"}</td>
-                            <td>—</td>
-                            <td className="cell-center">{line.rev ?? "—"}</td>
-                            <td className="text-center">No Record</td>
-                            <td className="cell-center">—</td>
-                          </tr>,
-                        ];
-                      }
-                      return list.map((record, index) => (
-                        <tr key={`${line.id}-${record.id}`}>
-                          <td className="cell-center">{persianDigits(index + 1)}</td>
-                          <td className="ltr">{record.doc_code ?? line.doc_code ?? "—"}</td>
-                          <td>{record.title ?? line.title ?? "—"}</td>
-                          <td className="text-[10px]">Transmittal</td>
-                          <td className="cell-center">{record.rev ?? line.rev ?? "—"}</td>
-                          <td className="text-center">{STATUS_LABELS[record.status] ?? record.status}</td>
-                          <td className="cell-center">
-                            {record.transmittal_id ? (
-                              <Link
-                                className="text-[10px] font-bold text-[#1f4e79] underline"
-                                to={`/transmittals/${record.transmittal_id}`}
-                              >
-                                مشاهده
-                              </Link>
-                            ) : (
-                              "—"
-                            )}
+                <div className="overflow-x-auto">
+                  <table className="table-base">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 34 }}>Row</th>
+                        <th style={{ width: 150 }}>Doc. No.</th>
+                        <th>Doc. Title</th>
+                        <th style={{ width: 112 }}>Transmittal Type</th>
+                        <th style={{ width: 78 }}>Discipline</th>
+                        <th style={{ width: 66 }}>Version</th>
+                        <th style={{ width: 92 }}>Status</th>
+                        <th className="cell-center" style={{ width: 58 }}>Chain</th>
+                        <th style={{ width: 150 }}>Assign To</th>
+                        <th className="cell-center" style={{ width: 78 }}>Flow History</th>
+                        <th className="cell-center" style={{ width: 52 }}>View</th>
+                        <th className="cell-center" style={{ width: 64 }}>View W.S.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {documentRecords.length === 0 ? (
+                        <tr>
+                          <td colSpan={12} className="cell-center py-4 text-[10px] text-[#5c6b78]">
+                            سابقه‌ای برای این Doc. No. ثبت نشده است.
                           </td>
                         </tr>
-                      ));
-                    })}
-                  </tbody>
-                </table>
+                      ) : (
+                        documentRecords.map((record, index) => (
+                          <tr
+                            key={record.id}
+                            className={record.is_latest ? "bg-[#f4fbf4]" : "bg-[#f1f2f3] text-[#68737d]"}
+                          >
+                            <td className="cell-center">{persianDigits(index + 1)}</td>
+                            <td className="ltr font-bold">{record.doc_code ?? "—"}</td>
+                            <td title={record.title ?? ""}>
+                              <span className={record.is_latest ? "font-bold text-[#1f3864]" : "font-medium"}>
+                                {record.title ?? "—"}
+                              </span>
+                              {record.is_latest ? (
+                                <span className="mr-1 inline-flex rounded-sm border border-[#79a67d] bg-[#eaf7eb] px-1 text-[8.5px] font-bold text-[#2f7139]">
+                                  Latest
+                                </span>
+                              ) : null}
+                            </td>
+                            <td className="text-[10px]">
+                              {TRANSMITTAL_TYPE_LABELS[record.transmittal_type ?? ""] ?? record.transmittal_type ?? "—"}
+                            </td>
+                            <td className="text-center">{record.discipline ?? "—"}</td>
+                            <td className="cell-center ltr font-bold">{record.version}</td>
+                            <td className="cell-center">
+                              {record.is_latest ? (
+                                <span className="font-bold text-[#2f7139]">
+                                  Latest · {STATUS_LABELS[record.status] ?? record.status}
+                                </span>
+                              ) : (
+                                <span className="font-bold text-[#737b82]">Void</span>
+                              )}
+                            </td>
+                            <td className="cell-center">
+                              <IconButton
+                                icon={<IconChain />}
+                                label={`زنجیره ${persianDigits(record.chain_count)} بازنگری`}
+                                onClick={() => setActiveTab("records")}
+                              />
+                            </td>
+                            <td className="max-w-[9rem] truncate text-[9.5px]" title={record.assigned_to ?? ""}>
+                              {record.assigned_to ?? "—"}
+                            </td>
+                            <td className="cell-center">
+                              {record.transmittal_id ? (
+                                <IconButton
+                                  icon={<IconFlow />}
+                                  label={`Flow History (${persianDigits(record.flow_history_count)})`}
+                                  onClick={() => navigate(`/transmittals/${record.transmittal_id}`)}
+                                />
+                              ) : (
+                                <span>—</span>
+                              )}
+                            </td>
+                            <td className="cell-center">
+                              <IconButton
+                                icon={<IconView />}
+                                label="مشاهده بازنگری"
+                                disabled={!record.has_file && !record.transmittal_id}
+                                onClick={() => void viewDocumentRecord(record)}
+                              />
+                            </td>
+                            <td className="cell-center">
+                              {record.transmittal_id ? (
+                                <IconButton
+                                  icon={<IconDoc />}
+                                  label="مشاهده فضای کاری"
+                                  onClick={() => navigate(`/transmittals/${record.transmittal_id}`)}
+                                />
+                              ) : (
+                                <span>—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               ),
             },
             {

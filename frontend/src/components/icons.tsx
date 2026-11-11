@@ -14,6 +14,34 @@ const base = {
   "aria-hidden": true,
 };
 
+export const IconHome = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M3 11l9-8 9 8" />
+    <path d="M5 10v10h14V10M9 20v-6h6v6" />
+  </svg>
+);
+
+export const IconBell = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M6 17h12l-1.5-2V10a4.5 4.5 0 0 0-9 0v5z" />
+    <path d="M10 20h4" />
+  </svg>
+);
+
+export const IconUpload = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M12 16V4M8 8l4-4 4 4" />
+    <path d="M5 14v5h14v-5" />
+  </svg>
+);
+
+export const IconUsers = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="9" cy="8" r="3" />
+    <path d="M3 20a6 6 0 0 1 12 0M17 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 6" />
+  </svg>
+);
+
 export const IconDoc = (p: IconProps) => (
   <svg {...base} {...p}>
     <path d="M6 2h8l5 5v15H6z" />

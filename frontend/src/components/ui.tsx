@@ -122,11 +122,24 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-1.5 px-4 py-10 text-center">
-      <div className="grid h-8 w-8 place-items-center border border-[#b8c4cf] bg-[#eef3f8] text-[#456]">▤</div>
+    <div className="empty-state flex flex-col items-center justify-center gap-1.5 px-4 py-10 text-center">
+      <div className="empty-state-icon">▤</div>
       <p className="text-[11.5px] font-bold text-[#2b3c4b]">{title}</p>
       {description ? <p className="max-w-md text-[10.5px] leading-5 text-[#5c6b78]">{description}</p> : null}
       {action}
+    </div>
+  );
+}
+
+export function Skeleton({ className }: { className?: string }) {
+  return <span className={clsx("skeleton", className)} aria-hidden="true" />;
+}
+
+export function Toast({ message, tone = "info" }: { message: string; tone?: "info" | "success" | "error" }) {
+  return (
+    <div className={clsx("toast", `toast-${tone}`)} role="status" aria-live="polite">
+      <span className="toast-dot" />
+      {message}
     </div>
   );
 }
@@ -184,25 +197,30 @@ export function Stat({
   value,
   hint,
   tone = "default",
+  icon,
 }: {
   label: string;
   value: ReactNode;
   hint?: string;
   tone?: "default" | "good" | "warn" | "bad";
+  icon?: ReactNode;
 }) {
   const tones = {
-    default: "#1f3864",
-    good: "#1e6b34",
-    warn: "#8a5a10",
-    bad: "#97282b",
+    default: "#2563EB",
+    good: "#0D9488",
+    warn: "#F59E0B",
+    bad: "#EF4444",
   };
   return (
-    <div className="border border-[#9aa8b4] bg-white px-2 py-1.5">
-      <p className="text-[10px] text-[#4a5a67]">{label}</p>
-      <p className="mt-0.5 text-[15px] font-bold" style={{ color: tones[tone] }}>
-        {value}
-      </p>
-      {hint ? <p className="mt-0.5 text-[9px] text-[#7a8794]">{hint}</p> : null}
+    <div className={clsx("stat-card", `stat-card-${tone}`)}>
+      {icon ? <span className="stat-card-icon">{icon}</span> : null}
+      <div className="stat-card-content">
+        <p className="stat-card-label">{label}</p>
+        <p className="stat-card-value" style={{ color: tones[tone] }}>
+          {value}
+        </p>
+        {hint ? <p className="stat-card-hint">{hint}</p> : null}
+      </div>
     </div>
   );
 }

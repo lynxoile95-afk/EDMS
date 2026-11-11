@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -6,42 +7,43 @@ import { useAuth } from "@/lib/auth";
 import { useProject } from "@/lib/project";
 import type { Notification } from "@/lib/types";
 import { persianDigits } from "@/lib/format";
+import { IconArchive, IconBell, IconComment, IconDoc, IconEdit, IconFlow, IconGrid, IconHome, IconUpload, IconUsers } from "@/components/icons";
 
-const TOP_LINKS = [
-  { to: "/projects", label: "پروژه‌ها", icon: "▦" },
-  { to: "/dashboard", label: "خانه", icon: "⌂" },
-  { to: "/transmittals", label: "مدارک مهندسی", icon: "▤" },
-  { to: "/mdl", label: "MDL", icon: "☰" },
-  { to: "/review", label: "وظایف من", icon: "⚑" },
-  { to: "/upload", label: "بارگذاری", icon: "⇧" },
-  { to: "/registration", label: "ثبت برگه", icon: "▦" },
+const TOP_LINKS: { to: string; label: string; icon: ReactNode }[] = [
+  { to: "/projects", label: "پروژه‌ها", icon: <IconGrid /> },
+  { to: "/dashboard", label: "خانه", icon: <IconHome /> },
+  { to: "/transmittals", label: "مدارک مهندسی", icon: <IconDoc /> },
+  { to: "/mdl", label: "MDL", icon: <IconArchive /> },
+  { to: "/review", label: "وظایف من", icon: <IconComment /> },
+  { to: "/upload", label: "بارگذاری", icon: <IconUpload /> },
+  { to: "/registration", label: "ثبت برگه", icon: <IconEdit /> },
 ];
 
-const MENU: { title: string; items: { to: string; label: string; icon: string; badge?: "queue" | "unread" }[] }[] = [
+const MENU: { title: string; items: { to: string; label: string; icon: ReactNode; badge?: "queue" | "unread" }[] }[] = [
   {
     title: "Project Control",
     items: [
-      { to: "/projects", label: "تعریف و انتخاب پروژه", icon: "▦" },
+      { to: "/projects", label: "تعریف و انتخاب پروژه", icon: <IconGrid /> },
     ],
   },
   {
     title: "Engineering Documents",
     items: [
-      { to: "/dashboard", label: "کارتابل من", icon: "▣", badge: "unread" },
-      { to: "/transmittals", label: "برگه‌های ارسال", icon: "✉" },
-      { to: "/transmittals?mine=1", label: "کارتابل ارجاع من", icon: "⇄" },
-      { to: "/mdl", label: "MDL — فهرست مدارک", icon: "☰" },
-      { to: "/upload", label: "ثبت و بارگذاری مدرک", icon: "⇧" },
-      { to: "/registration", label: "ثبت برگهٔ ارسال (Registration)", icon: "▦" },
-      { to: "/review", label: "صف بازبینی (DCC)", icon: "⚑", badge: "queue" },
-      { to: "/team", label: "کاربران و نقش‌ها", icon: "☷" },
+      { to: "/dashboard", label: "کارتابل من", icon: <IconHome />, badge: "unread" },
+      { to: "/transmittals", label: "برگه‌های ارسال", icon: <IconDoc /> },
+      { to: "/transmittals?mine=1", label: "کارتابل ارجاع من", icon: <IconUsers /> },
+      { to: "/mdl", label: "MDL — فهرست مدارک", icon: <IconArchive /> },
+      { to: "/upload", label: "ثبت و بارگذاری مدرک", icon: <IconUpload /> },
+      { to: "/registration", label: "ثبت برگهٔ ارسال (Registration)", icon: <IconEdit /> },
+      { to: "/review", label: "صف بازبینی (DCC)", icon: <IconComment />, badge: "queue" },
+      { to: "/team", label: "کاربران و نقش‌ها", icon: <IconUsers /> },
     ],
   },
   {
     title: "Documents Center",
     items: [
-      { to: "/mdl", label: "فهرست مدارک (MDL)", icon: "☰" },
-      { to: "/transmittals", label: "پیگیری ارسال‌ها", icon: "◎" },
+      { to: "/mdl", label: "فهرست مدارک (MDL)", icon: <IconArchive /> },
+      { to: "/transmittals", label: "پیگیری ارسال‌ها", icon: <IconBell /> },
     ],
   },
 ];
@@ -68,6 +70,7 @@ export function Layout() {
   const [unread, setUnread] = useState(0);
   const [queueCount, setQueueCount] = useState(0);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => {
     document.title = location.pathname === "/upload"
@@ -132,9 +135,10 @@ export function Layout() {
             <p className="masthead-sub">Engineering Document Management System — EDMS-AI</p>
           </div>
         </div>
-        <div className="hidden items-center gap-2 md:flex">
+        <div className="masthead-tools flex items-center gap-2">
           <input
             className="input w-52"
+            aria-label="جست‌وجوی سراسری"
             placeholder="جستجو در سایت…"
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -164,6 +168,7 @@ export function Layout() {
       {/* ---------- main navigation ---------- */}
       <nav className="topnav">
         <div className="topnav-user">
+          <span className="user-avatar" aria-hidden="true">{(user?.full_name ?? "کاربر").slice(0, 1)}</span>
           <span className="status-dot bg-[#7fd18c]" />
           <span className="font-bold">{user?.full_name}</span>
           <span className="text-[9.5px] text-[#243842]">
@@ -199,7 +204,7 @@ export function Layout() {
             </NavLink>
           ))}
           <button className="topnav-link" onClick={() => setPanelOpen((open) => !open)}>
-            <span className="ml-1">✉</span>
+            <span className="topnav-link-icon"><IconBell /></span>
             اعلان‌ها
             {unread > 0 ? (
               <span className="mr-1 inline-block min-w-[15px] bg-[#b3403a] px-1 text-center text-[9px] text-white">
@@ -262,11 +267,21 @@ export function Layout() {
       ) : null}
 
       {/* ---------- body: content + right-hand menu ---------- */}
-      <div className="shell">
+      <div className={clsx("shell", sidebarCollapsed && "is-menu-collapsed")}>
         <aside className="menu-rail">
+          <button
+            type="button"
+            className="menu-collapse"
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            aria-label={sidebarCollapsed ? "باز کردن منوی کناری" : "جمع کردن منوی کناری"}
+            title={sidebarCollapsed ? "باز کردن منوی کناری" : "جمع کردن منوی کناری"}
+          >
+            <span>{sidebarCollapsed ? "‹" : "›"}</span>
+            {!sidebarCollapsed ? <span>منوی سامانه</span> : null}
+          </button>
           {MENU.map((group) => (
             <div key={group.title}>
-              <p className="menu-group-title">{group.title}</p>
+              {!sidebarCollapsed ? <p className="menu-group-title">{group.title}</p> : null}
               {group.items.map((item) => (
                 <NavLink
                   key={`${group.title}-${item.label}`}
@@ -274,29 +289,36 @@ export function Layout() {
                   className={({ isActive }) =>
                     clsx("menu-item", isActive && location.pathname === item.to && "is-active")
                   }
+                  title={sidebarCollapsed ? item.label : undefined}
                 >
-                  <span className="flex items-center gap-1.5 text-right">
-                    <span className="text-[11px]">{item.icon}</span>
-                    {item.label}
+                  <span className="menu-item-content">
+                    <span className="menu-item-icon">{item.icon}</span>
+                    {!sidebarCollapsed ? <span className="menu-item-label">{item.label}</span> : null}
                   </span>
-                  {item.badge === "unread" && unread > 0 ? (
+                  {!sidebarCollapsed && item.badge === "unread" && unread > 0 ? (
                     <span className="menu-item-count">{persianDigits(unread)}</span>
                   ) : null}
-                  {item.badge === "queue" && queueCount > 0 ? (
+                  {!sidebarCollapsed && item.badge === "queue" && queueCount > 0 ? (
                     <span className="menu-item-count">{persianDigits(queueCount)}</span>
                   ) : null}
                 </NavLink>
               ))}
             </div>
           ))}
-          <p className="menu-group-title">System</p>
-          <Link className="menu-item" to="/review">
-            <span>پردازش هوشمند</span>
-            <span className="text-[10px] text-[#1f6b34]">فعال</span>
+          {!sidebarCollapsed ? <p className="menu-group-title">System</p> : null}
+          <Link className="menu-item" to="/review" title={sidebarCollapsed ? "پردازش هوشمند" : undefined}>
+            <span className="menu-item-content">
+              <span className="menu-item-icon"><IconFlow /></span>
+              {!sidebarCollapsed ? <span className="menu-item-label">پردازش هوشمند</span> : null}
+            </span>
+            {!sidebarCollapsed ? <span className="menu-item-state">فعال</span> : null}
           </Link>
-          <button className="menu-item" onClick={() => setPanelOpen(true)}>
-            <span>اعلان‌های من</span>
-            <span className="text-[10px] text-[#1f3864]">{persianDigits(unread)}</span>
+          <button className="menu-item" onClick={() => setPanelOpen(true)} title={sidebarCollapsed ? "اعلان‌های من" : undefined}>
+            <span className="menu-item-content">
+              <span className="menu-item-icon"><IconBell /></span>
+              {!sidebarCollapsed ? <span className="menu-item-label">اعلان‌های من</span> : null}
+            </span>
+            {!sidebarCollapsed ? <span className="menu-item-state">{persianDigits(unread)}</span> : null}
           </button>
         </aside>
 

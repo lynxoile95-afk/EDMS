@@ -4,9 +4,10 @@ import clsx from "clsx";
 import { api, ApiError } from "@/lib/api";
 import { useProject } from "@/lib/project";
 import type { Dashboard as DashboardData, ExtractionResult, Notification, Transmittal, TransmittalDetail } from "@/lib/types";
-import { Button, Card, EmptyState, ErrorBox, Modal, ProgressBar, Spinner, Stat } from "@/components/ui";
+import { Button, Card, EmptyState, ErrorBox, Modal, ProgressBar, Skeleton, Stat, Toast } from "@/components/ui";
 import { Ribbon } from "@/components/window";
 import {
+  IconArchive,
   IconArrow,
   IconChain,
   IconClock,
@@ -45,6 +46,8 @@ const INBOX_OPERATIONS: { value: InboxOperation; label: string }[] = [
   { value: "review", label: "جهت بررسی و اظهار نظر" },
 ];
 
+const INBOX_PAGE_SIZE = 8;
+
 interface InboxRow {
   key: string;
   kind: "transmittal" | "review";
@@ -63,6 +66,39 @@ interface InboxRow {
   transmittalId?: string;
   manualWorkflow: boolean;
   canDelete: boolean;
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="dashboard-page dashboard-skeleton" aria-label="در حال بارگذاری کارتابل">
+      <div className="dashboard-kpi-grid">
+        {[1, 2, 3, 4].map((item) => (
+          <div className="stat-card" key={item}>
+            <Skeleton className="h-12 w-12 rounded-[13px]" />
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              <Skeleton className="h-3 w-28" />
+              <Skeleton className="h-7 w-16" />
+              <Skeleton className="h-2.5 w-24" />
+            </div>
+          </div>
+        ))}
+      </div>
+      <Card>
+        <div className="card-header">
+          <Skeleton className="h-4 w-56" />
+          <Skeleton className="h-8 w-24" />
+        </div>
+        <div className="toolbar">
+          <Skeleton className="h-9 w-56" />
+          <Skeleton className="h-9 w-36" />
+          <Skeleton className="h-9 w-40" />
+        </div>
+        <div className="p-4">
+          {[1, 2, 3, 4, 5].map((item) => <Skeleton className="mb-3 block h-8 w-full" key={item} />)}
+        </div>
+      </Card>
+    </div>
+  );
 }
 
 export function Dashboard() {
@@ -84,6 +120,7 @@ export function Dashboard() {
   const [filterText, setFilterText] = useState("");
   const [filterKind, setFilterKind] = useState("");
   const [filterAction, setFilterAction] = useState("");
+  const [page, setPage] = useState(1);
   const [rowMenu, setRowMenu] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -184,6 +221,17 @@ export function Dashboard() {
       return `${row.title} ${row.subject} ${row.sender} ${row.doc_type}`.toLowerCase().includes(needle);
     });
   }, [rows, filterText, filterKind, filterAction]);
+
+  const pageCount = Math.max(1, Math.ceil(visibleRows.length / INBOX_PAGE_SIZE));
+  const pageRows = visibleRows.slice((page - 1) * INBOX_PAGE_SIZE, page * INBOX_PAGE_SIZE);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filterText, filterKind, filterAction]);
+
+  useEffect(() => {
+    setPage((currentPage) => Math.min(currentPage, pageCount));
+  }, [pageCount]);
 
   const unreadCount = rows.filter((row) => row.fresh).length;
 
@@ -324,38 +372,42 @@ export function Dashboard() {
   };
 
   if (!project) return <EmptyState title="پروژه‌ای انتخاب نشده است" />;
-  if (loading) return <Spinner label="در حال بارگذاری کارتابل…" />;
+  if (loading) return <DashboardSkeleton />;
   if (error) return <ErrorBox message={error} onRetry={() => void load()} />;
   if (!data) return null;
 
   const completion = data.documents_total ? data.documents_issued / data.documents_total : 0;
 
   return (
-    <div onClick={() => rowMenu && setRowMenu(null)}>
+    <div className="dashboard-page" onClick={() => rowMenu && setRowMenu(null)}>
       {/* ---------- summary strip ---------- */}
       <div className="dashboard-kpi-grid">
         <Stat
           label="مدارک بارگذاری در MDL"
           value={persianDigits(data.documents_total)}
           hint={`${persianDigits(data.revisions_total)} بازنگری`}
+          icon={<IconArchive />}
         />
         <Stat
           label="تعداد مدارک ترانسمیتال شده"
           value={persianDigits(data.transmittals_total)}
           hint={`${persianDigits(data.transmittals_open)} برگه باز`}
           tone="good"
+          icon={<IconMail />}
         />
         <Stat
           label="پیشرفت صدور مدارک"
           value={percent(completion)}
           hint={`${persianDigits(data.documents_issued)} مدرک صادرشده`}
           tone="good"
+          icon={<IconFlow />}
         />
         <Stat
           label="در صف بازبینی"
           value={persianDigits(data.review_queue)}
           hint={`${persianDigits(data.quarantined)} قرنطینه`}
           tone={data.review_queue ? "warn" : "default"}
+          icon={<IconClock />}
         />
       </div>
 
@@ -440,7 +492,7 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((row, index) => (
+                {pageRows.map((row, index) => (
                   <tr
                     key={row.key}
                     className={clsx(
@@ -450,7 +502,7 @@ export function Dashboard() {
                     onClick={() => open(row)}
                     onDoubleClick={() => navigate(row.href)}
                   >
-                    <td className="cell-center">{persianDigits(index + 1)}</td>
+                    <td className="cell-center">{persianDigits((page - 1) * INBOX_PAGE_SIZE + index + 1)}</td>
                     <td className="cell-center">
                       <input
                         type="checkbox"
@@ -469,11 +521,10 @@ export function Dashboard() {
                       />
                     </td>
                     <td className="cell-center">
-                      <span
-                        className="status-dot"
-                        style={{ background: row.fresh ? "#d6a928" : "#a9b0b7" }}
-                        title={row.fresh ? "خوانده نشده" : "خوانده شده"}
-                      />
+                      <span className={clsx("inbox-status-badge", row.fresh ? "is-unread" : "is-read")}>
+                        <span className="inbox-status-dot" />
+                        {row.fresh ? "جدید" : "خوانده‌شده"}
+                      </span>
                     </td>
                     <td className="whitespace-nowrap text-[10px] leading-4">
                       {row.received ? (
@@ -601,6 +652,42 @@ export function Dashboard() {
           </div>
         )}
 
+        {visibleRows.length > 0 ? (
+          <div className="table-pagination" aria-label="صفحه‌بندی کارتابل">
+            <span className="table-pagination-summary">
+              نمایش {persianDigits((page - 1) * INBOX_PAGE_SIZE + 1)} تا {persianDigits(Math.min(page * INBOX_PAGE_SIZE, visibleRows.length))} از {persianDigits(visibleRows.length)} ردیف
+            </span>
+            <div className="table-pagination-controls">
+              <button
+                type="button"
+                className="table-page-button"
+                disabled={page <= 1}
+                onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+              >
+                قبلی
+              </button>
+              {Array.from({ length: pageCount }, (_, index) => index + 1).map((pageNumber) => (
+                <button
+                  key={pageNumber}
+                  type="button"
+                  className={clsx("table-page-button", pageNumber === page && "is-active")}
+                  onClick={() => setPage(pageNumber)}
+                >
+                  {persianDigits(pageNumber)}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="table-page-button"
+                disabled={page >= pageCount}
+                onClick={() => setPage((currentPage) => Math.min(pageCount, currentPage + 1))}
+              >
+                بعدی
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {/* ---------- action ribbon (reference bottom bar) ---------- */}
         <Ribbon
           items={[
@@ -704,7 +791,7 @@ export function Dashboard() {
             <IconClock className="h-3 w-3" /> {jalali(new Date())}
           </span>
         </div>
-        {notice ? <div className="px-2 pb-1.5 text-[10px] text-[#1f4e79]">{notice}</div> : null}
+        {notice ? <Toast message={notice} tone="info" /> : null}
       </Card>
 
       {/* ---------- progress + validation issues ---------- */}

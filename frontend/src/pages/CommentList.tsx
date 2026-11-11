@@ -207,13 +207,13 @@ function CommentRegistrationModal({
   return (
     <Modal
       open={open}
-      title="Comment Registration — ثبت نظر جدید"
+      title={editing ? "Coordinator Comment — نظر هماهنگ‌کننده" : "Comment Registration — ثبت نظر جدید"}
       onClose={onClose}
       width="max-w-5xl"
       footer={
         <>
           <Button variant="primary" disabled={busy || form.text.trim().length < 2} onClick={onSave}>
-            {busy ? "در حال ذخیره…" : "Save — ذخیره"}
+            {busy ? "در حال ذخیره…" : editing ? "Save Coordinator Comment — ذخیره نظر هماهنگ‌کننده" : "Save — ذخیره"}
           </Button>
           <Button variant="secondary" disabled={busy} onClick={onClose}>
             Close — بستن
@@ -259,17 +259,18 @@ function CommentRegistrationModal({
             onChange={(event) => set("disciplineCode", event.target.value.toUpperCase())}
             placeholder="مثلاً CIV"
             dir="ltr"
+            disabled={Boolean(editing)}
           />
         </FField>
         <FField label="Code:">
-          <select className="input" value={form.code} onChange={(event) => set("code", event.target.value)}>
+          <select className="input" value={form.code} onChange={(event) => set("code", event.target.value)} disabled={Boolean(editing)}>
             {Object.entries(CODE_LABELS).map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
             ))}
           </select>
         </FField>
         <FField label="Status:">
-          <select className="input" value={form.disposition} onChange={(event) => set("disposition", event.target.value)}>
+          <select className="input" value={form.disposition} onChange={(event) => set("disposition", event.target.value)} disabled={Boolean(editing)}>
             <option value="">— انتخاب وضعیت —</option>
             {Object.entries(DISPOSITION_LABELS).map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
@@ -277,58 +278,65 @@ function CommentRegistrationModal({
           </select>
         </FField>
         <FField label="Status Change Date:" full>
-          <JalaliDateField value={form.statusChangeDate} onChange={(value) => set("statusChangeDate", value)} />
+          <JalaliDateField value={form.statusChangeDate} onChange={(value) => set("statusChangeDate", value)} disabled={Boolean(editing)} />
         </FField>
         <FField label="From Page:">
-          <input className="input" type="number" min={1} value={form.fromPageNo} onChange={(event) => set("fromPageNo", event.target.value)} dir="ltr" />
+          <input className="input" type="number" min={1} value={form.fromPageNo} onChange={(event) => set("fromPageNo", event.target.value)} dir="ltr" disabled={Boolean(editing)} />
         </FField>
         <FField label="To Page:">
-          <input className="input" type="number" min={1} value={form.toPageNo} onChange={(event) => set("toPageNo", event.target.value)} dir="ltr" />
+          <input className="input" type="number" min={1} value={form.toPageNo} onChange={(event) => set("toPageNo", event.target.value)} dir="ltr" disabled={Boolean(editing)} />
         </FField>
         <FField label="Comment Description:" full>
           <textarea
-            className="input min-h-[170px] w-full resize-y"
+            className="input min-h-[170px] w-full resize-y disabled:bg-[#e8ebee] disabled:text-[#89939d]"
             value={form.text}
             onChange={(event) => set("text", event.target.value)}
             placeholder="شرح نظر را وارد کنید…"
+            readOnly={Boolean(editing)}
             required
           />
         </FField>
         <FField label="Personal Remarks:" full>
-          <textarea className="input min-h-[45px] w-full" value={form.personalRemarks} onChange={(event) => set("personalRemarks", event.target.value)} placeholder="اختیاری" />
+          <textarea className="input min-h-[45px] w-full disabled:bg-[#e8ebee] disabled:text-[#89939d]" value={form.personalRemarks} onChange={(event) => set("personalRemarks", event.target.value)} placeholder="اختیاری" readOnly={Boolean(editing)} />
         </FField>
       </FieldGrid>
 
       <div className="section-bar mt-2">Attachments / پیوست‌ها</div>
       <div className="border border-[#a8a284] bg-white p-2">
-        <label
-          className={`block cursor-pointer rounded border-2 border-dashed px-3 py-4 text-center text-[11px] transition ${dragActive ? "border-[#2f6ea5] bg-[#eaf3fb]" : "border-[#a9b2bb] bg-[#f8fafc]"}`}
-          onDragEnter={(event: DragEvent<HTMLLabelElement>) => { event.preventDefault(); setDragActive(true); }}
-          onDragOver={(event: DragEvent<HTMLLabelElement>) => event.preventDefault()}
-          onDragLeave={() => setDragActive(false)}
-          onDrop={(event: DragEvent<HTMLLabelElement>) => {
-            event.preventDefault();
-            setDragActive(false);
-            onFiles(Array.from(event.dataTransfer.files));
-          }}
-        >
-          <input
-            type="file"
-            className="sr-only"
-            multiple
-            accept=".pdf,.docx,.xlsx,.dwg,.png,.jpg,.zip"
-            onChange={(event: ChangeEvent<HTMLInputElement>) => onFiles(Array.from(event.target.files ?? []))}
-          />
-          <span className="text-[#1f4e79]">📎 فایل‌ها را انتخاب کنید یا اینجا بکشید و رها کنید</span>
-          <span className="mt-1 block text-[10px] text-[#657585]" dir="ltr">PDF, DOCX, XLSX, DWG, PNG, JPG, ZIP · max 20 MB</span>
-        </label>
+        {editing ? (
+          <div className="rounded border border-[#d1d8df] bg-[#f1f4f6] px-3 py-3 text-center text-[10px] text-[#5c6b78]">
+            پیوست‌های ثبت‌شده پس از ثبت نظر قابل افزودن یا حذف نیستند؛ فقط هماهنگ‌کننده می‌تواند نظر خود را در بخش Coordinator ثبت کند.
+          </div>
+        ) : (
+          <label
+            className={`block cursor-pointer rounded border-2 border-dashed px-3 py-4 text-center text-[11px] transition ${dragActive ? "border-[#2f6ea5] bg-[#eaf3fb]" : "border-[#a9b2bb] bg-[#f8fafc]"}`}
+            onDragEnter={(event: DragEvent<HTMLLabelElement>) => { event.preventDefault(); setDragActive(true); }}
+            onDragOver={(event: DragEvent<HTMLLabelElement>) => event.preventDefault()}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={(event: DragEvent<HTMLLabelElement>) => {
+              event.preventDefault();
+              setDragActive(false);
+              onFiles(Array.from(event.dataTransfer.files));
+            }}
+          >
+            <input
+              type="file"
+              className="sr-only"
+              multiple
+              accept=".pdf,.docx,.xlsx,.dwg,.png,.jpg,.zip"
+              onChange={(event: ChangeEvent<HTMLInputElement>) => onFiles(Array.from(event.target.files ?? []))}
+            />
+            <span className="text-[#1f4e79]">📎 فایل‌ها را انتخاب کنید یا اینجا بکشید و رها کنید</span>
+            <span className="mt-1 block text-[10px] text-[#657585]" dir="ltr">PDF, DOCX, XLSX, DWG, PNG, JPG, ZIP · max 20 MB</span>
+          </label>
+        )}
         {displayedExisting.length || files.length ? (
           <div className="mt-2 space-y-1">
             {displayedExisting.map((attachment) => (
               <AttachmentRow
                 key={attachment.id}
                 attachment={attachment}
-                onRemove={() => onRemoveExisting(attachment.id)}
+                onRemove={!editing ? () => onRemoveExisting(attachment.id) : undefined}
                 onDownload={() => api.download(attachmentPath(attachment), attachment.file_name)}
                 onPreview={() => onPreview(attachment)}
                 existing
@@ -405,7 +413,7 @@ function AttachmentRow({
 
 export function CommentList() {
   const { revisionId } = useParams<{ revisionId: string }>();
-  const { hasRole, user } = useAuth();
+  const { hasRole } = useAuth();
   const [lists, setLists] = useState<CommentListType[]>([]);
   const [revisionDetails, setRevisionDetails] = useState<RevisionDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -673,7 +681,7 @@ export function CommentList() {
                 {comment.response_text ? <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2"><p className="text-[11px] font-medium text-slate-500">پاسخ پیمانکار</p><p className="mt-1 text-xs leading-6 text-slate-700">{comment.response_text}</p><p className="mt-1 text-[10px] text-slate-400">{jalaliDateTime(comment.responded_at)}</p></div> : null}
                 <div className="mt-2 flex flex-wrap gap-2">
                   {comment.status !== "closed" ? <Button variant="secondary" className="px-2 py-1 text-[11px]" onClick={() => setAnswering({ comment, text: comment.response_text ?? "" })}>ثبت پاسخ</Button> : null}
-                  {canRegister && (comment.author_id === user?.id || canEditCoordinator) && comment.status !== "closed" ? <Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => openEdit(comment)}>ویرایش / پیوست</Button> : null}
+                  {canEditCoordinator && comment.status !== "closed" ? <Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => openEdit(comment)}>باز کردن / نظر هماهنگ‌کننده</Button> : null}
                   {comment.status === "answered" && canRegister ? (closing?.id === comment.id ? <span className="flex items-center gap-1"><select aria-label="وضعیت بستن نظر" className="h-7 rounded border border-slate-300 bg-white px-1 text-[11px]" value={closing.disposition} onChange={(event) => setClosing({ id: comment.id, disposition: event.target.value })}>{Object.entries(DISPOSITION_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => void close(comment, closing.disposition)}>ثبت</Button><Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => setClosing(null)}>انصراف</Button></span> : <Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => setClosing({ id: comment.id, disposition: comment.disposition ?? "accepted" })}>بستن نظر</Button>) : null}
                   <Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => api.download(`/revisions/${comment.revision_id}/comments/export`, "comments.csv")}>خروجی</Button>
                 </div>

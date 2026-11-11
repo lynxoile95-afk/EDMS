@@ -26,7 +26,7 @@ from app.models import (
     NumberSequence,
     User,
 )
-from app.models.enums import CommentDisposition, CommentStatus, ProjectRole
+from app.models.enums import CommentDisposition, CommentStatus
 from app.schemas.transmittals import (
     CommentAttachmentOut,
     CommentClose,
@@ -54,15 +54,6 @@ COORDINATOR_ROLE_NAMES = {
     "project_manager",
     "system_admin",
 }
-EDIT_COMMENT_ROLES = (
-    ProjectRole.REVIEWER,
-    ProjectRole.DCC,
-    ProjectRole.PROJECT_CONTROL,
-    ProjectRole.PMO,
-    ProjectRole.PROJECT_MANAGER,
-)
-
-
 def _comment_attachment_out(attachment: CommentAttachment) -> CommentAttachmentOut:
     return CommentAttachmentOut(
         id=attachment.id,
@@ -128,18 +119,21 @@ def _coordinator_can_edit(db, user: User, project_id: uuid.UUID) -> bool:
 
 
 def _assert_comment_editor(db, user: User, project_id: uuid.UUID, comment: Comment) -> None:
-    if comment.author_id == user.id and acl.has_role(db, user, project_id, *EDIT_COMMENT_ROLES):
-        return
+    # A comment is immutable for its author after registration. The coordinator
+    # is the only role allowed to reopen the registration form and fill the
+    # coordinator judgment/comments band.
     if _coordinator_can_edit(db, user, project_id):
         return
-    raise HTTPException(status_code=403, detail="ویرایش این نظر تنها برای ثبت‌کننده یا هماهنگ‌کننده مجاز است.")
+    raise HTTPException(
+        status_code=403,
+        detail="پس از ثبت نظر، فقط هماهنگ‌کننده می‌تواند نظر هماهنگ‌کننده را ثبت کند.",
+    )
 
 
 def _assert_attachment_editable(comment: Comment) -> None:
-    # A closed registration is the comment-side equivalent of an issued form:
-    # its evidence must remain immutable after the workflow is finalized.
-    if str(comment.status) == CommentStatus.CLOSED.value:
-        raise HTTPException(status_code=409, detail="پیوست نظر بسته‌شده قابل تغییر نیست.")
+    # Attachments are evidence of the original registration. They may be
+    # viewed/downloaded after registration, but never appended or removed.
+    raise HTTPException(status_code=409, detail="پس از ثبت نظر، پیوست آن قابل افزودن یا حذف نیست.")
 
 
 def _validate_page_range(from_page_no: int | None, to_page_no: int | None) -> None:
@@ -510,7 +504,7 @@ async def add_comment_multipart(
     return _comment_out(comment)
 
 
-@router.patch("/comments/{comment_id}", response_model=CommentOut, summary="ویرایش ثبت نظر و افزودن پیوست")
+@router.patch("/comments/{comment_id}", response_model=CommentOut, summary="ثبت نظر هماهنگ‌کننده روی نظر موجود")
 async def update_comment(
     comment_id: uuid.UUID,
     db: DbSession,
@@ -539,39 +533,21 @@ async def update_comment(
     revision = db.get(DocumentRevision, comment.revision_id)
     project = acl.require_project(db, user, revision.project_id)
     _assert_comment_editor(db, user, project.id, comment)
-    _assert_attachment_editable(comment)
-    _validate_page_range(from_page_no, to_page_no)
-    discipline_id = _validate_related_fields(db, revision, related_comment_id, discipline_id, discipline_code)
-    if code not in {"1", "2", "3"}:
-        raise HTTPException(status_code=422, detail="کد نظر نامعتبر است.")
-    if disposition and disposition not in {item.value for item in CommentDisposition}:
-        raise HTTPException(status_code=422, detail="وضعیت نظر نامعتبر است.")
-    prepared = await _read_uploads(files)
-    coordinator = _coordinator_can_edit(db, user, project.id)
-    comment.text = text.strip()
-    if len(comment.text) < 2:
-        raise HTTPException(status_code=422, detail="شرح نظر اجباری است و باید حداقل دو نویسه داشته باشد.")
-    comment.code = code
-    comment.category = category.strip() if category else None
-    comment.related_comment_id = related_comment_id
-    comment.discipline_id = discipline_id
-    comment.page_no = page_no or from_page_no
-    comment.from_page_no = from_page_no
-    comment.to_page_no = to_page_no
-    comment.disposition = disposition
-    comment.status_change_date = status_change_date
-    comment.personal_remarks = personal_remarks.strip() if personal_remarks else None
-    if coordinator:
-        comment.coordinator_date = coordinator_date
-        comment.judgment = judgment.strip() or "draft"
-        comment.judgment_comments = judgment_comments.strip() if judgment_comments else None
-        comment.remarks = remarks.strip() if remarks else None
-    keys: list[str] = []
+    if files:
+        raise HTTPException(status_code=409, detail="پس از ثبت نظر، افزودن پیوست مجاز نیست.")
+
+    # The original registration fields above remain accepted for compatibility
+    # with older clients, but they are deliberately ignored. A coordinator may
+    # only fill the coordinator-owned fields below; the author's text, code,
+    # pages, disposition and existing evidence cannot be changed.
+    comment.coordinator_date = coordinator_date
+    comment.judgment = judgment.strip() or "draft"
+    comment.judgment_comments = judgment_comments.strip() if judgment_comments else None
+    comment.remarks = remarks.strip() if remarks else None
     try:
-        keys = _store_attachments(db, comment, user, prepared)
         audit.record(
             db,
-            action="comment.update",
+            action="comment.coordinator_update",
             entity_type="comment",
             entity_id=comment.id,
             actor=user,
@@ -581,8 +557,6 @@ async def update_comment(
         db.refresh(comment)
     except Exception:
         db.rollback()
-        for key in keys:
-            get_storage().delete(key)
         raise
     return _comment_out(comment)
 

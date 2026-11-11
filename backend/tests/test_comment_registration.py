@@ -59,36 +59,62 @@ def test_multipart_registration_stores_metadata_and_attachment(client: TestClien
     assert "attachment" in downloaded.headers["content-disposition"]
 
 
-def test_edit_can_add_and_remove_attachments_without_renumbering(client: TestClient, db, project, users):
+def test_registered_comment_is_immutable_except_coordinator_fields(client: TestClient, db, project, users):
     revision_id = _revision_id(client, db, project, users)
-    headers = _auth(client, "reviewer@edms-test.com")
+    reviewer_headers = _auth(client, "reviewer@edms-test.com")
     first = client.post(
         f"/api/v1/revisions/{revision_id}/comments/multipart",
-        headers=headers,
+        headers=reviewer_headers,
         data={"text": "نظر اولیه", "code": "3"},
         files={"files": ("first.png", b"png", "image/png")},
     )
     assert first.status_code == 201, first.text
     comment = first.json()
 
-    edited = client.patch(
+    author_edit = client.patch(
         f"/api/v1/comments/{comment['id']}",
-        headers=headers,
+        headers=reviewer_headers,
         data={"text": "نظر ویرایش‌شده", "code": "3"},
+    )
+    assert author_edit.status_code == 403, author_edit.text
+
+    coordinator_headers = _auth(client, "dcc@edms-test.com")
+    coordinator_update = client.patch(
+        f"/api/v1/comments/{comment['id']}",
+        headers=coordinator_headers,
+        data={
+            "text": "این متن نباید تغییر کند",
+            "code": "1",
+            "judgment": "commented",
+            "judgment_comments": "نظر هماهنگ‌کننده",
+            "remarks": "یادداشت هماهنگ‌کننده",
+        },
+    )
+    assert coordinator_update.status_code == 200, coordinator_update.text
+    body = coordinator_update.json()
+    assert body["seq_no"] == 1
+    assert body["text"] == "نظر اولیه"
+    assert body["code"] == "3"
+    assert body["judgment"] == "commented"
+    assert body["judgment_comments"] == "نظر هماهنگ‌کننده"
+    assert body["attachment_count"] == 1
+
+    coordinator_attach = client.patch(
+        f"/api/v1/comments/{comment['id']}",
+        headers=coordinator_headers,
+        data={"text": "نظر اولیه", "code": "3"},
         files={"files": ("second.zip", b"zip", "application/zip")},
     )
-    assert edited.status_code == 200, edited.text
-    assert edited.json()["seq_no"] == 1
-    assert edited.json()["attachment_count"] == 2
+    assert coordinator_attach.status_code == 409, coordinator_attach.text
 
-    old_attachment = next(item for item in edited.json()["attachments"] if item["file_name"] == "first.png")
+    old_attachment = body["attachments"][0]
     removed = client.delete(
         f"/api/v1/comments/{comment['id']}/attachments/{old_attachment['id']}",
-        headers=headers,
+        headers=coordinator_headers,
     )
-    assert removed.status_code == 204, removed.text
+    assert removed.status_code == 409, removed.text
 
-    listed = client.get(f"/api/v1/revisions/{revision_id}/comment-lists", headers=headers)
+    listed = client.get(f"/api/v1/revisions/{revision_id}/comment-lists", headers=reviewer_headers)
     assert listed.status_code == 200
     assert listed.json()[0]["comments"][0]["attachment_count"] == 1
 

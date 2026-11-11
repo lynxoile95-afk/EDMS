@@ -1049,28 +1049,14 @@ export function TransmittalDetail() {
               key: "comments",
               label: "Comment List",
               count: allComments.length,
+              countClassName: allComments.length > 0 ? "font-extrabold text-[#c0392b]" : undefined,
               content: (
                 <div>
                   {/* reference toolbar above the comment grid */}
                   <div className="flex flex-wrap items-center gap-3 border-b border-[#a8a284] bg-[#fbfaf2] px-2 py-1">
-                    <Link
-                      className="flex items-center gap-1 text-[10px] font-bold text-[#1f4e79] hover:underline"
-                      to={data.lines[0] ? `/documents/${data.lines[0].revision_id}/comments` : "/review"}
-                    >
-                      <IconAdd className="h-3.5 w-3.5" /> Add New Comment
-                    </Link>
                     <span className="flex items-center gap-1 text-[10px] text-[#33475b]">
                       <IconComment className="h-3.5 w-3.5" /> Show All Comment
                     </span>
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 text-[10px] font-bold text-[#1f4e79] hover:underline disabled:text-[#8a97a3]"
-                      disabled={busy}
-                      onClick={() => openFlowForLine()}
-                    >
-                      <IconFlow className="h-3.5 w-3.5" /> Show All Flow History
-                      {persianDigits((data.referrals ?? []).length)}
-                    </button>
                     <span className="flex-1" />
                     <span className="text-[9.5px] text-[#5c6b78]">
                       Comment List: {persianDigits(allComments.length)} مورد

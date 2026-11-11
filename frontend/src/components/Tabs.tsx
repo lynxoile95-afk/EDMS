@@ -7,6 +7,8 @@ export interface TabDef {
   label: string;
   /** Optional numeric badge shown next to the label (counts, unread, …). */
   count?: number;
+  /** Optional styling for a count that needs attention, such as new comments. */
+  countClassName?: string;
   content: ReactNode;
 }
 
@@ -45,7 +47,7 @@ export function Tabs({
           >
             {tab.label}
             {typeof tab.count === "number" ? (
-              <span className="mr-1.5 text-[9px] text-[#1f3864]">({tab.count})</span>
+              <span className={clsx("mr-1.5 text-[9px]", tab.countClassName ?? "text-[#1f3864]")}>({tab.count})</span>
             ) : null}
           </button>
         ))}

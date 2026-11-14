@@ -468,7 +468,7 @@ export function Projects() {
         ) : null}
       </Card>
 
-      <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+      <div className="grid gap-2">
         {user?.is_superuser ? (
           <Card>
             <CardHeader title="تعریف پروژه جدید" subtitle="پروژه قبل از بارگذاری MDL باید ایجاد شود." />

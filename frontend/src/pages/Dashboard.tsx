@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { useProject } from "@/lib/project";
 import type { Dashboard as DashboardData, ExtractionResult, Notification, Transmittal, TransmittalDetail } from "@/lib/types";
 import { Button, Card, EmptyState, ErrorBox, Modal, ProgressBar, Skeleton, Stat, Toast } from "@/components/ui";
@@ -105,7 +106,14 @@ function DashboardSkeleton() {
 
 export function Dashboard() {
   const { project } = useProject();
+  const { hasRole } = useAuth();
   const navigate = useNavigate();
+  const canDismissReviewRows =
+    hasRole("dcc") ||
+    hasRole("project_control") ||
+    hasRole("pmo") ||
+    hasRole("project_manager") ||
+    hasRole("system_admin");
   const [data, setData] = useState<DashboardData | null>(null);
   const [transmittals, setTransmittals] = useState<Transmittal[]>([]);
   const [queue, setQueue] = useState<ExtractionResult[]>([]);
@@ -175,7 +183,9 @@ export function Dashboard() {
       fresh: false,
       entityId: item.id,
       manualWorkflow: false,
-      canDelete: false,
+      // A pending AI extraction is dismissed through the review endpoint; it
+      // is not physically deleted like a transmittal draft.
+      canDelete: canDismissReviewRows,
     }));
 
     const transmittalRows: InboxRow[] = transmittals.map((item) => ({
@@ -212,7 +222,7 @@ export function Dashboard() {
       if (!b.received) return -1;
       return b.received.localeCompare(a.received);
     });
-  }, [transmittals, queue, unreadEntities]);
+  }, [transmittals, queue, unreadEntities, canDismissReviewRows]);
 
   const visibleRows = useMemo(() => {
     const needle = filterText.trim().toLowerCase();
@@ -291,22 +301,43 @@ export function Dashboard() {
   };
 
   const deleteRow = async (row: InboxRow | null = current) => {
-    if (!row?.transmittalId) {
-      setNotice("حذف فقط برای ردیف‌های ترانسمیتال امکان‌پذیر است.");
+    if (!row) {
+      setNotice("ابتدا یک ردیف را انتخاب کنید.");
       return;
     }
     if (!row.canDelete) {
-      setNotice("برگه‌های صادرشده یا در گردش حذف نمی‌شوند؛ برای آن‌ها از «لغو» استفاده کنید.");
+      setNotice("این ردیف قابل حذف نیست؛ فقط پیش‌نویس‌ها و نتایج استخراجِ در انتظار بررسی حذف می‌شوند.");
       return;
     }
-    if (!window.confirm(`ردیف «${row.title}» از کارتابل حذف شود؟ این عملیات برای پیش‌نویس قابل بازگشت نیست.`)) {
+
+    const isReviewRow = row.kind === "review" && Boolean(row.entityId);
+    if (!isReviewRow && !row.transmittalId) {
+      setNotice("حذف فقط برای ردیف‌های قابل مدیریت کارتابل امکان‌پذیر است.");
+      return;
+    }
+    if (
+      !window.confirm(
+        isReviewRow
+          ? `نتیجه استخراج هوش مصنوعی «${row.title}» از صف بازبینی حذف شود؟`
+          : `ردیف «${row.title}» از کارتابل حذف شود؟ این عملیات برای پیش‌نویس قابل بازگشت نیست.`,
+      )
+    ) {
       return;
     }
 
     setDeleteBusy(true);
     setNotice(null);
     try {
-      await api.delete(`/transmittals/${row.transmittalId}`);
+      if (isReviewRow && row.entityId) {
+        // "ignore" records a review decision and removes the row from the
+        // pending queue without deleting the uploaded source file or its history.
+        await api.post(`/extraction-results/${row.entityId}/review`, {
+          action: "ignore",
+          notes: "حذف نتیجه استخراج از صف بازبینی توسط کارشناس",
+        });
+      } else if (row.transmittalId) {
+        await api.delete(`/transmittals/${row.transmittalId}`);
+      }
       setCheckedRows((previous) => {
         const next = new Set(previous);
         next.delete(row.key);
@@ -324,17 +355,25 @@ export function Dashboard() {
 
   const deleteSelectedRows = async () => {
     const selectedRows = rows.filter((row) => checkedRows.has(row.key));
-    const deletableRows = selectedRows.filter((row) => row.canDelete && row.transmittalId);
+    const deletableRows = selectedRows.filter(
+      (row) => row.canDelete && (Boolean(row.transmittalId) || (row.kind === "review" && Boolean(row.entityId))),
+    );
     if (deletableRows.length === 0) {
-      setNotice("از بین ردیف‌های انتخاب‌شده، پیش‌نویس قابل حذفی وجود ندارد.");
+      setNotice("از بین ردیف‌های انتخاب‌شده، پیش‌نویس یا نتیجه استخراج قابل حذفی وجود ندارد.");
       return;
     }
 
     const skipped = selectedRows.length - deletableRows.length;
     const suffix = skipped ? ` ${persianDigits(skipped)} ردیف غیرقابل حذف نادیده گرفته می‌شود.` : "";
+    const draftCount = deletableRows.filter((row) => row.kind === "transmittal").length;
+    const reviewCount = deletableRows.length - draftCount;
+    const selectedDescription = [
+      draftCount ? `${persianDigits(draftCount)} پیش‌نویس` : "",
+      reviewCount ? `${persianDigits(reviewCount)} نتیجه استخراج` : "",
+    ].filter(Boolean).join(" و ");
     if (
       !window.confirm(
-        `${persianDigits(deletableRows.length)} ردیف پیش‌نویس از کارتابل حذف شود؟ این عملیات قابل بازگشت نیست.${suffix}`,
+        `${selectedDescription} از کارتابل حذف شود؟ نتایج استخراج با وضعیت «نادیده گرفته‌شده» از صف بازبینی خارج می‌شوند.${suffix}`,
       )
     ) {
       return;
@@ -343,7 +382,15 @@ export function Dashboard() {
     setDeleteBusy(true);
     setNotice(null);
     const results = await Promise.allSettled(
-      deletableRows.map((row) => api.delete(`/transmittals/${row.transmittalId}`)),
+      deletableRows.map((row) => {
+        if (row.kind === "review" && row.entityId) {
+          return api.post(`/extraction-results/${row.entityId}/review`, {
+            action: "ignore",
+            notes: "حذف گروهی نتیجه استخراج از صف بازبینی توسط کارشناس",
+          });
+        }
+        return api.delete(`/transmittals/${row.transmittalId}`);
+      }),
     );
     const deletedKeys = new Set(
       deletableRows.filter((_, index) => results[index].status === "fulfilled").map((row) => row.key),
@@ -512,17 +559,11 @@ export function Dashboard() {
                       <input
                         type="checkbox"
                         className="h-3.5 w-3.5 accent-[#1f4e79]"
-                        checked={row.manualWorkflow && row.status === "draft" ? false : checkedRows.has(row.key)}
-                        aria-label={
-                          row.manualWorkflow && row.status === "draft"
-                            ? "صدور نهایی ترانسمیتال"
-                            : `انتخاب ردیف ${index + 1}`
-                        }
-                        title={row.manualWorkflow && row.status === "draft" ? "صدور نهایی ترانسمیتال" : "انتخاب ردیف"}
+                        checked={checkedRows.has(row.key)}
+                        aria-label={`انتخاب ردیف ${index + 1}`}
+                        title="انتخاب ردیف برای حذف گروهی"
                         onClick={(event) => event.stopPropagation()}
-                        onChange={() =>
-                          row.manualWorkflow && row.status === "draft" ? void issueDraft(row) : toggleRow(row)
-                        }
+                        onChange={() => toggleRow(row)}
                       />
                     </td>
                     <td className="cell-center">
@@ -771,9 +812,14 @@ export function Dashboard() {
               disabled:
                 deleteBusy ||
                 (checkedRows.size > 0
-                  ? !rows.some((row) => checkedRows.has(row.key) && row.canDelete && row.transmittalId)
+                  ? !rows.some(
+                      (row) =>
+                        checkedRows.has(row.key) &&
+                        row.canDelete &&
+                        (Boolean(row.transmittalId) || (row.kind === "review" && Boolean(row.entityId))),
+                    )
                   : !current?.canDelete),
-              title: "حذف پیش‌نویس‌های انتخاب‌شده از کارتابل",
+              title: "حذف پیش‌نویس‌ها یا بستن نتایج استخراج انتخاب‌شده از کارتابل",
               onClick: () => void (checkedRows.size > 0 ? deleteSelectedRows() : deleteRow()),
             },
             {

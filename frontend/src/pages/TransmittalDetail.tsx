@@ -955,8 +955,8 @@ export function TransmittalDetail() {
             <thead>
               <tr>
                 <th style={{ width: 30 }}>Row</th>
-                <th style={{ width: 130 }}>Doc. No.</th>
-                <th>Doc. Title</th>
+                <th style={{ minWidth: 220 }}>Doc. No.</th>
+                <th style={{ minWidth: 220 }}>Doc. Title</th>
                 <th style={{ width: 62 }}>Discipline</th>
                 <th style={{ width: 46 }}>Version</th>
                 <th style={{ width: 48 }}>P.O.I</th>
@@ -976,13 +976,13 @@ export function TransmittalDetail() {
               {data.lines.map((line) => (
                 <tr key={line.id}>
                   <td className="cell-center">{persianDigits(line.line_no)}</td>
-                  <td className="break-words">
-                    <span className="flex min-w-0 items-start gap-1">
+                  <td className="whitespace-nowrap">
+                    <span className="flex min-w-max items-center gap-1">
                       <StatusLamp tone={line.status === "issued" ? "green" : "yellow"} />
-                      <span className="ltr break-words font-bold text-[#17427a]" dir="ltr">{line.doc_code ?? "—"}</span>
+                      <span className="ltr font-bold text-[#17427a]" dir="ltr">{line.doc_code ?? "—"}</span>
                     </span>
                   </td>
-                  <td>{line.title ?? "—"}</td>
+                  <td className="whitespace-nowrap font-bold text-[#1f3864]">{line.title ?? "—"}</td>
                   <td className="text-center">{line.discipline_code ?? "—"}</td>
                   <td className="cell-center">{line.rev ?? "—"}</td>
                   <td className="cell-center">{data.purpose}</td>

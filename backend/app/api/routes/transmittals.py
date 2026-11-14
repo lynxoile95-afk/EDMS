@@ -85,19 +85,35 @@ _RELATED_ATTACHMENT_TYPES = {
 
 
 def _assert_attachments_editable(
-    transmittal: Transmittal, *, allow_related_append: bool = False
+    transmittal: Transmittal,
+    *,
+    allow_related_append: bool = False,
+    allow_native_append: bool = False,
 ) -> None:
-    """Lock existing document attachments after issue.
+    """Lock ordinary attachments after issue, with a narrow Native exception.
 
-    PDF and Native attachments remain immutable after final issue. A related
-    record is different: a later letter, meeting minute or site photograph is
-    an append-only addition to the transmittal history, so the dedicated related
-    upload route may opt into that narrow exception. Cancellation still closes
-    the record completely.
+    PDF attachments keep the existing immutable-after-issue rule. Native files
+    are the issuer's source files, so the issuer may add or maintain them after
+    an issued sheet has a number. The exception stops at a final or cancelled
+    sheet; related records keep their existing append-only behavior.
     """
     status_value = getattr(transmittal.status, "value", transmittal.status)
-    if str(status_value) == TransmittalStatus.CANCELLED.value or (
-        not allow_related_append and (str(status_value) in _FINALIZED_ATTACHMENT_STATUSES or transmittal.number)
+    status_text = str(status_value)
+    if status_text == TransmittalStatus.CANCELLED.value:
+        raise HTTPException(
+            status_code=409,
+            detail="پس از ابطال ترانسمیتال، افزودن، ویرایش یا حذف فایل پیوست مجاز نیست.",
+        )
+    is_final = status_text in {TransmittalStatus.FINAL.value, TransmittalStatus.CLOSED.value} or bool(
+        (transmittal.meta or {}).get("final")
+    )
+    if allow_native_append and is_final:
+        raise HTTPException(
+            status_code=409,
+            detail="پس از نهایی‌شدن ترانسمیتال، فایل Native دیگر قابل ویرایش نیست.",
+        )
+    if not allow_related_append and not allow_native_append and (
+        str(status_value) in _FINALIZED_ATTACHMENT_STATUSES or transmittal.number
     ):
         raise HTTPException(
             status_code=409,
@@ -1201,7 +1217,10 @@ async def upload_attachment(
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     project = acl.require_transmittal(db, user, transmittal)
-    _assert_attachments_editable(transmittal)
+    # Native files are issuer-owned source files. The exception only bypasses
+    # the ordinary post-issue attachment lock; the issuer check below remains
+    # mandatory and cancellation/finalization are still blocked by the guard.
+    _assert_attachments_editable(transmittal, allow_native_append=kind == "native")
     # Native files belong to the issuer, not merely to a document-control role.
     # PDF attachments keep the existing DCC/project-control permission model.
     if kind == "native":
@@ -1575,11 +1594,14 @@ async def update_attachment(
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     project = acl.require_transmittal(db, user, transmittal)
-    _assert_attachments_editable(transmittal)
     attachments = list((transmittal.meta or {}).get("attachments") or [])
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    _assert_attachments_editable(
+        transmittal,
+        allow_native_append=attachment.get("kind") == "native" and kind == "native",
+    )
     if attachment.get("kind") == "native":
         if not _is_transmittal_issuer(user, transmittal):
             raise acl.AccessDenied("ویرایش فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")
@@ -1709,13 +1731,13 @@ def update_attachment_access(
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     project = acl.require_transmittal(db, user, transmittal)
-    _assert_attachments_editable(transmittal)
     attachments = list((transmittal.meta or {}).get("attachments") or [])
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
     if attachment.get("kind") != "native":
         raise HTTPException(status_code=422, detail="سطح دسترسی جداگانه فقط برای فایل Native قابل تعیین است.")
+    _assert_attachments_editable(transmittal, allow_native_append=True)
     if not _is_transmittal_issuer(user, transmittal):
         raise acl.AccessDenied("فقط صادرکننده ترانسمیتال می‌تواند سطح دسترسی فایل را تعیین کند.")
 
@@ -1780,7 +1802,6 @@ def delete_attachment(
     if transmittal is None:
         raise HTTPException(status_code=404, detail="برگه ارسال یافت نشد.")
     acl.require_transmittal(db, user, transmittal)
-    _assert_attachments_editable(transmittal)
     can_manage = acl.has_role(
         db,
         user,
@@ -1800,6 +1821,10 @@ def delete_attachment(
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    _assert_attachments_editable(
+        transmittal,
+        allow_native_append=attachment.get("kind") == "native",
+    )
     if attachment.get("kind") == "native":
         if not _is_transmittal_issuer(user, transmittal):
             raise acl.AccessDenied("حذف فایل Native فقط توسط صادرکننده ترانسمیتال مجاز است.")

@@ -255,8 +255,12 @@ export function TransmittalDetail() {
   const canManage =
     hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("project_manager") || hasRole("system_admin");
   const issued = ["issued", "final", "partially_acknowledged", "acknowledged", "closed"].includes(data.status);
-  const isFinal = data.is_final || data.status === "final";
+  const isFinal = data.is_final || data.status === "final" || data.status === "closed";
   const attachmentsLocked = issued || data.status === "cancelled";
+  // PDF attachments stay locked after issue. Native source files have a
+  // narrower issuer-owned exception, but final and cancelled sheets remain
+  // completely read-only.
+  const nativeAttachmentsLocked = data.status === "cancelled" || isFinal;
   const isManualOwner = data.manual_workflow && data.created_by_id === user?.id;
   const isProjectManager = hasRole("project_manager");
   const isCoordinator = canManage || hasRole("coordinator");
@@ -507,16 +511,15 @@ export function TransmittalDetail() {
   };
 
   const canEditDocuments = hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("system_admin");
-  // Issued/green sheets and cancelled sheets are immutable. This is mirrored by
-  // the backend guard; the UI also removes upload/edit/delete controls to avoid
-  // misleading clicks.
+  // Issued/green sheets and cancelled sheets keep the existing PDF/document
+  // attachment lock. Native files are handled separately for their issuer.
   const canManageAttachments = !attachmentsLocked && (canManage || isManualOwner);
   const isTransmittalIssuer = Boolean(
     user && (user.is_superuser || [data.created_by_id, data.sender_id, data.issued_by_id].includes(user.id)),
   );
   // Native files are owned by the issuer. Do not require a DCC role here:
   // legitimate issuers can be submitters or senders without document-control privileges.
-  const canManageNative = !attachmentsLocked && isTransmittalIssuer;
+  const canManageNative = !nativeAttachmentsLocked && isTransmittalIssuer;
   // Letters are append-only supporting records: the issuer or document-control
   // role may add a later letter/minute/photo even after the transmittal is issued.
   const canManageRelatedAttachments = data.status !== "cancelled" && (canManage || isTransmittalIssuer);
@@ -902,9 +905,18 @@ export function TransmittalDetail() {
           <span className="text-[9.5px] text-[#5c6b78]">
             {persianDigits((data.attachments ?? []).length)} فایل برای {persianDigits(data.line_count)} مدرک
           </span>
-          {attachmentsLocked ? (
+          {attachmentsLocked && !canManageNative ? (
             <span className="border border-[#9bc3a0] bg-[#eef8ef] px-1.5 py-0.5 text-[9.5px] font-bold text-[#286437]">
-              این برگه نهایی یا لغو شده است؛ پیوست‌ها قفل شده‌اند.
+              {data.status === "cancelled"
+                ? "این برگه لغو شده است؛ پیوست‌ها قفل شده‌اند."
+                : isFinal
+                  ? "این برگه نهایی شده است؛ پیوست‌ها قفل شده‌اند."
+                  : "پس از صدور برگه، پیوست‌های PDF قفل شده‌اند."}
+            </span>
+          ) : null}
+          {attachmentsLocked && canManageNative ? (
+            <span className="border border-[#b8c9a4] bg-[#f3f8ee] px-1.5 py-0.5 text-[9.5px] font-bold text-[#3f6630]">
+              PDF قفل است؛ صادرکننده مجاز هنوز می‌تواند فایل Native را مدیریت کند.
             </span>
           ) : null}
           <span className="flex-1" />

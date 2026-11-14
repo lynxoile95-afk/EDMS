@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models import DocumentRevision, MDLItem
-from app.models.enums import PurposeOfIssue, TransmittalType
+from app.models.enums import PurposeOfIssue, TransmittalStatus, TransmittalType
 from app.services import transmittal_service
 from tests.conftest import auth_headers
 
@@ -122,6 +122,70 @@ def test_native_issuer_does_not_need_dcc_role_to_upload(client: TestClient, db: 
     assert detail.status_code == 200, detail.text
     assert detail.json()["sender_id"] == str(users["submitter"].id)
     assert detail.json()["attachments"][0]["kind"] == "native"
+
+
+def test_issuer_can_add_native_to_issued_sheet_but_final_and_cancelled_are_locked(
+    client: TestClient, db: Session, project, users
+):
+    """The Native exception does not reopen PDF attachments or terminal sheets."""
+    draft = _draft(client, db, project, users, actor_key="submitter")
+    draft.status = TransmittalStatus.ISSUED
+    draft.number = "TRN-TST-NATIVE-0001"
+    draft.issued_by_id = users["submitter"].id
+    db.commit()
+
+    issuer_headers = auth_headers(client, "submitter@edms-test.com")
+    native = client.post(
+        f"/api/v1/transmittals/{draft.id}/attachments",
+        headers=issuer_headers,
+        data={"line_id": str(draft.lines[0].id), "kind": "native"},
+        files={"file": ("source.dwg", b"issued-native-bytes", "application/octet-stream")},
+    )
+    assert native.status_code == 201, native.text
+    native_id = native.json()["attachment"]["id"]
+
+    non_issuer = client.post(
+        f"/api/v1/transmittals/{draft.id}/attachments",
+        headers=auth_headers(client, "reviewer@edms-test.com"),
+        data={"line_id": str(draft.lines[0].id), "kind": "native"},
+        files={"file": ("blocked.dwg", b"blocked-native-bytes", "application/octet-stream")},
+    )
+    assert non_issuer.status_code == 403
+
+    pdf = client.post(
+        f"/api/v1/transmittals/{draft.id}/attachments",
+        headers=issuer_headers,
+        data={"line_id": str(draft.lines[0].id), "kind": "pdf"},
+        files={"file": ("blocked.pdf", FAKE_PDF, "application/pdf")},
+    )
+    assert pdf.status_code == 409
+
+    granted = client.patch(
+        f"/api/v1/transmittals/{draft.id}/attachments/{native_id}/access",
+        headers=issuer_headers,
+        json={"user_ids": [str(users["reviewer"].id)]},
+    )
+    assert granted.status_code == 200, granted.text
+
+    draft.status = TransmittalStatus.FINAL
+    db.commit()
+    final_blocked = client.post(
+        f"/api/v1/transmittals/{draft.id}/attachments",
+        headers=issuer_headers,
+        data={"line_id": str(draft.lines[0].id), "kind": "native"},
+        files={"file": ("final.dwg", b"final-native-bytes", "application/octet-stream")},
+    )
+    assert final_blocked.status_code == 409
+
+    draft.status = TransmittalStatus.CANCELLED
+    db.commit()
+    cancelled_blocked = client.post(
+        f"/api/v1/transmittals/{draft.id}/attachments",
+        headers=issuer_headers,
+        data={"line_id": str(draft.lines[0].id), "kind": "native"},
+        files={"file": ("cancelled.dwg", b"cancelled-native-bytes", "application/octet-stream")},
+    )
+    assert cancelled_blocked.status_code == 409
 
 
 def test_related_letter_attachment_is_transmittal_scoped_and_downloadable(

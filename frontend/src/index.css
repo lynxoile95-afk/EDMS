@@ -2650,3 +2650,63 @@ body {
   .dashboard-selection-bar { margin-inline: 10px; }
   .table-base { min-width: 900px; }
 }
+
+/* Keep the masthead controls in separate flex columns at the narrow live-preview
+   width. The project selector and global search must never compete with the brand. */
+@media (max-width: 1240px) and (min-width: 861px) {
+  .masthead {
+    gap: 12px;
+    padding-inline: 14px;
+  }
+
+  .masthead-brand {
+    min-width: 0;
+    flex: 1 1 31%;
+  }
+
+  .masthead-brand > div {
+    min-width: 0;
+  }
+
+  .masthead-title {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 17px;
+  }
+
+  .masthead-tools {
+    min-width: 0;
+    flex: 1 1 45%;
+    gap: 8px;
+  }
+
+  .masthead-search,
+  .project-picker {
+    width: auto;
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  .project-picker > span {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .project-picker .input,
+  .masthead-search .input {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .masthead-utilities {
+    min-width: 0;
+    flex: 0 0 auto;
+    gap: 4px;
+  }
+
+  .masthead-user-name {
+    display: none;
+  }
+}

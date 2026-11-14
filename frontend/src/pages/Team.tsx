@@ -1,0 +1,1152 @@
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { useProject } from "@/lib/project";
+import type { AccessCircle, ProjectMember, Role, SystemUser, Lookup } from "@/lib/types";
+import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Field, Input, Modal, Spinner } from "@/components/ui";
+import { persianDigits } from "@/lib/format";
+
+/** The roles the review route needs, in route order. */
+const ROUTE_ROLES = [
+  { role: "submitter", step: "۱", label: "پیمانکار", job: "برگه ارسال را می‌سازد و برای کنترل اسناد می‌فرستد" },
+  { role: "dcc", step: "۲", label: "کارشناس کنترل اسناد مهندسی", job: "محتوا را کنترل می‌کند و به مدیر می‌فرستد" },
+  { role: "project_control", step: "۳", label: "کنترل پروژه", job: "وضعیت، برنامه و هماهنگی ارجاع‌ها را کنترل می‌کند" },
+  { role: "pmo", step: "۳", label: "واحد PMO", job: "هماهنگی پرتفوی و پیگیری گردش مدارک" },
+  { role: "engineering_manager", step: "۳", label: "مدیر مهندسی", job: "برگه را به دیسیپلین مربوطه ارجاع می‌دهد" },
+  { role: "project_manager", step: "۳", label: "مدیر پروژه", job: "در مرحله مدیریت هم‌کار می‌کند و ارجاع می‌دهد" },
+  { role: "reviewer", step: "۴", label: "کارشناس دیسیپلین", job: "برگه ارجاع‌شده به دیسیپلین خودش را بررسی می‌کند" },
+  { role: "system_admin", step: "—", label: "مدیر سیستم", job: "مدیریت حساب‌ها، پروژه‌ها و سیاست دسترسی" },
+];
+
+const ROLE_LABELS: Record<string, string> = {
+  submitter: "پیمانکار",
+  dcc: "کنترل اسناد",
+  project_control: "کنترل پروژه",
+  pmo: "واحد PMO",
+  engineering_manager: "مدیر مهندسی",
+  project_manager: "مدیر پروژه",
+  reviewer: "کارشناس دیسیپلین",
+  system_admin: "مدیر سیستم",
+};
+
+const ROLE_OPTIONS: { value: Role; label: string }[] = [
+  { value: "submitter", label: "پیمانکار" },
+  { value: "dcc", label: "کنترل اسناد (DCC)" },
+  { value: "project_control", label: "کارشناس کنترل پروژه" },
+  { value: "pmo", label: "واحد PMO" },
+  { value: "engineering_manager", label: "مدیر مهندسی" },
+  { value: "project_manager", label: "مدیر پروژه" },
+  { value: "reviewer", label: "کارشناس دیسیپلین" },
+  { value: "system_admin", label: "مدیر سیستم" },
+];
+
+const ROLE_ALIASES: Record<string, Role> = {
+  "کارشناس کنترل پروژه": "project_control",
+  "کنترل پروژه": "project_control",
+  "کارشناس کنترل مدارک": "dcc",
+  "کارشناس کنترل اسناد": "dcc",
+  "کنترل مدارک": "dcc",
+  "کنترل اسناد": "dcc",
+  "کارشناس dcc": "dcc",
+  "کارشناس دیسیپلین": "reviewer",
+  "کارشناس رشته": "reviewer",
+  "واحد pmo": "pmo",
+  "کارشناس pmo": "pmo",
+  "مدیر پروژه": "project_manager",
+  "مدیر مهندسی": "engineering_manager",
+};
+
+interface NewUserForm {
+  full_name: string;
+  email: string;
+  national_id: string;
+  mobile: string;
+  password: string;
+  role_text: string;
+  discipline_text: string;
+  is_superuser: boolean;
+}
+
+interface EditUserForm {
+  full_name: string;
+  email: string;
+  national_id: string;
+  mobile: string;
+  password: string;
+  role_text: string;
+  discipline_text: string;
+  is_superuser: boolean;
+}
+
+interface NewCircleForm {
+  code: string;
+  name: string;
+  description: string;
+}
+
+interface NewMemberForm {
+  circle_id: string;
+  circle_text: string;
+  search: string;
+  selected_user_ids: string[];
+  role_text: string;
+  discipline_text: string;
+  can_access_external: boolean;
+}
+
+interface EditMembershipForm {
+  role_text: string;
+  discipline_text: string;
+}
+
+const EMPTY_USER: NewUserForm = {
+  full_name: "",
+  email: "",
+  national_id: "",
+  mobile: "",
+  password: "",
+  role_text: "",
+  discipline_text: "",
+  is_superuser: false,
+};
+
+const EMPTY_EDIT_USER: EditUserForm = {
+  full_name: "",
+  email: "",
+  national_id: "",
+  mobile: "",
+  password: "",
+  role_text: "",
+  discipline_text: "",
+  is_superuser: false,
+};
+
+const EMPTY_CIRCLE: NewCircleForm = { code: "", name: "", description: "" };
+const EMPTY_MEMBER: NewMemberForm = {
+  circle_id: "",
+  circle_text: "",
+  search: "",
+  selected_user_ids: [],
+  role_text: "reviewer",
+  discipline_text: "",
+  can_access_external: false,
+};
+
+const EMPTY_MEMBERSHIP_EDIT: EditMembershipForm = {
+  role_text: "",
+  discipline_text: "",
+};
+
+function messageOf(error: unknown, fallback: string): string {
+  return error instanceof ApiError ? error.detail : fallback;
+}
+
+function roleLabel(role: string): string {
+  return ROLE_LABELS[role] ?? role;
+}
+
+/**
+ * Classic EDMS roster plus the real project access boundary administration.
+ * Roles answer «what may this person do in the route?»; circles answer «with
+ * whom may this person collaborate?». Keeping those tables separate prevents
+ * a reviewer role from accidentally granting project-wide visibility.
+ */
+export function Team() {
+  const { project } = useProject();
+  const { user } = useAuth();
+  const canManageCircles = Boolean(
+    user?.is_superuser ||
+      ["dcc", "project_control", "pmo", "project_manager"].includes(project?.member_role ?? ""),
+  );
+  const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [circles, setCircles] = useState<AccessCircle[]>([]);
+  const [users, setUsers] = useState<SystemUser[]>([]);
+  const [disciplines, setDisciplines] = useState<Lookup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false);
+  const [circleModalOpen, setCircleModalOpen] = useState(false);
+  const [memberModalOpen, setMemberModalOpen] = useState(false);
+  const [membershipEditModalOpen, setMembershipEditModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<SystemUser | null>(null);
+  const [editingMembership, setEditingMembership] = useState<ProjectMember | null>(null);
+  const [newUser, setNewUser] = useState<NewUserForm>(EMPTY_USER);
+  const [editUser, setEditUser] = useState<EditUserForm>(EMPTY_EDIT_USER);
+  const [membershipEdit, setMembershipEdit] = useState<EditMembershipForm>(EMPTY_MEMBERSHIP_EDIT);
+  const [newCircle, setNewCircle] = useState<NewCircleForm>(EMPTY_CIRCLE);
+  const [newMember, setNewMember] = useState<NewMemberForm>(EMPTY_MEMBER);
+
+  const load = async (): Promise<boolean> => {
+    if (!project) return false;
+    setLoading(true);
+    setError(null);
+    try {
+      const [memberRows, circleRows, disciplineRows] = await Promise.all([
+        api.get<ProjectMember[]>(`/projects/${project.id}/members`),
+        api.get<AccessCircle[]>(`/projects/${project.id}/circles`),
+        api.get<Lookup[]>(`/projects/${project.id}/disciplines`),
+      ]);
+      setMembers(memberRows);
+      setCircles(circleRows);
+      setDisciplines(disciplineRows);
+      if (user?.is_superuser) {
+        setUsers(await api.get<SystemUser[]>("/admin/users"));
+      } else {
+        setUsers([]);
+      }
+      return true;
+    } catch (err) {
+      setError(messageOf(err, "بارگذاری کاربران و حلقه‌های دسترسی ناموفق بود."));
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [project?.id, user?.is_superuser]);
+
+  const usersForPicker = useMemo(() => {
+    if (user?.is_superuser && users.length) return users.filter((item) => item.is_active);
+    const byId = new Map<string, SystemUser>();
+    members.forEach((item) => {
+      byId.set(item.user_id, {
+        id: item.user_id,
+        email: item.email,
+        full_name: item.full_name,
+        national_id: item.national_id,
+        mobile: item.mobile,
+        is_active: item.is_active,
+        is_superuser: false,
+        locale: "fa",
+        auth_provider: "local",
+        last_login_at: null,
+        memberships: [],
+      });
+    });
+    return Array.from(byId.values()).filter((item) => item.is_active);
+  }, [members, user?.is_superuser, users]);
+
+  const selectedCircle = circles.find((circle) => circle.id === newMember.circle_id);
+  const selectedCircleUserIds = useMemo(
+    () => new Set(selectedCircle?.members.map((member) => member.user_id) ?? []),
+    [selectedCircle],
+  );
+  const filteredCircleUsers = useMemo(() => {
+    const query = newMember.search.trim().toLocaleLowerCase("fa");
+    if (!query) return usersForPicker;
+    return usersForPicker.filter((item) =>
+      [item.full_name, item.email, item.mobile ?? "", item.national_id ?? ""]
+        .join(" ")
+        .toLocaleLowerCase("fa")
+        .includes(query),
+    );
+  }, [newMember.search, usersForPicker]);
+  const roleForValue = (value: string): Role | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const normalized = trimmed.toLowerCase().replace(/\u200c/g, " ").replace(/\s+/g, " ");
+    return ROLE_ALIASES[normalized] ?? ROLE_OPTIONS.find(
+      (item) => item.value === normalized || item.label.toLowerCase() === normalized,
+    )?.value ?? trimmed;
+  };
+  const disciplineForValue = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    return disciplines.find(
+      (item) => item.id === value || item.code.toLowerCase() === normalized || item.name.trim().toLowerCase() === normalized,
+    );
+  };
+  const circleForValue = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    return circles.find(
+      (item) => item.id === value || item.code.toLowerCase() === normalized || item.name.trim().toLowerCase() === normalized,
+    );
+  };
+  const createUser = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project) return;
+    const role = roleForValue(newUser.role_text);
+    if (!role) {
+      setError("نقش پروژه را به‌صورت متنی وارد کنید؛ نمونه: reviewer یا کارشناس کنترل پروژه.");
+      return;
+    }
+    const disciplineText = newUser.discipline_text;
+    const discipline = disciplineText.trim() ? disciplineForValue(disciplineText) : undefined;
+    const disciplineName = (discipline?.name ?? disciplineText.trim()) || null;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const created = await api.post<SystemUser>("/admin/users", {
+        full_name: newUser.full_name.trim(),
+        email: newUser.email.trim(),
+        national_id: newUser.national_id.trim(),
+        mobile: newUser.mobile.trim(),
+        password: newUser.password,
+        is_superuser: newUser.is_superuser,
+        project_id: project.id,
+        role,
+        discipline_id: discipline?.id ?? null,
+        discipline_name: disciplineName,
+      });
+      setUsers((current) => [...current, created].sort((left, right) => left.full_name.localeCompare(right.full_name, "fa")));
+      setNewUser(EMPTY_USER);
+      // The account and its project membership are committed by one backend
+      // request; close only after both have succeeded, then refresh both tables.
+      setUserModalOpen(false);
+      await load();
+      setNotice(
+        `حساب «${created.full_name}» با نقش «${roleLabel(role)}»${disciplineName ? ` و دیسیپلین «${disciplineName}»` : ""} ساخته شد.`,
+      );
+    } catch (err) {
+      setError(messageOf(err, "ایجاد حساب کاربر ناموفق بود."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openEditUser = (account: SystemUser) => {
+    const membership = members.find((item) => item.user_id === account.id);
+    setEditingUser(account);
+    setEditUser({
+      full_name: account.full_name,
+      email: account.email,
+      national_id: account.national_id ?? "",
+      mobile: account.mobile ?? "",
+      password: "",
+      role_text: membership?.role ?? "",
+      discipline_text: membership?.discipline_name ?? membership?.discipline_code ?? "",
+      is_superuser: account.is_superuser,
+    });
+    setError(null);
+    setEditUserModalOpen(true);
+  };
+
+  const updateUser = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingUser || !project) return;
+    const currentMembership = members.find((item) => item.user_id === editingUser.id);
+    const roleText = editUser.role_text.trim();
+    const role = roleText ? roleForValue(roleText) : null;
+    if (currentMembership && !role) {
+      setError("نقش پروژه نمی‌تواند خالی باشد.");
+      return;
+    }
+    if (editUser.discipline_text.trim() && !role) {
+      setError("برای ثبت دیسیپلین، ابتدا نقش پروژه را وارد کنید.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const payload: Record<string, unknown> = {
+        full_name: editUser.full_name.trim(),
+        email: editUser.email.trim(),
+        national_id: editUser.national_id.trim(),
+        mobile: editUser.mobile.trim(),
+        is_superuser: editUser.is_superuser,
+      };
+      if (editUser.password.trim()) payload.password = editUser.password;
+      if (role) {
+        const disciplineText = editUser.discipline_text;
+        const discipline = disciplineText.trim() ? disciplineForValue(disciplineText) : undefined;
+        payload.project_id = project.id;
+        payload.role = role;
+        payload.discipline_id = discipline?.id ?? null;
+        payload.discipline_name = (discipline?.name ?? disciplineText.trim()) || null;
+      }
+      await api.patch<SystemUser>(`/admin/users/${editingUser.id}`, payload);
+      setEditUserModalOpen(false);
+      setEditingUser(null);
+      setEditUser(EMPTY_EDIT_USER);
+      await load();
+      setNotice(`اطلاعات حساب «${editUser.full_name.trim()}» و نقش/دیسیپلین پروژه به‌روزرسانی شد.`);
+    } catch (err) {
+      setError(messageOf(err, "ویرایش اطلاعات کاربر ناموفق بود."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openEditMembership = (member: ProjectMember) => {
+    setEditingMembership(member);
+    setMembershipEdit({
+      role_text: member.role,
+      discipline_text: member.discipline_name ?? member.discipline_code ?? "",
+    });
+    setError(null);
+    setMembershipEditModalOpen(true);
+  };
+
+  const updateMembership = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project || !editingMembership) return;
+    const role = roleForValue(membershipEdit.role_text);
+    if (!role) {
+      setError("نقش جدید را به‌صورت متنی وارد کنید؛ نمونه: project_control یا کارشناس کنترل پروژه.");
+      return;
+    }
+    const disciplineText = membershipEdit.discipline_text;
+    const discipline = disciplineText.trim() ? disciplineForValue(disciplineText) : undefined;
+    const disciplineName = (discipline?.name ?? disciplineText.trim()) || null;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.patch<ProjectMember>(`/projects/${project.id}/members/${editingMembership.id}`, {
+        role,
+        discipline_id: discipline?.id ?? null,
+        discipline_name: disciplineName,
+      });
+      setMembershipEditModalOpen(false);
+      setEditingMembership(null);
+      setMembershipEdit(EMPTY_MEMBERSHIP_EDIT);
+      await load();
+      setNotice(`نقش «${editingMembership.full_name}» به «${roleLabel(role)}» تغییر کرد.`);
+    } catch (err) {
+      setError(messageOf(err, "ویرایش نقش پروژه ناموفق بود."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createCircle = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.post<AccessCircle>(`/projects/${project.id}/circles`, {
+        code: newCircle.code.trim().toUpperCase(),
+        name: newCircle.name.trim(),
+        description: newCircle.description.trim() || null,
+      });
+      setNewCircle(EMPTY_CIRCLE);
+      setCircleModalOpen(false);
+      await load();
+      setNotice("حلقه دسترسی ساخته شد. اکنون افراد پروژه را داخل آن قرار دهید.");
+    } catch (err) {
+      setError(messageOf(err, "ایجاد حلقه ناموفق بود."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addMember = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!project) return;
+    const circle = newMember.circle_text.trim() ? circleForValue(newMember.circle_text) : undefined;
+    if (!circle) {
+      setError("ابتدا حلقهٔ موردنظر را انتخاب کنید.");
+      return;
+    }
+    const selectedUserIds = newMember.selected_user_ids.filter((id) => !selectedCircleUserIds.has(id));
+    if (!selectedUserIds.length) {
+      setError("حداقل یک کاربر جدید را با تیک انتخاب کنید.");
+      return;
+    }
+    const projectMemberIds = new Set(members.map((member) => member.user_id));
+    const selectedWithoutProjectMembership = selectedUserIds.filter((id) => !projectMemberIds.has(id));
+    if (selectedWithoutProjectMembership.length && !newMember.role_text.trim()) {
+      setError("برای حساب‌های انتخاب‌شده‌ای که هنوز عضو پروژه نیستند، نقش پروژه را وارد کنید.");
+      return;
+    }
+    const discipline = disciplineForValue(newMember.discipline_text);
+    if (newMember.can_access_external && selectedUserIds.length > 1) {
+      setError("دسترسی خارج از حلقه فقط برای یک نفر قابل فعال‌سازی است؛ برای افزودن چند نفر این گزینه را بردارید.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.post<AccessCircle>(`/projects/${project.id}/circles/${circle.id}/members/bulk`, {
+        user_ids: selectedUserIds,
+        can_access_external: newMember.can_access_external,
+        role: newMember.role_text.trim() || null,
+        discipline_id: discipline?.id ?? null,
+        discipline_name: newMember.discipline_text.trim() || null,
+      });
+      if (!(await load())) return;
+      setMemberModalOpen(false);
+      setNewMember({ ...EMPTY_MEMBER, circle_id: circle.id, circle_text: circle.code });
+      setNotice(`${persianDigits(selectedUserIds.length)} نفر با موفقیت به حلقهٔ «${circle.name}» اضافه شدند.`);
+    } catch (err) {
+      setError(messageOf(err, "افزودن افراد به حلقه ناموفق بود."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleExternal = async (circle: AccessCircle, memberId: string, checked: boolean) => {
+    if (!project) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.patch<AccessCircle>(
+        `/projects/${project.id}/circles/${circle.id}/members/${memberId}`,
+        { can_access_external: checked },
+      );
+      await load();
+    } catch (err) {
+      setError(messageOf(err, "تغییر دسترسی خارجی ناموفق بود."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeCircleMember = async (circle: AccessCircle, memberId: string) => {
+    if (!project || !window.confirm("این فرد از حلقه حذف شود؟ عضویت او در پروژه حذف نمی‌شود.")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.delete(`/projects/${project.id}/circles/${circle.id}/members/${memberId}`);
+      await load();
+    } catch (err) {
+      setError(messageOf(err, "حذف فرد از حلقه ناموفق بود."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!project) return <EmptyState title="پروژه‌ای انتخاب نشده است" />;
+
+  return (
+    <div className="space-y-4">
+      <Card className="is-main">
+        <CardHeader
+          title="کاربران، نقش‌ها و حلقه‌های دسترسی"
+          subtitle={`${persianDigits(members.length)} عضویت در پروژه — نقش گردش و مرز دسترسی جداگانه کنترل می‌شوند`}
+          actions={
+            <div className="flex flex-wrap gap-1">
+              {user?.is_superuser ? (
+                <Button className="btn-sm" variant="primary" onClick={() => setUserModalOpen(true)}>
+                  تعریف کاربر جدید
+                </Button>
+              ) : null}
+              {canManageCircles ? (
+                <>
+                  <Button className="btn-sm" onClick={() => setCircleModalOpen(true)}>
+                    ایجاد حلقه دسترسی
+                  </Button>
+                  <Button className="btn-sm" onClick={() => {
+                    setNewMember(EMPTY_MEMBER);
+                    setMemberModalOpen(true);
+                  }}>
+                    افزودن فرد به پروژه / حلقه
+                  </Button>
+                </>
+              ) : null}
+            </div>
+          }
+        />
+        <div className="border-b border-[#c3ccd6] bg-[#fffdf3] px-3 py-2 text-[10.5px] leading-5 text-[#5b4d1a]">
+          <b>قاعده دسترسی:</b> افراد هر حلقه فقط ترانسمیتال‌ها و ارجاع‌های همان حلقه را می‌بینند و می‌توانند برای
+          یکدیگر ارجاع ثبت کنند. در هر حلقه فقط یک نفر می‌تواند گزینه «دسترسی خارج از حلقه» داشته باشد؛ این
+          گزینه برای DCC، کنترل پروژه یا PMO که باید با حلقه‌های دیگر کار کند فعال می‌شود.
+        </div>
+        {notice ? <div className="px-3 pt-2 text-[10.5px] text-[#1f6b34]">{notice}</div> : null}
+        {error ? (
+          <div className="p-3">
+            <ErrorBox message={error} />
+          </div>
+        ) : null}
+      </Card>
+
+      {loading ? <Spinner label="در حال دریافت کاربران و حلقه‌های دسترسی…" /> : null}
+
+      <Card>
+        <CardHeader
+          title="کاربران و نقش‌های مرحلهٔ گردش"
+          subtitle="کد ملی و شماره موبایل برای هر حساب نگهداری می‌شود؛ نقش، سطح عملیاتی فرد در این پروژه است."
+        />
+        {!loading && members.length === 0 ? (
+          <EmptyState
+            title="عضوی برای این پروژه تعریف نشده است"
+            description={user?.is_superuser ? "یک کاربر بسازید و سپس نقش و حلقه او را تعیین کنید." : "از مدیر سیستم درخواست عضویت کنید."}
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="table-base">
+              <thead>
+                <tr>
+                  <th style={{ width: 190 }}>نقش</th>
+                  <th>کاربر</th>
+                  <th style={{ width: 170 }}>کد ملی</th>
+                  <th style={{ width: 130 }}>موبایل</th>
+                  <th style={{ width: 190 }} className="ltr">ورود</th>
+                  <th style={{ width: 110 }}>دیسیپلین</th>
+                  <th>مسئولیت در گردش</th>
+                  {user?.is_superuser ? <th style={{ width: 105 }}>ویرایش حساب</th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((member) => {
+                  const spec = ROUTE_ROLES.find((item) => item.role === member.role);
+                  return (
+                    <tr key={member.id}>
+                      <td>{roleLabel(member.role)}</td>
+                      <td>
+                        <div className="font-bold">{member.full_name}</div>
+                        {!member.is_active ? <Badge className="bg-[#fdeeee] text-[#8a2b25]">غیرفعال</Badge> : null}
+                      </td>
+                      <td className="ltr font-mono text-[10px]">{member.national_id ?? "ثبت نشده"}</td>
+                      <td className="ltr font-mono text-[10px]">{member.mobile ?? "ثبت نشده"}</td>
+                      <td className="ltr font-mono text-[10px]">{member.email}</td>
+                      <td className="text-center">
+                        {member.discipline_name ? <div>{member.discipline_name}</div> : <span>{member.discipline_code ?? "—"}</span>}
+                        {member.discipline_name && member.discipline_code ? (
+                          <div className="ltr font-mono text-[9px] text-[#71808d]">{member.discipline_code}</div>
+                        ) : null}
+                      </td>
+                      <td className="text-[10px] text-[#3b4b57]">{spec?.job ?? "—"}</td>
+                      {user?.is_superuser ? (
+                        <td className="text-center">
+                          <Button className="btn-sm" onClick={() => openEditMembership(member)}>
+                            ویرایش نقش
+                          </Button>
+                        </td>
+                      ) : null}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {user?.is_superuser ? (
+        <Card>
+          <CardHeader
+            title="حساب‌های کاربران سامانه"
+            subtitle="تمام اطلاعات حساب، شامل نام، ایمیل، کد ملی، موبایل و رمز عبور قابل ویرایش است. رمز عبور خالی یعنی بدون تغییر."
+            actions={
+              <Button className="btn-sm" variant="primary" onClick={() => setUserModalOpen(true)}>
+                + تعریف حساب جدید
+              </Button>
+            }
+          />
+          {users.length === 0 ? (
+            <EmptyState title="هنوز حسابی ثبت نشده است" description="از دکمه تعریف حساب جدید استفاده کنید." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="table-base">
+                <thead>
+                  <tr>
+                    <th>نام و نام خانوادگی</th>
+                    <th className="ltr">ایمیل / نام کاربری</th>
+                    <th style={{ width: 150 }}>کد ملی</th>
+                    <th style={{ width: 135 }}>موبایل</th>
+                    <th style={{ width: 90 }}>وضعیت</th>
+                    <th style={{ width: 105 }}>عملیات</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((account) => (
+                    <tr key={account.id}>
+                      <td className="font-bold">{account.full_name}</td>
+                      <td className="ltr text-[10px]">{account.email}</td>
+                      <td className="ltr font-mono text-[10px]">{account.national_id ?? "ثبت نشده"}</td>
+                      <td className="ltr font-mono text-[10px]">{account.mobile ?? "ثبت نشده"}</td>
+                      <td className="text-center">
+                        <Badge className={account.is_active ? "bg-[#e8f5e9] text-[#1f6b34]" : "bg-[#fdeeee] text-[#8a2b25]"}>
+                          {account.is_active ? "فعال" : "غیرفعال"}
+                        </Badge>
+                      </td>
+                      <td className="text-center">
+                        <Button className="btn-sm" onClick={() => openEditUser(account)}>
+                          ویرایش اطلاعات
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      ) : null}
+
+      <Card>
+        <CardHeader
+          title="حلقه‌های دسترسی پروژه"
+          subtitle={`${persianDigits(circles.length)} حلقه — هر حلقه می‌تواند چند کاربر مهندسی داشته باشد`}
+          actions={
+            canManageCircles ? (
+              <Button className="btn-sm" onClick={() => setCircleModalOpen(true)}>
+                + حلقه جدید
+              </Button>
+            ) : null
+          }
+        />
+        {circles.length === 0 ? (
+          <EmptyState
+            title="هنوز حلقه‌ای ساخته نشده است"
+            description="برای سناریوی پنج نفر واحد مهندسی، ابتدا یک حلقه بسازید و سپس هر پنج نفر را به آن اضافه کنید."
+          />
+        ) : (
+          <div className="space-y-2 p-2">
+            {circles.map((circle) => (
+              <div key={circle.id} className="border border-[#a8b6c2] bg-[#f7f9fb]">
+                <div className="team-circle-header flex flex-wrap items-center justify-between gap-2 px-2 py-1.5">
+                  <div>
+                    <span className="font-bold text-[#1f3864]">{circle.name}</span>
+                    <span className="mr-2 ltr font-mono text-[10px] text-[#5c6b78]">{circle.code}</span>
+                    {circle.description ? <span className="mr-2 text-[9.5px] text-[#5c6b78]">— {circle.description}</span> : null}
+                  </div>
+                  <div className="flex items-center gap-1 text-[9.5px] text-[#4a5a67]">
+                    <Badge className="bg-white text-[#1f3864]">{persianDigits(circle.member_count)} عضو</Badge>
+                    <Badge className={circle.external_member_count ? "bg-[#fff4db] text-[#8a5a10]" : "bg-white text-[#4a5a67]"}>
+                      {circle.external_member_count ? "دسترسی خارجی فعال" : "فقط داخل حلقه"}
+                    </Badge>
+                    {canManageCircles ? (
+                      <Button className="btn-sm" onClick={() => {
+                        setNewMember({ ...EMPTY_MEMBER, circle_id: circle.id, circle_text: circle.code });
+                        setMemberModalOpen(true);
+                      }}>
+                        افزودن فرد
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+                {circle.members.length === 0 ? (
+                  <p className="px-2 py-3 text-center text-[10px] text-[#7a8794]">این حلقه هنوز عضوی ندارد.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="table-base">
+                      <thead>
+                        <tr>
+                          <th>نام و نام خانوادگی</th>
+                          <th>نقش پروژه</th>
+                          <th style={{ width: 150 }}>کد ملی</th>
+                          <th style={{ width: 130 }}>موبایل</th>
+                          <th style={{ width: 210 }}>دسترسی خارج از حلقه</th>
+                          <th style={{ width: 90 }}>عملیات</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {circle.members.map((circleMember) => (
+                          <tr key={circleMember.id}>
+                            <td>
+                              <div className="font-bold">{circleMember.full_name}</div>
+                              <div className="ltr text-[9px] text-[#7a8794]">{circleMember.email}</div>
+                            </td>
+                            <td>{circleMember.roles.length ? circleMember.roles.map(roleLabel).join("، ") : "بدون نقش"}</td>
+                            <td className="ltr font-mono text-[10px]">{circleMember.national_id ?? "ثبت نشده"}</td>
+                            <td className="ltr font-mono text-[10px]">{circleMember.mobile ?? "ثبت نشده"}</td>
+                            <td>
+                              <label className="flex cursor-pointer items-center gap-1 text-[10px]">
+                                <input
+                                  type="checkbox"
+                                  checked={circleMember.can_access_external}
+                                  disabled={busy || !canManageCircles}
+                                  onChange={(event) => void toggleExternal(circle, circleMember.id, event.target.checked)}
+                                />
+                                <span>{circleMember.can_access_external ? "این فرد به خارج دسترسی دارد" : "فقط همین حلقه"}</span>
+                              </label>
+                            </td>
+                            <td>
+                              <Button
+                                className="btn-sm"
+                                variant="danger"
+                                disabled={busy || !canManageCircles}
+                                onClick={() => void removeCircleMember(circle, circleMember.id)}
+                              >
+                                حذف
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <div className="m-1 border border-[#a8a284] bg-[#fffdf3] px-2 py-1 text-[10px] leading-5 text-[#3b4b57]">
+        <b>نمونه پیشنهادی واحد مهندسی:</b> یک حلقه با کد <span className="ltr font-mono">ENG</span> بسازید، پنج حساب با
+        کد ملی و موبایل معتبر ایجاد کنید، نقش‌های DCC، کنترل پروژه، PMO و کارشناسان مربوط را به آن‌ها بدهید و
+        هر پنج نفر را داخل حلقه قرار دهید. فقط برای یک نفر گزینه دسترسی خارجی را فعال کنید؛ سامانه اجازه فعال‌کردن
+        نفر دوم را نمی‌دهد و ترانسمیتال‌های حلقه نیز خارج از این مرز نمایش داده نمی‌شوند.
+      </div>
+
+      <Modal
+        open={membershipEditModalOpen}
+        title={`ویرایش نقش پروژه${editingMembership ? ` — ${editingMembership.full_name}` : ""}`}
+        onClose={() => {
+          setMembershipEditModalOpen(false);
+          setEditingMembership(null);
+        }}
+        width="max-w-xl"
+        footer={
+          <div className="flex justify-end gap-1">
+            <Button
+              onClick={() => {
+                setMembershipEditModalOpen(false);
+                setEditingMembership(null);
+              }}
+            >
+              انصراف
+            </Button>
+            <Button variant="primary" form="edit-membership-form" type="submit" disabled={busy}>
+              ذخیره نقش
+            </Button>
+          </div>
+        }
+      >
+        <form id="edit-membership-form" className="space-y-2" onSubmit={updateMembership}>
+          <div className="border border-[#c3ccd6] bg-[#fffdf3] px-2 py-1.5 text-[10px] leading-5 text-[#5b4d1a]">
+            نقش و دیسیپلین را مستقیم تایپ کنید؛ پیشنهادهای زیر فقط برای سرعت هستند و انتخاب از فهرست الزامی نیست.
+          </div>
+          <Field label="نقش جدید در پروژه *">
+            <Input
+              list="membership-role-options"
+              value={membershipEdit.role_text}
+              placeholder="project_control یا کنترل پروژه"
+              onChange={(event) => setMembershipEdit({ ...membershipEdit, role_text: event.target.value })}
+            />
+          </Field>
+          <Field label="دیسیپلین (اختیاری)" hint="نام جدید هم قابل ثبت است؛ خالی بگذارید تا دیسیپلین حذف شود.">
+            <Input
+              list="membership-discipline-options"
+              value={membershipEdit.discipline_text}
+              placeholder="کد یا نام دیسیپلین جدید"
+              onChange={(event) => setMembershipEdit({ ...membershipEdit, discipline_text: event.target.value })}
+            />
+          </Field>
+          <datalist id="membership-role-options">
+            {ROLE_OPTIONS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}
+          </datalist>
+          <datalist id="membership-discipline-options">
+            {disciplines.map((item) => <option key={item.id} value={item.code} label={item.name} />)}
+          </datalist>
+        </form>
+      </Modal>
+
+      <Modal
+        open={editUserModalOpen}
+        title={`ویرایش اطلاعات کاربر${editingUser ? ` — ${editingUser.full_name}` : ""}`}
+        onClose={() => {
+          setEditUserModalOpen(false);
+          setEditingUser(null);
+        }}
+        width="max-w-2xl"
+        footer={
+          <div className="flex justify-end gap-1">
+            <Button
+              onClick={() => {
+                setEditUserModalOpen(false);
+                setEditingUser(null);
+              }}
+            >
+              انصراف
+            </Button>
+            <Button variant="primary" form="edit-user-form" type="submit" disabled={busy}>
+              ذخیره اطلاعات
+            </Button>
+          </div>
+        }
+      >
+        <form id="edit-user-form" className="space-y-2" onSubmit={updateUser}>
+          <div className="border border-[#c3ccd6] bg-[#fffdf3] px-2 py-1.5 text-[10px] leading-5 text-[#5b4d1a]">
+            همه موارد این فرم قابل تایپ و ویرایش هستند. برای تغییر رمز عبور مقدار جدید را وارد کنید؛ اگر خالی بماند، رمز فعلی حفظ می‌شود.
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="نام و نام خانوادگی *">
+              <Input required value={editUser.full_name} onChange={(event) => setEditUser({ ...editUser, full_name: event.target.value })} />
+            </Field>
+            <Field label="ایمیل / نام کاربری *">
+              <Input required type="email" dir="ltr" value={editUser.email} onChange={(event) => setEditUser({ ...editUser, email: event.target.value })} />
+            </Field>
+            <Field label="کد ملی *" hint="۱۰ رقم با رقم کنترل معتبر">
+              <Input required dir="ltr" inputMode="numeric" maxLength={10} value={editUser.national_id} onChange={(event) => setEditUser({ ...editUser, national_id: event.target.value })} />
+            </Field>
+            <Field label="شماره موبایل *" hint="نمونه: 09121234567">
+              <Input required dir="ltr" inputMode="tel" maxLength={14} value={editUser.mobile} onChange={(event) => setEditUser({ ...editUser, mobile: event.target.value })} />
+            </Field>
+            <Field label="نقش در پروژه *" hint="برای همین پروژه؛ مقدار سفارشی هم مجاز است.">
+              <Input
+                required={Boolean(editingUser && members.some((item) => item.user_id === editingUser.id))}
+                list="edit-user-role-options"
+                value={editUser.role_text}
+                placeholder="reviewer / dcc / عنوان سفارشی"
+                onChange={(event) => setEditUser({ ...editUser, role_text: event.target.value })}
+              />
+            </Field>
+            <Field label="دیسیپلین (اختیاری)" hint="خالی‌کردن این فیلد دیسیپلین را حذف می‌کند.">
+              <Input
+                list="edit-user-discipline-options"
+                value={editUser.discipline_text}
+                placeholder="کد یا نام دیسیپلین"
+                onChange={(event) => setEditUser({ ...editUser, discipline_text: event.target.value })}
+              />
+            </Field>
+            <Field label="رمز عبور جدید" hint="اختیاری — حداقل ۸ نویسه">
+              <Input type="password" dir="ltr" minLength={8} value={editUser.password} onChange={(event) => setEditUser({ ...editUser, password: event.target.value })} />
+            </Field>
+            <label className="flex items-center gap-1 self-end pb-1 text-[10.5px] text-[#3b4b57]">
+              <input type="checkbox" checked={editUser.is_superuser} onChange={(event) => setEditUser({ ...editUser, is_superuser: event.target.checked })} />
+              مدیر سیستم
+            </label>
+          </div>
+          <datalist id="edit-user-role-options">
+            {ROLE_OPTIONS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}
+          </datalist>
+          <datalist id="edit-user-discipline-options">
+            {disciplines.map((item) => <option key={item.id} value={item.code} label={item.name} />)}
+          </datalist>
+        </form>
+      </Modal>
+
+      <Modal
+        open={userModalOpen}
+        title="تعریف کاربر جدید"
+        onClose={() => setUserModalOpen(false)}
+        width="max-w-2xl"
+        footer={
+          <div className="flex justify-end gap-1">
+            <Button onClick={() => setUserModalOpen(false)}>انصراف</Button>
+            <Button variant="primary" form="new-user-form" type="submit" disabled={busy}>ثبت حساب</Button>
+          </div>
+        }
+      >
+        <form id="new-user-form" className="space-y-2" onSubmit={createUser}>
+          <div className="border border-[#c3ccd6] bg-[#fffdf3] px-2 py-1.5 text-[10px] leading-5 text-[#5b4d1a]">
+            کد ملی و شماره موبایل الزامی است و برای جلوگیری از تعریف حساب تکراری کنترل می‌شود. نقش در پروژه
+            همین‌جا ثبت می‌شود؛ دیسیپلین اختیاری است و نام جدید هم قابل تایپ و ذخیره است.
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="نام و نام خانوادگی *">
+              <Input required value={newUser.full_name} onChange={(event) => setNewUser({ ...newUser, full_name: event.target.value })} />
+            </Field>
+            <Field label="ایمیل / نام کاربری *" hint="برای ورود به سامانه">
+              <Input required type="email" dir="ltr" value={newUser.email} onChange={(event) => setNewUser({ ...newUser, email: event.target.value })} />
+            </Field>
+            <Field label="کد ملی *" hint="۱۰ رقم با رقم کنترل معتبر">
+              <Input required dir="ltr" inputMode="numeric" maxLength={10} value={newUser.national_id} onChange={(event) => setNewUser({ ...newUser, national_id: event.target.value })} />
+            </Field>
+            <Field label="شماره موبایل *" hint="نمونه: 09121234567">
+              <Input required dir="ltr" inputMode="tel" maxLength={14} value={newUser.mobile} onChange={(event) => setNewUser({ ...newUser, mobile: event.target.value })} />
+            </Field>
+            <Field label="نقش در پروژه *" hint="کلید انگلیسی یا عنوان فارسی؛ مقدار سفارشی هم مجاز است.">
+              <Input
+                required
+                list="new-user-role-options"
+                value={newUser.role_text}
+                placeholder="reviewer / dcc / کارشناس کنترل پروژه"
+                onChange={(event) => setNewUser({ ...newUser, role_text: event.target.value })}
+              />
+            </Field>
+            <Field label="دیسیپلین (اختیاری)" hint="کد، نام موجود یا نام جدید را تایپ کنید.">
+              <Input
+                list="new-user-discipline-options"
+                value={newUser.discipline_text}
+                placeholder="مثلاً CIV، سیویل یا نام جدید"
+                onChange={(event) => setNewUser({ ...newUser, discipline_text: event.target.value })}
+              />
+            </Field>
+            <Field label="گذرواژه *" hint="حداقل ۸ نویسه">
+              <Input required type="password" dir="ltr" minLength={8} value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} />
+            </Field>
+            {user?.is_superuser ? (
+              <label className="flex items-center gap-1 self-end pb-1 text-[10.5px] text-[#3b4b57]">
+                <input type="checkbox" checked={newUser.is_superuser} onChange={(event) => setNewUser({ ...newUser, is_superuser: event.target.checked })} />
+                مدیر سیستم
+              </label>
+            ) : null}
+          </div>
+          <datalist id="new-user-role-options">
+            {ROLE_OPTIONS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}
+          </datalist>
+          <datalist id="new-user-discipline-options">
+            {disciplines.map((item) => <option key={item.id} value={item.code} label={item.name} />)}
+          </datalist>
+        </form>
+      </Modal>
+
+      <Modal
+        open={circleModalOpen}
+        title="ایجاد حلقه دسترسی پروژه"
+        onClose={() => setCircleModalOpen(false)}
+        footer={
+          <div className="flex justify-end gap-1">
+            <Button onClick={() => setCircleModalOpen(false)}>انصراف</Button>
+            <Button variant="primary" form="new-circle-form" type="submit" disabled={busy}>ایجاد حلقه</Button>
+          </div>
+        }
+      >
+        <form id="new-circle-form" className="space-y-2" onSubmit={createCircle}>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="کد حلقه *" hint="نمونه: ENG">
+              <Input required dir="ltr" maxLength={64} value={newCircle.code} onChange={(event) => setNewCircle({ ...newCircle, code: event.target.value })} />
+            </Field>
+            <Field label="نام حلقه *">
+              <Input required value={newCircle.name} onChange={(event) => setNewCircle({ ...newCircle, name: event.target.value })} placeholder="واحد مهندسی" />
+            </Field>
+          </div>
+          <Field label="شرح حلقه">
+            <textarea className="input min-h-16 resize-y" value={newCircle.description} onChange={(event) => setNewCircle({ ...newCircle, description: event.target.value })} placeholder="مثلاً پنج نفر پرسنل واحد مهندسی" maxLength={2000} />
+          </Field>
+        </form>
+      </Modal>
+
+      <Modal
+        open={memberModalOpen}
+        title="افزودن فرد به پروژه / حلقه"
+        onClose={() => setMemberModalOpen(false)}
+        width="max-w-2xl"
+        footer={
+          <div className="flex justify-end gap-1">
+            <Button onClick={() => setMemberModalOpen(false)}>انصراف</Button>
+            <Button
+              variant="primary"
+              form="new-member-form"
+              type="submit"
+              disabled={busy || !newMember.circle_id || !newMember.selected_user_ids.length}
+            >
+              افزودن افراد انتخاب‌شده
+            </Button>
+          </div>
+        }
+      >
+        <form id="new-member-form" className="space-y-2" onSubmit={addMember}>
+          <div className="border border-[#c3ccd6] bg-[#fffdf3] px-2 py-1.5 text-[10px] leading-5 text-[#5b4d1a]">
+            از فهرست حساب‌های فعال جست‌وجو کنید، کنار چند نفر تیک بزنید و همه را هم‌زمان به حلقه اضافه کنید.
+            نقش و دیسیپلین هر نفر از عضویت پروژهٔ او استفاده می‌شود.
+          </div>
+          <Field label="حلقه دسترسی *" hint="کد یا نام حلقه را تایپ کنید.">
+            <Input
+              list="team-circle-options"
+              value={newMember.circle_text}
+              placeholder="ENG یا واحد مهندسی"
+              onChange={(event) => {
+                const value = event.target.value;
+                const circle = circleForValue(value);
+                setNewMember({
+                  ...newMember,
+                  circle_text: value,
+                  circle_id: circle?.id ?? "",
+                  search: "",
+                  selected_user_ids: [],
+                  can_access_external: false,
+                });
+              }}
+            />
+          </Field>
+          <datalist id="team-circle-options">
+            {circles.map((item) => <option key={item.id} value={item.code} label={item.name} />)}
+          </datalist>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label="نقش پروژه برای حساب‌های جدید" hint="برای حسابی که هنوز عضو پروژه نیست نقش تایپی وارد کنید؛ نقش اعضای فعلی تغییر نمی‌کند.">
+              <Input
+                list="team-member-role-options"
+                value={newMember.role_text}
+                placeholder="reviewer / DCC / عنوان آزاد"
+                onChange={(event) => setNewMember({ ...newMember, role_text: event.target.value })}
+              />
+            </Field>
+            <Field label="دیسیپلین حساب‌های جدید (اختیاری)" hint="نام موجود یا نام جدید را آزادانه تایپ کنید.">
+              <Input
+                list="team-member-discipline-options"
+                value={newMember.discipline_text}
+                placeholder="مثلاً CIV یا کنترل کیفیت"
+                onChange={(event) => setNewMember({ ...newMember, discipline_text: event.target.value })}
+              />
+            </Field>
+          </div>
+          <datalist id="team-member-role-options">
+            {ROLE_OPTIONS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}
+          </datalist>
+          <datalist id="team-member-discipline-options">
+            {disciplines.map((item) => <option key={item.id} value={item.code} label={item.name} />)}
+          </datalist>
+          {selectedCircle ? (
+            <div className="border border-[#a8b6c2] bg-[#f7f9fb] p-2">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-1 text-[10px] text-[#4a5a67]">
+                <span>حلقهٔ انتخاب‌شده: <b className="text-[#1f3864]">{selectedCircle.name}</b></span>
+                <span>{persianDigits(selectedCircle.member_count)} عضو فعلی</span>
+              </div>
+              <Input
+                value={newMember.search}
+                placeholder="جست‌وجو با نام، ایمیل یا موبایل…"
+                onChange={(event) => setNewMember({ ...newMember, search: event.target.value })}
+              />
+              <div className="mt-2 max-h-64 overflow-y-auto border border-[#c3ccd6] bg-white">
+                {filteredCircleUsers.length === 0 ? (
+                  <p className="px-2 py-4 text-center text-[10px] text-[#7a8794]">کاربری با این جست‌وجو پیدا نشد.</p>
+                ) : (
+                  filteredCircleUsers.map((account) => {
+                    const alreadyInCircle = selectedCircleUserIds.has(account.id);
+                    const selected = newMember.selected_user_ids.includes(account.id);
+                    const projectRoles = members
+                      .filter((member) => member.user_id === account.id)
+                      .map((member) => roleLabel(member.role));
+                    return (
+                      <label
+                        key={account.id}
+                        className={`flex items-center gap-2 border-b border-[#edf0f3] px-2 py-1.5 text-[10.5px] last:border-b-0 ${
+                          alreadyInCircle ? "bg-[#f2f4f6] text-[#8a969f]" : "cursor-pointer hover:bg-[#eef5fb]"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected || alreadyInCircle}
+                          disabled={busy || alreadyInCircle}
+                          onChange={() => setNewMember((current) => ({
+                            ...current,
+                            selected_user_ids: selected
+                              ? current.selected_user_ids.filter((id) => id !== account.id)
+                              : [...current.selected_user_ids, account.id],
+                          }))}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-bold">{account.full_name}</span>
+                          <span className="block ltr truncate text-[9px] text-[#71808d]">
+                            {account.email}{account.mobile ? ` · ${account.mobile}` : ""}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-[9px] text-[#5c6b78]">
+                          {alreadyInCircle ? "عضو حلقه" : !projectRoles.length ? "نقش جدید لازم است" : projectRoles.join("، ")}
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              <p className="mt-1 text-[9.5px] text-[#5c6b78]">
+                {persianDigits(newMember.selected_user_ids.length)} نفر انتخاب شده‌اند.
+                افراد غیرفعال و اعضای فعلی حلقه قابل انتخاب نیستند؛ برای حساب بدون عضویت پروژه، نقش بالای فهرست ثبت می‌شود.
+              </p>
+            </div>
+          ) : (
+            <p className="border border-[#d8c58c] bg-[#fffdf3] px-2 py-2 text-[10px] text-[#5b4d1a]">
+              برای دیدن فهرست افراد، ابتدا یک حلقه را انتخاب کنید.
+            </p>
+          )}
+          <label className="flex items-start gap-1 border border-[#d8c58c] bg-[#fffdf3] px-2 py-1.5 text-[10.5px] leading-5 text-[#5b4d1a]">
+            <input
+              type="checkbox"
+              checked={newMember.can_access_external}
+              disabled={!newMember.circle_id || newMember.selected_user_ids.length !== 1}
+              onChange={(event) => setNewMember({ ...newMember, can_access_external: event.target.checked })}
+            />
+            <span><b>اجازه دسترسی خارج از حلقه</b> — فقط هنگام انتخاب یک نفر فعال می‌شود؛ برای چند نفر هم‌زمان این گزینه را بردارید.</span>
+          </label>
+        </form>
+      </Modal>
+    </div>
+  );
+}

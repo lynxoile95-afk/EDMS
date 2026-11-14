@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.ai.service import active_runtime
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import settings
 from app.extraction.vlm import VLMExtractor
@@ -25,18 +26,22 @@ EXTRACTION_NOTE_FA = (
 
 @router.get("/system/capabilities", summary="توانمندی‌های استخراج (بدون افشای کلید)")
 def capabilities(user: CurrentUser, db: DbSession) -> dict:
+    # The upload strip must reflect the same persisted active Credential that the
+    # extraction worker will use after a reload, with the old VLM_* environment
+    # settings still serving as the fallback when no Credential exists.
+    runtime = active_runtime(db)
     vlm = VLMExtractor()
     return {
         "ocr_enabled": settings.ocr_enabled,
         "ocr_engine": settings.ocr_engine,
         "ocr_langs": settings.ocr_langs,
         "ai_required_for_upload": False,
-        "vlm_enabled": settings.vlm_enabled,
-        "vlm_provider": settings.vlm_provider,
-        "vlm_api_key_set": bool(settings.vlm_api_key and settings.vlm_api_key != "EMPTY"),
-        "vlm_model": settings.vlm_model,
-        "vlm_base_url": settings.vlm_base_url,
+        "vlm_enabled": runtime.enabled,
+        "vlm_provider": runtime.provider_id,
+        "vlm_api_key_set": bool(runtime.api_key),
+        "vlm_model": runtime.model,
+        "vlm_base_url": runtime.base_url,
         "vlm_endpoint_allowed": vlm.endpoint_trusted(),
-        "vlm_remote_allowed": settings.vlm_allow_remote,
+        "vlm_remote_allowed": runtime.remote_consent,
         "note_fa": EXTRACTION_NOTE_FA,
     }

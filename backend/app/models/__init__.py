@@ -23,6 +23,7 @@ from app.models.documents import (
     ValidationIssue,
 )
 from app.models.registration import RegistrationRow
+from app.models.ai import AICredential, AISettings
 from app.models.transmittal import (
     AuditLog,
     Comment,
@@ -42,6 +43,8 @@ from app.models.transmittal import (
 
 __all__ = [
     "RegistrationRow",
+    "AICredential",
+    "AISettings",
     "AccessCircle",
     "AccessCircleMember",
     "Discipline",

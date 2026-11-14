@@ -347,7 +347,7 @@ class ExtractionPipeline:
                 note="vlm fallback",
             )
         self._append_method(result, "vlm")
-        result.models["vlm"] = settings.vlm_model
+        result.models["vlm"] = getattr(self.vlm, "last_model", getattr(self.vlm, "model", settings.vlm_model))
         result.warnings.append("برخی فیلدها با مدل بینایی-زبانی خوانده شد؛ تأیید انسانی لازم است.")
 
     # ------------------------------------------------------------- helpers

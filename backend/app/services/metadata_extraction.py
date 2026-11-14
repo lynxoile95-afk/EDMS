@@ -83,26 +83,25 @@ class ExtractionOutcome:
     error: str | None = None
 
 
+def _active_vlm():
+    """Resolve the same persisted active provider used by the PDF pipeline."""
+    from app.extraction.vlm import VLMExtractor
+
+    return VLMExtractor()
+
+
 def _base_url() -> str:
-    url = (settings.vlm_base_url or "").strip().rstrip("/")
-    if not url or "/chat/completions" in url:
-        return GEMINI_DEFAULT_BASE_URL
-    return url
+    return _active_vlm().base_url or GEMINI_DEFAULT_BASE_URL
 
 
 def _model() -> str:
-    model = (settings.vlm_model or "").strip()
-    # the VLM default is an on-premise chat model; a Gemini endpoint needs a Gemini name
-    if not model or "/" in model:
-        return GEMINI_DEFAULT_MODEL
-    return model
+    model = _active_vlm().model
+    return model or GEMINI_DEFAULT_MODEL
 
 
 def _endpoint_trusted() -> bool:
     """Reuse the one privacy guard: local, or remote explicitly confirmed."""
-    from app.extraction.vlm import VLMExtractor
-
-    return VLMExtractor().endpoint_trusted()
+    return _active_vlm().endpoint_trusted()
 
 
 def _render_pages(pdf_path: str, pages: list[int]) -> list[tuple[int, bytes]]:
@@ -126,45 +125,10 @@ def _render_pages(pdf_path: str, pages: list[int]) -> list[tuple[int, bytes]]:
 
 
 def _call_gemini(image_png: bytes, timeout: int) -> dict:
-    """One request. Raises on transport/HTTP errors so the caller can retry."""
-    import base64
-
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"text": EXTRACTION_PROMPT},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/png",
-                            "data": base64.b64encode(image_png).decode("ascii"),
-                        }
-                    },
-                ],
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0,
-            "responseMimeType": "application/json",
-            "maxOutputTokens": 1200,
-        },
-    }
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(
-            f"{_base_url()}/models/{_model()}:generateContent",
-            headers={"x-goog-api-key": settings.vlm_api_key},
-            json=payload,
-        )
-        response.raise_for_status()
-        body = response.json()
-    try:
-        parts = body["candidates"][0]["content"]["parts"]
-    except (KeyError, IndexError) as exc:
-        raise ValueError("پاسخ سرویس هوش مصنوعی ساختار مورد انتظار را نداشت.") from exc
-    text = "\n".join(part.get("text", "") for part in parts)
-    if not text.strip():
-        raise ValueError("سرویس هوش مصنوعی پاسخ خالی برگرداند.")
+    """One provider-agnostic request; the timeout is enforced by the adapter."""
+    del timeout  # the common adapter uses the platform's bounded 15-second timeout
+    extractor = _active_vlm()
+    text = extractor.extract_text(image_png, EXTRACTION_PROMPT)
     return parse_json_answer(text)
 
 
@@ -285,13 +249,23 @@ def extract_metadata(
     pages = pages or [1, 2]
     retries = 2 if retries is None else retries
     timeout = timeout or settings.vlm_timeout_seconds
+    vlm = _active_vlm()
 
-    if not settings.vlm_api_key or settings.vlm_api_key == "EMPTY":
-        return ExtractionOutcome(error="کلید هوش مصنوعی تنظیم نشده است؛ ردیف دستی ثبت شد.")
-    if not _endpoint_trusted():
-        return ExtractionOutcome(
-            error="آدرس سرویس هوش مصنوعی داخلی نیست و ارسال به بیرون تأیید نشده است؛ ردیف دستی ثبت شد."
-        )
+    if vlm.runtime.credential_id is None:
+        # Keep the legacy VLM_* fallback behaviour: existing registration callers
+        # enabled the helper by supplying a key, even when the optional global
+        # feature flag remained false in test/dev environments.
+        from app.ai.registry import get_provider
+
+        catalog = get_provider(vlm.runtime.provider_id) or {}
+        if not vlm.endpoint_trusted():
+            return ExtractionOutcome(
+                error="آدرس سرویس هوش مصنوعی داخلی نیست و ارسال به بیرون تأیید نشده است؛ ردیف دستی ثبت شد."
+            )
+        if catalog.get("keyRequired", True) and not vlm.runtime.api_key:
+            return ExtractionOutcome(error="کلید هوش مصنوعی تنظیم نشده است؛ ردیف دستی ثبت شد.")
+    elif not vlm.is_available():
+        return ExtractionOutcome(error="کلید هوش مصنوعی تنظیم نشده است یا لایه VLM فعال نیست؛ ردیف دستی ثبت شد.")
 
     rendered = _render_pages(pdf_path, pages)
     if not rendered:
@@ -318,6 +292,11 @@ def extract_metadata(
                 continue
             except ValueError as exc:
                 last_error = str(exc)
+                continue
+            except RuntimeError as exc:
+                last_error = str(exc)
+                if getattr(exc, "status", None) in {401, 403, 404}:
+                    return ExtractionOutcome(attempts=attempts, model=_model(), error=last_error, page_used=page_no)
                 continue
 
             normalised = normalise_answer(raw)

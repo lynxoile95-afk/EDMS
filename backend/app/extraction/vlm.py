@@ -23,14 +23,11 @@ text layer, and its confidence is capped below the text-layer ceiling.
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 from dataclasses import dataclass
 
 import httpx
-
-from app.core.config import settings
 from app.extraction.base import ExtractionError
 from app.models.enums import ExtractionSource
 from app.services.normalization import (
@@ -99,53 +96,104 @@ class VLMField:
 
 
 class VLMExtractor:
-    name = "openai-compatible"
+    """Provider-agnostic VLM facade used by the extraction pipeline.
+
+    The active persisted credential is resolved server-side for every extractor
+    instance. If the credential store is empty or not migrated yet, the existing
+    VLM_* environment settings remain a supported fallback.
+    """
+
+    name = "provider-adapter"
 
     def __init__(self) -> None:
-        self.enabled = settings.vlm_enabled
-        self.base_url = settings.vlm_base_url.rstrip("/")
-        self.model = settings.vlm_model
+        from app.ai.service import active_runtime, fallback_runtime
 
-    # ------------------------------------------------------------------ guard
-    def is_available(self) -> bool:
-        if not self.enabled:
-            return False
-        if not self.endpoint_trusted():
-            logger.warning(
-                "VLM endpoint %s is not local and remote use is not confirmed; "
-                "refusing to send documents.",
-                self.base_url,
-            )
-            return False
-        return True
+        self.runtime = active_runtime()
+        self.fallback_runtime = fallback_runtime()
+        self.enabled = self.runtime.enabled
+        self.base_url = self.runtime.base_url.rstrip("/")
+        self.model = self.runtime.model
+        self.last_model = self.model
+        # Kept injectable so the existing extraction tests can mock provider HTTP
+        # calls without allowing a real network request.
+        self._client_factory = httpx.Client
 
     @property
     def provider(self) -> str:
-        return (settings.vlm_provider or "openai").lower()
+        return self.runtime.provider_id
 
-    def is_local_endpoint(self) -> bool:
-        host = self.base_url.split("//")[-1].split("/")[0].split(":")[0]
-        return host in {"localhost", "127.0.0.1", "vlm", "ollama", "0.0.0.0"} or host.startswith(
+    @staticmethod
+    def _is_local_runtime(runtime) -> bool:
+        from app.ai.registry import get_provider
+
+        host = runtime.base_url.split("//")[-1].split("/")[0].split(":")[0]
+        catalog = get_provider(runtime.provider_id) or {}
+        return bool(catalog.get("isLocal")) or host in {"localhost", "127.0.0.1", "vlm", "ollama", "0.0.0.0"} or host.startswith(
             ("10.", "192.168.", "172.", "vlm")
         ) or host.endswith(".local") or host.endswith(".internal")
 
+    @classmethod
+    def _runtime_is_trusted(cls, runtime) -> bool:
+        """Local providers are safe; cloud providers require explicit consent."""
+        return cls._is_local_runtime(runtime) or bool(runtime.remote_consent)
+
+    @staticmethod
+    def _runtime_has_key(runtime) -> bool:
+        from app.ai.registry import get_provider
+
+        catalog = get_provider(runtime.provider_id) or {}
+        return bool(runtime.api_key) or not bool(catalog.get("keyRequired", True))
+
+    def _runtime_is_available(self, runtime) -> bool:
+        return bool(runtime.enabled) and self._runtime_is_trusted(runtime) and self._runtime_has_key(runtime)
+
+    def is_local_endpoint(self) -> bool:
+        return self._is_local_runtime(self.runtime)
+
     def endpoint_trusted(self) -> bool:
-        """Local, or a public endpoint an administrator explicitly confirmed."""
-        return self.is_local_endpoint() or bool(settings.vlm_allow_remote)
+        return self._runtime_is_trusted(self.runtime)
+
+    def is_available(self) -> bool:
+        return any(self._runtime_is_available(runtime) for runtime in self._runtimes())
+
+    def _runtimes(self):
+        yield self.runtime
+        if self.fallback_runtime and self.fallback_runtime.credential_id != self.runtime.credential_id:
+            yield self.fallback_runtime
+
+    def _adapter(self, runtime=None):
+        selected = runtime or self.runtime
+        if not self._runtime_is_trusted(selected):
+            raise RuntimeError("ارسال تصویر به سرویس عمومی بدون تأیید حریم خصوصی مجاز نیست.")
+        return selected.adapter(self._client_factory)
+
+    def _call_raw(self, image_bytes: bytes, prompt: str) -> str:
+        last_error: Exception | None = None
+        for runtime in self._runtimes():
+            if not self._runtime_is_available(runtime):
+                continue
+            try:
+                content = self._adapter(runtime).vlm_extract(image_bytes, prompt)
+                if not content.strip():
+                    raise ValueError("پاسخ سرویس هوش مصنوعی خالی بود.")
+                self.last_model = runtime.model
+                return content
+            except (httpx.HTTPError, KeyError, IndexError, ValueError, RuntimeError) as exc:
+                last_error = exc
+                logger.warning("VLM provider %s failed: %s", runtime.provider_id, str(exc)[:300])
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("هیچ Credential فعال و قابل استفاده‌ای برای VLM وجود ندارد.")
 
     # ------------------------------------------------------------------- call
     def extract(self, image_bytes: bytes) -> dict[str, tuple[str, float]]:
         """Return ``{field: (normalised_value, confidence)}`` (empty on failure)."""
         if not self.is_available():
             return {}
-        encoded = base64.b64encode(image_bytes).decode("ascii")
         try:
-            if self.provider == "gemini":
-                content = self._call_gemini(encoded)
-            else:
-                content = self._call_openai(encoded)
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-            logger.warning("VLM call failed: %s", exc)
+            content = self._call_raw(image_bytes, self._prompt())
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, RuntimeError) as exc:
+            logger.warning("VLM call failed: %s", str(exc)[:300])
             return {}
 
         data = _parse_json_block(content)
@@ -153,91 +201,39 @@ class VLMExtractor:
             return {}
         return _normalise_model_output(data)
 
-    # --------------------------------------------------------------- providers
+    def extract_text(self, image_bytes: bytes, prompt: str) -> str:
+        """Send a raw provider-agnostic VLM prompt, using the optional fallback."""
+        if not self.is_available():
+            raise RuntimeError("هیچ Credential فعال و قابل استفاده‌ای برای VLM وجود ندارد.")
+        return self._call_raw(image_bytes, prompt)
+
     def _prompt(self) -> str:
         return PROMPT.format(schema=json.dumps(EXTRACTION_SCHEMA))
 
+    # Compatibility helpers for callers/tests that used the old provider methods.
     def _call_openai(self, encoded: str) -> str:
-        """Any OpenAI-compatible server: vLLM, Ollama, LM Studio, …"""
-        payload = {
-            "model": self.model,
-            "temperature": 0.0,
-            "max_tokens": 800,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You extract structured data from engineering drawing title blocks. "
-                    "Answer with JSON only.",
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": self._prompt()},
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
-                    ],
-                },
-            ],
-        }
-        with httpx.Client(timeout=settings.vlm_timeout_seconds) as client:
-            response = client.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.vlm_api_key}"},
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+        import base64
+
+        return self._adapter().vlm_extract(base64.b64decode(encoded), self._prompt())
 
     def _call_gemini(self, encoded: str) -> str:
-        """Google Generative Language API (``generateContent``).
+        import base64
 
-        The key travels in ``x-goog-api-key`` rather than the query string, so it
-        cannot end up in a proxy access log.
-        """
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [
-                        {"text": self._prompt()},
-                        {"inline_data": {"mime_type": "image/png", "data": encoded}},
-                    ],
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0,
-                "maxOutputTokens": 800,
-                "responseMimeType": "application/json",
-            },
-        }
-        with httpx.Client(timeout=settings.vlm_timeout_seconds) as client:
-            response = client.post(
-                f"{self.base_url}/models/{self.model}:generateContent",
-                headers={"x-goog-api-key": settings.vlm_api_key},
-                json=payload,
-            )
-            response.raise_for_status()
-            body = response.json()
-        parts = body["candidates"][0]["content"]["parts"]
-        return "\n".join(part.get("text", "") for part in parts)
+        return self._adapter().vlm_extract(base64.b64decode(encoded), self._prompt())
 
     # ------------------------------------------------------------------- probe
     def probe(self) -> dict:
-        """Does the endpoint answer at all? Never raises, never returns the key.
-
-        Used by the «آزمایش اتصال» button on the upload screen so a failure can be
-        explained (DNS, refused, 401, wrong model) instead of silently leaving the
-        AI layer off.
-        """
-        import time
+        """Test the active provider without returning its API key."""
+        from app.ai.service import result_payload, test_credential
 
         result: dict = {
             "provider": self.provider,
             "base_url": self.base_url,
             "model": self.model,
-            "key_set": bool(settings.vlm_api_key and settings.vlm_api_key != "EMPTY"),
+            "key_set": bool(self.runtime.api_key),
             "enabled": self.enabled,
             "endpoint_local": self.is_local_endpoint(),
-            "remote_allowed": bool(settings.vlm_allow_remote),
+            "remote_allowed": bool(self.runtime.remote_consent),
             "ok": False,
             "status_code": None,
             "latency_ms": None,
@@ -252,40 +248,19 @@ class VLMExtractor:
                 "آدرس VLM داخلی نیست و ارسال به بیرون تأیید نشده است؛ «تأیید ارسال به سرور عمومی» را تیک بزنید."
             )
             return result
-        if not result["key_set"]:
+        from app.ai.registry import get_provider
+
+        catalog = get_provider(self.provider) or {}
+        if catalog.get("keyRequired") and not self.runtime.api_key:
             result["error"] = "کلید API تنظیم نشده است."
-
-        headers: dict[str, str] = {}
-        if self.provider == "gemini":
-            url = f"{self.base_url}/models"
-            headers["x-goog-api-key"] = settings.vlm_api_key
-        else:
-            url = f"{self.base_url}/models"
-            headers["Authorization"] = f"Bearer {settings.vlm_api_key}"
-
-        started = time.monotonic()
-        try:
-            with httpx.Client(timeout=min(settings.vlm_timeout_seconds, 20)) as client:
-                response = client.get(url, headers=headers)
-            result["latency_ms"] = int((time.monotonic() - started) * 1000)
-            result["status_code"] = response.status_code
-            if response.status_code >= 400:
-                result["error"] = _explain_http_error(response.status_code, response.text)
-                return result
-            try:
-                body = response.json()
-                names = [row.get("name") or row.get("id") for row in body.get("models", body.get("data", []))]
-                result["models_seen"] = [name for name in names if name][:40]
-            except ValueError:
-                result["models_seen"] = None
-            result["ok"] = True
-            result["error"] = None
             return result
-        except httpx.HTTPError as exc:
-            result["latency_ms"] = int((time.monotonic() - started) * 1000)
-            result["error"] = _explain_transport_error(exc, self.base_url)
-            return result
-
+        tested = result_payload(test_credential(self.runtime, client_factory=self._client_factory))
+        result["ok"] = tested["ok"]
+        result["status_code"] = tested["status"]
+        result["latency_ms"] = tested["latencyMs"]
+        result["error"] = None if tested["ok"] else tested["message"]
+        result["models_seen"] = tested.get("models")
+        return result
 
 def _parse_json_block(content: str) -> dict:
     if not content:

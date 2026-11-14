@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     #: An admin must acknowledge it through PUT /admin/ai-config; nothing sets it
     #: automatically, not even a .env file alone (see validate_runtime).
     vlm_allow_remote: bool = False
+    #: AES-256-GCM secret for persisted AI provider credentials. In development,
+    #: SECRET_KEY is used as a deterministic fallback so existing installations
+    #: keep working; production deployments should set this explicitly.
+    credentials_encryption_key: str = ""
 
     # ---------------- email / sms ----------------
     smtp_host: str = "localhost"

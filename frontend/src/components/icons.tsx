@@ -94,6 +94,13 @@ export const IconView = (p: IconProps) => (
   </svg>
 );
 
+export const IconEye = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" />
+    <circle cx="12" cy="12" r="2.5" />
+  </svg>
+);
+
 export const IconPrint = (p: IconProps) => (
   <svg {...base} {...p}>
     <path d="M7 9V3h10v6" />

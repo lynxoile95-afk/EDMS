@@ -11,6 +11,7 @@ python-multipart==0.0.20
 PyJWT==2.10.1
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
+cryptography==43.0.3
 
 # storage / queue
 boto3==1.35.90

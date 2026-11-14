@@ -346,6 +346,7 @@ export function Dashboard() {
       if (selected === row.key) setSelected(null);
       setNotice("ردیف با موفقیت از کارتابل حذف شد.");
       await load();
+      window.dispatchEvent(new Event("edms:inbox-changed"));
     } catch (err) {
       setNotice(err instanceof ApiError ? err.detail : "حذف ردیف ناموفق بود.");
     } finally {
@@ -399,6 +400,7 @@ export function Dashboard() {
     setCheckedRows((previous) => new Set([...previous].filter((key) => !deletedKeys.has(key))));
     if (selected && deletedKeys.has(selected)) setSelected(null);
     await load();
+    window.dispatchEvent(new Event("edms:inbox-changed"));
     setDeleteBusy(false);
 
     if (failed) {

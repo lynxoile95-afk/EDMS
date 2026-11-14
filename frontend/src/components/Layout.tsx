@@ -19,7 +19,7 @@ const TOP_LINKS: { to: string; label: string; icon: ReactNode }[] = [
   { to: "/registration", label: "ثبت برگه", icon: <IconEdit /> },
 ];
 
-const MENU: { title: string; icon: ReactNode; items: { to: string; label: string; icon: ReactNode; badge?: "queue" | "unread" }[] }[] = [
+const MENU: { title: string; icon: ReactNode; items: { to: string; label: string; icon: ReactNode; badge?: "queue" | "inbox" }[] }[] = [
   {
     title: "Project Control",
     icon: <IconGrid />,
@@ -31,7 +31,7 @@ const MENU: { title: string; icon: ReactNode; items: { to: string; label: string
     title: "Engineering Documents",
     icon: <IconDoc />,
     items: [
-      { to: "/dashboard", label: "کارتابل من", icon: <IconHome />, badge: "unread" },
+      { to: "/dashboard", label: "کارتابل من", icon: <IconHome />, badge: "inbox" },
       { to: "/transmittals", label: "برگه‌های ارسال", icon: <IconDoc /> },
       { to: "/transmittals?mine=1", label: "کارتابل ارجاع من", icon: <IconUsers /> },
       { to: "/mdl", label: "MDL — فهرست مدارک", icon: <IconArchive /> },
@@ -71,6 +71,7 @@ export function Layout() {
   const location = useLocation();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
+  const [inboxCount, setInboxCount] = useState(0);
   const [queueCount, setQueueCount] = useState(0);
   const [panelOpen, setPanelOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -94,18 +95,35 @@ export function Layout() {
           setUnread(data.unread);
         })
         .catch(() => undefined);
-      if (project) {
-        api
-          .get<{ total: number }>(`/projects/${project.id}/review-queue?review_status=pending&size=1`)
-          .then((data) => active && setQueueCount(data.total))
-          .catch(() => undefined);
+
+      if (!project) {
+        setInboxCount(0);
+        setQueueCount(0);
+        return;
       }
+
+      // The «کارتابل من» badge represents actionable rows, not every unread
+      // notification. Rejected/ informational upload notices remain available
+      // in the notification panel but must not keep a closed AI row in the desk.
+      Promise.all([
+        api.get<{ total: number }>(`/projects/${project.id}/review-queue?review_status=pending&size=1`),
+        api.get<{ total: number }>(`/projects/${project.id}/transmittals?mine=true&size=1`),
+      ])
+        .then(([queue, transmittals]) => {
+          if (!active) return;
+          setQueueCount(queue.total);
+          setInboxCount(queue.total + transmittals.total);
+        })
+        .catch(() => undefined);
     };
+    const refreshAfterInboxChange = () => load();
+    window.addEventListener("edms:inbox-changed", refreshAfterInboxChange);
     load();
     const timer = setInterval(load, 60_000);
     return () => {
       active = false;
       clearInterval(timer);
+      window.removeEventListener("edms:inbox-changed", refreshAfterInboxChange);
     };
   }, [location.pathname, project]);
 
@@ -335,8 +353,8 @@ export function Layout() {
                     <span className="menu-item-icon">{item.icon}</span>
                     {!sidebarCollapsed ? <span className="menu-item-label">{item.label}</span> : null}
                   </span>
-                  {!sidebarCollapsed && item.badge === "unread" && unread > 0 ? (
-                    <span className="menu-item-count">{persianDigits(unread)}</span>
+                  {!sidebarCollapsed && item.badge === "inbox" && inboxCount > 0 ? (
+                    <span className="menu-item-count">{persianDigits(inboxCount)}</span>
                   ) : null}
                   {!sidebarCollapsed && item.badge === "queue" && queueCount > 0 ? (
                     <span className="menu-item-count">{persianDigits(queueCount)}</span>

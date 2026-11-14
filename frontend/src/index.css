@@ -2710,3 +2710,22 @@ body {
     display: none;
   }
 }
+
+/* MDL codes are document identifiers, not prose: keep the complete identifier
+   on one line and give the first column enough room before the table scrolls. */
+.mdl-table {
+  min-width: 1280px;
+}
+
+.mdl-code-header,
+.mdl-code-cell {
+  width: 215px;
+  min-width: 215px;
+}
+
+.mdl-code-cell {
+  white-space: nowrap;
+  overflow: visible;
+  font-size: 12px;
+  letter-spacing: 0.1px;
+}

@@ -353,10 +353,10 @@ export function MDLLibrary() {
           />
         ) : (
           <div className="overflow-x-auto">
-            <table className="table-base">
+            <table className="table-base mdl-table">
               <thead>
                 <tr>
-                  <th>کد مدرک</th>
+                  <th className="mdl-code-header">کد مدرک</th>
                   <th>عنوان</th>
                   <th>دیسیپلین</th>
                   <th>یونیت</th>
@@ -373,7 +373,7 @@ export function MDLLibrary() {
               <tbody>
                 {items.map((item) => (
                   <tr key={item.id}>
-                    <td className="ltr font-mono text-xs font-medium text-slate-800">{item.doc_code}</td>
+                    <td className="mdl-code-cell ltr font-mono text-xs font-medium text-slate-800">{item.doc_code}</td>
                     <td className="max-w-[22rem] truncate text-slate-700" title={item.title}>
                       {item.title}
                     </td>

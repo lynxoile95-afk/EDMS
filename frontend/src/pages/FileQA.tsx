@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useProject } from "@/lib/project";
@@ -6,10 +7,26 @@ import { Button, Card, EmptyState, Spinner } from "@/components/ui";
 
 const NO_ANSWER = "بر اساس مدارک موجود پاسخی یافت نشد.";
 
+const FALLBACK_STATUS: QAStatus = {
+  enabled: true,
+  backend: "unknown",
+  mode: "basic",
+  advanced_supported: false,
+  ai_available: false,
+  ai_message: "وضعیت Credential هوش مصنوعی دریافت نشد.",
+  message: "وضعیت قابلیت از سرور دریافت نشد؛ جست‌وجوی پایه در صورت آماده‌بودن فهرست قابل استفاده است.",
+  embedding_model: "—",
+  embedding_dimensions: 384,
+  indexed_files: 0,
+};
+
 interface QAStatus {
   enabled: boolean;
   backend: string;
+  mode: "hybrid" | "keyword_only" | "basic";
   advanced_supported: boolean;
+  ai_available: boolean;
+  ai_message?: string | null;
   message?: string | null;
   embedding_model: string;
   embedding_dimensions: number;
@@ -35,6 +52,37 @@ interface QASource {
   excerpt: string;
   score: number;
   page_url: string;
+  document_code?: string | null;
+  title?: string | null;
+  revision?: string | null;
+  ocr?: boolean;
+}
+
+interface SearchResult {
+  chunk_id: string;
+  file_id: string;
+  project_id: string;
+  document_code?: string | null;
+  title?: string | null;
+  revision?: string | null;
+  filename: string;
+  page_no?: number | null;
+  snippet: string;
+  highlight: string;
+  ocr: boolean;
+  source: string;
+  score: number;
+  page_url: string;
+}
+
+interface SearchResponse {
+  enabled: boolean;
+  backend: string;
+  mode: "hybrid" | "keyword_only" | "basic";
+  semantic_used: boolean;
+  query: string;
+  items: SearchResult[];
+  total: number;
 }
 
 interface QAMessage {
@@ -64,7 +112,15 @@ interface Job {
 export function FileQAPage() {
   const { user } = useAuth();
   const { project } = useProject();
+  const [searchParams] = useSearchParams();
   const [status, setStatus] = useState<QAStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"search" | "qa">(searchParams.get("q") ? "search" : "qa");
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("q") ?? "");
+  const [searchScope, setSearchScope] = useState<"project" | "all">("project");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchMode, setSearchMode] = useState<"hybrid" | "keyword_only" | "basic">("basic");
+  const [searchLoading, setSearchLoading] = useState(false);
   const [documents, setDocuments] = useState<QADocument[]>([]);
   const [scope, setScope] = useState<"project" | "all">("project");
   const [documentQuery, setDocumentQuery] = useState("");
@@ -102,6 +158,9 @@ export function FileQAPage() {
       })
       .catch((reason: unknown) => {
         if (active) setError(reason instanceof ApiError ? reason.detail : "وضعیت پرسش از فایل دریافت نشد.");
+      })
+      .finally(() => {
+        if (active) setStatusLoading(false);
       });
     return () => {
       active = false;
@@ -109,14 +168,23 @@ export function FileQAPage() {
   }, []);
 
   useEffect(() => {
-    if (!status?.enabled) return;
+    if (!status) return;
     void loadDocuments("");
     // Project selection is part of the ACL scope, so a changed project must
     // clear stale selections rather than silently asking across projects.
     setSelected([]);
-  }, [status?.enabled, project?.id, scope]);
+  }, [status, project?.id, scope]);
+
+  useEffect(() => {
+    const queryFromUrl = searchParams.get("q") ?? "";
+    if (queryFromUrl && queryFromUrl !== searchQuery) {
+      setSearchQuery(queryFromUrl);
+      setActiveTab("search");
+    }
+  }, [searchParams, searchQuery]);
 
   const visibleDocuments = useMemo(() => documents, [documents]);
+  const jobsByFile = useMemo(() => new Map(jobs.map((job) => [job.file_id, job])), [jobs]);
 
   const toggleDocument = (id: string) => {
     setSelected((current) => {
@@ -125,6 +193,35 @@ export function FileQAPage() {
       return [...current, id];
     });
   };
+
+  const runSearch = async (event?: FormEvent) => {
+    event?.preventDefault();
+    const trimmed = searchQuery.trim();
+    if (!trimmed || searchLoading) return;
+    setSearchLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ q: trimmed, limit: "20" });
+      if (searchScope === "project" && project) params.set("project_id", project.id);
+      const response = await api.get<SearchResponse>(`/file-qa/search?${params.toString()}`);
+      setSearchResults(response.items);
+      setSearchMode(response.mode);
+      setActiveTab("search");
+    } catch (reason: unknown) {
+      setSearchResults([]);
+      setError(reason instanceof ApiError ? reason.detail : "جست‌وجوی محتوای فایل‌ها ناموفق بود.");
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (status && searchParams.get("q") && searchQuery.trim() && searchResults.length === 0) {
+      void runSearch();
+    }
+    // The URL query is an explicit global-search handoff; run it once after status loads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -190,20 +287,49 @@ export function FileQAPage() {
     }
   };
 
-  if (status && !status.enabled) {
-    return (
-      <div dir="rtl">
-        <Card className="p-6">
-          <h1 className="text-sm font-bold text-[#243842]">پرسش و پاسخ از فایل‌ها</h1>
-          <p className="mt-3 text-[11px] leading-6 text-[#5c6b78]">
-            قابلیت پرسش و پاسخ از فایل‌ها فعال نشده است. بارگذاری و گردش مدارک بدون تغییر ادامه دارد.
-          </p>
-        </Card>
-      </div>
-    );
-  }
+  const rebuildAll = async () => {
+    if (!user?.is_superuser) return;
+    setRebuilding(true);
+    setError("");
+    try {
+      const result = await api.post<Job[]>("/file-qa/admin/rebuild", {
+        file_ids: [],
+        project_id: scope === "project" ? project?.id ?? null : null,
+        force: true,
+      });
+      setJobs(result);
+      await loadDocuments();
+    } catch (reason: unknown) {
+      setError(reason instanceof ApiError ? reason.detail : "صف‌گذاری ایندکس همه فایل‌ها ناموفق بود.");
+    } finally {
+      setRebuilding(false);
+    }
+  };
 
-  if (!status) return <Card><Spinner label="در حال بررسی قابلیت پرسش از فایل‌ها…" /></Card>;
+  const hasActiveJobs = jobs.some((job) => job.status === "queued" || job.status === "running");
+  const trackedJobIds = useMemo(() => jobs.map((job) => job.id).sort().join(","), [jobs]);
+
+  useEffect(() => {
+    if (!user?.is_superuser || !hasActiveJobs) return;
+    let active = true;
+    const trackedIds = new Set(trackedJobIds ? trackedJobIds.split(",") : []);
+    const refresh = () => {
+      api.get<Job[]>("/file-qa/admin/jobs")
+        .then((rows) => {
+          if (active) setJobs(rows.filter((job) => trackedIds.has(job.id)));
+        })
+        .catch(() => undefined);
+    };
+    const timer = window.setInterval(refresh, 2500);
+    refresh();
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [hasActiveJobs, trackedJobIds, user?.is_superuser]);
+
+  if (statusLoading) return <Card><Spinner label="در حال بررسی قابلیت پرسش از فایل‌ها…" /></Card>;
+  const displayedStatus = status ?? FALLBACK_STATUS;
 
   return (
     <div className="space-y-3" dir="rtl">
@@ -216,23 +342,110 @@ export function FileQAPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2 text-[9.5px] text-[#687783]">
-            <span className="rounded bg-[#eef4fa] px-2 py-1">مدل برداری: {status.embedding_model}</span>
-            <span className="rounded bg-[#eef4fa] px-2 py-1">{status.indexed_files} فایل فهرست شده</span>
+            <span className="rounded bg-[#eef4fa] px-2 py-1">حالت: {displayedStatus.mode === "basic" ? "پایه" : displayedStatus.mode === "hybrid" ? "ترکیبی" : "کلیدواژه‌ای"}</span>
+            <span className="rounded bg-[#eef4fa] px-2 py-1">{displayedStatus.indexed_files} فایل فهرست شده</span>
+            <span className={displayedStatus.ai_available ? "rounded bg-[#e8f7ee] px-2 py-1 text-[#1d7140]" : "rounded bg-[#fff3df] px-2 py-1 text-[#8b6415]"}>
+              هوش مصنوعی: {displayedStatus.ai_available ? "آماده" : "تنظیم نشده"}
+            </span>
           </div>
         </div>
-        {status.message ? (
+        {displayedStatus.message ? (
           <p className="mt-3 border border-[#e4c98d] bg-[#fff9e8] px-2 py-1.5 text-[10px] text-[#8b6415]" role="status">
-            {status.message}
+            {displayedStatus.message}{displayedStatus.mode === "basic" ? "؛ جست‌وجوی پایه در این محیط فعال است." : ""}
+          </p>
+        ) : null}
+        {!displayedStatus.ai_available && displayedStatus.ai_message ? (
+          <p className="mt-2 border border-[#e4c98d] bg-[#fff9e8] px-2 py-1.5 text-[10px] text-[#8b6415]" role="status">
+            {displayedStatus.ai_message} پرسش‌ها پس از تنظیم Credential فعال پاسخ‌گویی هوشمند خواهند داشت.
           </p>
         ) : null}
         {error ? <p className="mt-3 border border-[#e7b5b5] bg-[#fff5f5] p-2 text-[10.5px] text-[#9b2c2c]" role="alert">{error}</p> : null}
       </Card>
 
+      <div className="flex gap-1 border-b border-[#dbe2e9]" role="tablist" aria-label="ابزارهای پرسش از فایل">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "search"}
+          className={activeTab === "search" ? "border-b-2 border-[#1f4e79] px-3 py-2 text-xs font-bold text-[#1f4e79]" : "px-3 py-2 text-xs text-[#687783]"}
+          onClick={() => setActiveTab("search")}
+        >
+          جست‌وجوی متن مدارک
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "qa"}
+          className={activeTab === "qa" ? "border-b-2 border-[#1f4e79] px-3 py-2 text-xs font-bold text-[#1f4e79]" : "px-3 py-2 text-xs text-[#687783]"}
+          onClick={() => setActiveTab("qa")}
+        >
+          پرسش و پاسخ
+        </button>
+      </div>
+
+      {activeTab === "search" ? (
+        <Card className="p-4">
+          <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(event) => void runSearch(event)}>
+            <input
+              className="input min-w-0 flex-1"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="جست‌وجوی هر واژه یا جمله در متن PDF/DOCX…"
+              aria-label="جست‌وجوی متن مدارک"
+            />
+            <Button type="submit" variant="primary" disabled={searchLoading || !searchQuery.trim()}>
+              {searchLoading ? "در حال جست‌وجو…" : "جست‌وجو"}
+            </Button>
+          </form>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[9.5px] text-[#687783]">
+            <label className="flex items-center gap-1">
+              <span>محدوده:</span>
+              <select className="input h-7 py-0 text-[9.5px]" value={searchScope} onChange={(event) => setSearchScope(event.target.value as "project" | "all")}>
+                <option value="project">پروژه فعال</option>
+                <option value="all">همه پروژه‌های مجاز</option>
+              </select>
+            </label>
+            <span>حالت جست‌وجو: {searchMode === "basic" ? "پایه / SQLite" : searchMode === "hybrid" ? "ترکیبی" : "کلیدواژه‌ای"}</span>
+            {searchResults.length ? <span>· {searchResults.length} نتیجه</span> : null}
+          </div>
+          <div className="mt-3 space-y-2">
+            {!searchLoading && searchQuery.trim() && searchResults.length === 0 ? (
+              <p className="border border-[#e1e7ec] bg-[#fafbfc] px-3 py-6 text-center text-[10.5px] text-[#687783]">نتیجه‌ای یافت نشد.</p>
+            ) : null}
+            {searchResults.map((result) => (
+              <article key={result.chunk_id} className="border border-[#dbe2e9] bg-white p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-bold text-[#1f3864]">{result.document_code || result.filename}</p>
+                    <p className="mt-0.5 truncate text-[10px] text-[#536875]">{result.title || result.filename}</p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-1 text-[9px] text-[#687783]">
+                    <span className="rounded bg-[#eef4fa] px-2 py-1">Rev {result.revision || "—"}</span>
+                    <span className="rounded bg-[#eef4fa] px-2 py-1">صفحه {result.page_no || "—"}</span>
+                    {result.ocr ? <span className="rounded bg-[#fff3df] px-2 py-1 text-[#8b6415]">OCR</span> : null}
+                  </div>
+                </div>
+                <p className="mt-2 text-[10.5px] leading-6 text-[#334955]" dangerouslySetInnerHTML={{ __html: result.highlight }} />
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="truncate text-[9px] text-[#8a98a3]">{result.filename}</span>
+                  {result.page_url ? (
+                    <a className="btn btn-secondary shrink-0 text-[10px]" href={result.page_url} target="_blank" rel="noreferrer">
+                      باز کردن در صفحه {result.page_no || ""}
+                    </a>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      {activeTab === "qa" ? (
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_310px]">
         <Card className="p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-xs font-bold text-[#243842]">گفت‌وگو</h2>
-            <Button type="button" variant="ghost" disabled={!sessionId && history.length === 0} onClick={clearHistory}>پاک کردن تاریخچه</Button>
+            <Button type="button" variant="ghost" disabled={!sessionId && history.length === 0} onClick={clearHistory}>حذف تاریخچه گفتگو</Button>
           </div>
           <div className="min-h-[280px] space-y-3 border-y border-[#e1e7ec] py-3">
             {history.length === 0 ? (
@@ -287,9 +500,14 @@ export function FileQAPage() {
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-xs font-bold text-[#243842]">انتخاب مدارک</h2>
             {user?.is_superuser ? (
-              <Button type="button" disabled={rebuilding || selected.length === 0} onClick={rebuildSelected}>
-                {rebuilding ? "در حال صف‌گذاری…" : "بازفهرست منتخب"}
-              </Button>
+              <div className="flex flex-wrap justify-end gap-1">
+                <Button type="button" disabled={rebuilding} onClick={() => void rebuildAll()}>
+                  {rebuilding ? "در حال صف‌گذاری…" : "ایندکس همه فایل‌های موجود"}
+                </Button>
+                <Button type="button" variant="secondary" disabled={rebuilding || selected.length === 0} onClick={() => void rebuildSelected()}>
+                  بازسازی ایندکس
+                </Button>
+              </div>
             ) : null}
           </div>
           <label className="mt-3 block">
@@ -327,7 +545,12 @@ export function FileQAPage() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[10.5px] text-[#334955]" title={document.filename}>{document.filename}</span>
                   <span className="mt-0.5 block text-[9px] text-[#7a8794]">
-                    {document.indexed ? "فهرست شده" : "هنوز فهرست نشده"} · {document.page_count || 0} صفحه
+                    {(() => {
+                      const job = jobsByFile.get(document.id);
+                      if (!job) return document.indexed ? "فهرست شده" : "هنوز فهرست نشده";
+                      const label = job.status === "queued" ? "در صف" : job.status === "running" ? "در حال فهرست‌سازی" : job.status === "completed" ? "فهرست شد" : job.status === "failed" ? "ناموفق" : job.status;
+                      return `${label} · ${job.cursor_chunk}/${job.total_chunks}`;
+                    })()} · {document.page_count || 0} صفحه
                   </span>
                 </span>
               </label>
@@ -340,6 +563,7 @@ export function FileQAPage() {
           ) : null}
         </Card>
       </div>
+      ) : null}
     </div>
   );
 }
@@ -350,11 +574,12 @@ function SourceCard({ source }: { source: QASource }) {
       <div className="flex items-start justify-between gap-1">
         {source.page_url ? (
           <a className="min-w-0 truncate font-bold text-[#1f4e79] hover:underline" href={source.page_url} target="_blank" rel="noreferrer">
-            {source.filename}
+            {source.document_code || source.filename}
           </a>
-        ) : <span className="min-w-0 truncate font-bold">{source.filename}</span>}
+        ) : <span className="min-w-0 truncate font-bold">{source.document_code || source.filename}</span>}
         <span className="shrink-0">{source.page_no ? `صفحه ${source.page_no}` : source.source}</span>
       </div>
+      <p className="mt-0.5 truncate text-[9px] text-[#7a8794]">{source.title || source.filename} · Rev {source.revision || "—"}{source.ocr ? " · OCR" : ""}</p>
       <p className="mt-1 line-clamp-3 leading-5">{source.excerpt}</p>
     </div>
   );

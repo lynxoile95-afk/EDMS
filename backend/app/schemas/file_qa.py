@@ -11,7 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 class FileQAStatusOut(BaseModel):
     enabled: bool
     backend: str
+    mode: str = "basic"
     advanced_supported: bool
+    ai_available: bool = False
+    ai_message: str | None = None
     message: str | None = None
     embedding_model: str
     embedding_dimensions: int
@@ -37,6 +40,37 @@ class FileQASourceOut(BaseModel):
     excerpt: str
     score: float
     page_url: str
+    document_code: str | None = None
+    title: str | None = None
+    revision: str | None = None
+    ocr: bool = False
+
+
+class FileQASearchResultOut(BaseModel):
+    chunk_id: uuid.UUID
+    file_id: uuid.UUID
+    project_id: uuid.UUID
+    document_code: str | None = None
+    title: str | None = None
+    revision: str | None = None
+    filename: str
+    page_no: int | None
+    snippet: str
+    highlight: str
+    ocr: bool = False
+    source: str
+    score: float
+    page_url: str
+
+
+class FileQASearchResponse(BaseModel):
+    enabled: bool
+    backend: str
+    mode: str
+    semantic_used: bool = False
+    query: str
+    items: list[FileQASearchResultOut] = Field(default_factory=list)
+    total: int = 0
 
 
 class FileQAMessageOut(BaseModel):

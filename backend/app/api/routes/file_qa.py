@@ -17,10 +17,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import and_, exists, func, select
 
+from app.ai.registry import get_provider
+from app.ai.service import active_runtime
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import settings
 from app.models import (
     DocumentChunkV2,
+    ExtractionResult,
     FileQAMessage,
     FileQASession,
     RAGIndexJob,
@@ -33,6 +36,8 @@ from app.schemas.file_qa import (
     FileQADocumentOut,
     FileQAHistoryOut,
     FileQAMessageOut,
+    FileQASearchResponse,
+    FileQASearchResultOut,
     FileQASourceOut,
     FileQAStatusOut,
     FileQARebuildRequest,
@@ -42,6 +47,7 @@ from app.search.file_qa import FileQAUnavailable, NO_ANSWER, answer_from_hits
 from app.search.rag_chunking import chunk_blocks
 from app.search.rag_index import enqueue_rag_index_jobs
 from app.search.rag_query import retrieve_rag_chunks, retrieve_temporary_chunks
+from app.search.query import _highlight_html
 from app.search.extraction import extract_document_blocks
 from app.services import acl
 
@@ -68,12 +74,42 @@ def _rate_limit(user_id: uuid.UUID) -> None:
         bucket.append(now)
 
 
-def _require_enabled() -> None:
-    if not settings.file_qa_enabled:
+def _require_enabled(db: DbSession) -> None:
+    """Keep the page/API usable in SQLite basic mode.
+
+    PostgreSQL installations still opt into the advanced RAG/LLM path with the
+    existing flag. Preview installations never lose the keyword-only fallback
+    merely because pgvector is unavailable.
+    """
+
+    if not settings.file_qa_enabled and db.get_bind().dialect.name == "postgresql":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="قابلیت پرسش و پاسخ از فایل‌ها فعال نیست.",
         )
+
+
+def _mode(backend: str, *, semantic: bool = False) -> str:
+    if backend != "postgresql":
+        return "basic"
+    return "hybrid" if semantic else "keyword_only"
+
+
+def _ai_state(db: DbSession) -> tuple[bool, str | None]:
+    """Report AI availability without exposing runtime credentials."""
+
+    try:
+        runtime = active_runtime(db)
+        catalog = get_provider(runtime.provider_id) or {}
+        if not runtime.enabled:
+            return False, "Credential فعال هوش مصنوعی فعال نیست."
+        if not runtime.model.strip():
+            return False, "مدل Credential فعال هوش مصنوعی تنظیم نشده است."
+        if catalog.get("keyRequired", True) and not runtime.api_key:
+            return False, "کلید Credential فعال هوش مصنوعی تنظیم نشده است."
+        return True, None
+    except Exception:  # noqa: BLE001 - status must never expose provider details
+        return False, "تنظیمات Credential هوش مصنوعی در دسترس نیست."
 
 
 def _scope(db: DbSession, user: CurrentUser, project_id: uuid.UUID | None):
@@ -140,17 +176,66 @@ def _history(db: DbSession, session_id: uuid.UUID) -> list[FileQAMessageOut]:
     return [_message_out(row) for row in reversed(rows)]
 
 
-def _source_payload(hits) -> list[dict[str, Any]]:
+def _document_metadata(db: DbSession, file_id: uuid.UUID, filename: str) -> dict[str, Any]:
+    """Resolve display metadata without widening the ACL query."""
+
+    source_file = db.get(SourceFile, file_id)
+    result = None
+    if source_file is not None:
+        result = db.execute(
+            select(ExtractionResult)
+            .where(ExtractionResult.source_file_id == file_id)
+            .order_by(ExtractionResult.created_at.desc())
+            .limit(1)
+        ).scalars().first()
+    stem = Path(filename).stem
+    return {
+        "document_code": (result.doc_code if result and result.doc_code else stem),
+        "title": (result.title if result and result.title else filename),
+        "revision": (result.rev if result and result.rev else None),
+        "ocr": bool(source_file and source_file.is_scanned),
+    }
+
+
+def _source_payload(db: DbSession, hits) -> list[dict[str, Any]]:
     payload = []
     for hit in hits:
         item = hit.as_source()
+        metadata = _document_metadata(db, hit.chunk.file_id, hit.filename)
+        item.update(metadata)
         # Zero UUID is an internal marker for a request-scoped temporary file; it
         # must never look like an authenticated EDMS download link.
         if item["file_id"] == str(uuid.UUID(int=0)):
             item["file_id"] = None
             item["page_url"] = ""
+            item["document_code"] = Path(hit.filename).stem
+            item["title"] = hit.filename
+            item["revision"] = None
+            item["ocr"] = False
         payload.append(item)
     return payload
+
+
+def _search_item(db: DbSession, hit, query: str) -> dict[str, Any]:
+    source = hit.as_source()
+    snippet, highlight = _highlight_html(hit.chunk.text_original, query)
+    metadata = _document_metadata(db, hit.chunk.file_id, hit.filename)
+    return {
+        "chunk_id": source["chunk_id"],
+        "file_id": source["file_id"],
+        "project_id": str(hit.chunk.project_id),
+        "document_code": metadata["document_code"],
+        "title": metadata["title"],
+        "revision": metadata["revision"],
+        "filename": hit.filename,
+        "page_no": hit.chunk.page_no,
+        "snippet": snippet,
+        "highlight": highlight,
+        "ocr": metadata["ocr"] or hit.chunk.source.lower().startswith("ocr"),
+        "source": hit.chunk.source,
+        "score": source["score"],
+        "page_url": source["page_url"],
+    }
 
 
 async def _parse_ask_request(request: Request) -> tuple[FileQAAskRequest, Any | None]:
@@ -197,15 +282,7 @@ async def _parse_ask_request(request: Request) -> tuple[FileQAAskRequest, Any | 
 @router.get("/status", response_model=FileQAStatusOut, summary="وضعیت پرسش و پاسخ از فایل‌ها")
 def file_qa_status(db: DbSession, user: CurrentUser) -> FileQAStatusOut:
     backend = db.get_bind().dialect.name
-    if not settings.file_qa_enabled:
-        return FileQAStatusOut(
-            enabled=False,
-            backend=backend,
-            advanced_supported=backend == "postgresql",
-            message="قابلیت پرسش و پاسخ از فایل‌ها فعال نیست.",
-            embedding_model=settings.file_qa_embedding_model,
-            embedding_dimensions=384,
-        )
+    basic_preview = backend != "postgresql"
     indexed_files = 0
     migration_ready = True
     try:
@@ -223,18 +300,73 @@ def file_qa_status(db: DbSession, user: CurrentUser) -> FileQAStatusOut:
         db.rollback()
         indexed_files = 0
         migration_ready = False
+
+    ai_available, ai_message = _ai_state(db)
     return FileQAStatusOut(
-        enabled=True,
+        # SQLite is always allowed to expose the basic keyword page. PostgreSQL
+        # keeps the existing advanced feature flag for semantic/LLM activation.
+        enabled=bool(settings.file_qa_enabled or basic_preview),
         backend=backend,
-        advanced_supported=backend == "postgresql",
+        mode=("basic" if basic_preview else ("hybrid" if settings.file_qa_enabled else "keyword_only")),
+        advanced_supported=backend == "postgresql" and settings.file_qa_enabled,
+        ai_available=ai_available,
+        ai_message=ai_message,
         message=(
             "پرسش و پاسخ پیشرفته فقط با PostgreSQL فعال است"
-            if backend != "postgresql"
-            else ("مهاجرت RAG هنوز روی پایگاه‌داده اجرا نشده است." if not migration_ready else None)
+            if basic_preview
+            else (
+                "مهاجرت RAG هنوز روی پایگاه‌داده اجرا نشده است."
+                if not migration_ready
+                else ("قابلیت پرسش و پاسخ از فایل‌ها فعال نیست." if not settings.file_qa_enabled else None)
+            )
         ),
         embedding_model=settings.file_qa_embedding_model,
         embedding_dimensions=384,
         indexed_files=indexed_files,
+    )
+
+
+@router.get("/search", response_model=FileQASearchResponse, summary="جست‌وجوی پایه و معنایی در متن فایل‌ها")
+def file_qa_search(
+    db: DbSession,
+    user: CurrentUser,
+    q: str | None = Query(default=None, max_length=1000),
+    query: str | None = Query(default=None, max_length=1000),
+    project_id: uuid.UUID | None = None,
+    file_ids: list[uuid.UUID] = Query(default_factory=list),
+    limit: int = Query(default=20, ge=1, le=50),
+) -> FileQASearchResponse:
+    _require_enabled(db)
+    value = (q if q is not None else query or "").strip()
+    if not value:
+        raise HTTPException(status_code=422, detail="عبارت جست‌وجو را وارد کنید.")
+    if len(value) > settings.file_qa_max_question_length:
+        raise HTTPException(status_code=422, detail="عبارت جست‌وجو بیش از حد طولانی است.")
+    project_ids, scoped_project = _scope(db, user, project_id)
+    selected_ids = _validate_file_ids(db, user, file_ids, scoped_project)
+    try:
+        hits, semantic_used = retrieve_rag_chunks(
+            db,
+            value,
+            project_ids=project_ids,
+            project_id=scoped_project,
+            file_ids=selected_ids or None,
+            top_k=limit,
+            # Keyword-only SQLite should not discard short exact matches behind
+            # the semantic threshold.
+            min_score=0.0 if db.get_bind().dialect.name != "postgresql" else settings.file_qa_min_score,
+        )
+    except Exception as exc:  # migration/index errors must stay a user-facing state
+        db.rollback()
+        raise HTTPException(status_code=503, detail="فهرست متنی در این محیط آماده نیست.") from exc
+    return FileQASearchResponse(
+        enabled=True,
+        backend=db.get_bind().dialect.name,
+        mode=_mode(db.get_bind().dialect.name, semantic=semantic_used),
+        semantic_used=semantic_used,
+        query=value,
+        items=[FileQASearchResultOut(**_search_item(db, hit, value)) for hit in hits[:limit]],
+        total=len(hits),
     )
 
 
@@ -245,7 +377,7 @@ def file_qa_documents(
     q: str | None = Query(default=None, max_length=200),
     project_id: uuid.UUID | None = None,
 ) -> list[FileQADocumentOut]:
-    _require_enabled()
+    _require_enabled(db)
     project_ids, scoped_project = _scope(db, user, project_id)
     clauses = []
     if scoped_project is not None:
@@ -287,7 +419,7 @@ def file_qa_documents(
 
 @router.get("/history/{session_id}", response_model=FileQAHistoryOut, summary="تاریخچه نشست پرسش فایل")
 def file_qa_history(session_id: uuid.UUID, db: DbSession, user: CurrentUser) -> FileQAHistoryOut:
-    _require_enabled()
+    _require_enabled(db)
     conversation = db.get(FileQASession, session_id)
     if conversation is None or conversation.user_id != user.id or not conversation.is_active:
         raise HTTPException(status_code=404, detail="نشست پرسش یافت نشد.")
@@ -296,7 +428,7 @@ def file_qa_history(session_id: uuid.UUID, db: DbSession, user: CurrentUser) -> 
 
 @router.post("/ask", response_model=FileQAAskResponse, summary="پرسش مستند از فایل‌ها")
 async def file_qa_ask(request: Request, db: DbSession, user: CurrentUser) -> FileQAAskResponse:
-    _require_enabled()
+    _require_enabled(db)
     _rate_limit(user.id)
     payload, upload = await _parse_ask_request(request)
     question = payload.question.strip()
@@ -365,7 +497,7 @@ async def file_qa_ask(request: Request, db: DbSession, user: CurrentUser) -> Fil
             db.rollback()
             raise HTTPException(status_code=503, detail="فهرست RAG در این محیط آماده نیست.") from exc
         combined = sorted(hits + temporary_hits, key=lambda item: -item.score)[: settings.file_qa_top_k]
-        sources_payload = _source_payload(combined)
+        sources_payload = _source_payload(db, combined)
         try:
             answer = answer_from_hits(question, combined, db) if combined else NO_ANSWER
         except FileQAUnavailable as exc:
@@ -407,7 +539,7 @@ def file_qa_clear(
     user: CurrentUser,
     payload: FileQAClearRequest | None = None,
 ) -> dict[str, int]:
-    _require_enabled()
+    _require_enabled(db)
     session_id = payload.session_id if payload else None
     if session_id is not None:
         conversation = db.get(FileQASession, session_id)
@@ -431,7 +563,7 @@ def file_qa_clear(
 @router.post("/admin/rebuild", response_model=list[RAGIndexJobOut], summary="بازفهرست‌سازی RAG فایل‌ها")
 @router.post("/rebuild", response_model=list[RAGIndexJobOut], include_in_schema=False)
 def file_qa_rebuild(payload: FileQARebuildRequest, db: DbSession, user: CurrentUser) -> list[RAGIndexJobOut]:
-    _require_enabled()
+    _require_enabled(db)
     acl.assert_admin(user)
     file_ids = _validate_file_ids(db, user, payload.file_ids, payload.project_id)
     if not file_ids:
@@ -459,7 +591,7 @@ def file_qa_rebuild(payload: FileQARebuildRequest, db: DbSession, user: CurrentU
 
 @router.get("/admin/jobs", response_model=list[RAGIndexJobOut], summary="وضعیت بازفهرست‌سازی RAG")
 def file_qa_jobs(db: DbSession, user: CurrentUser) -> list[RAGIndexJobOut]:
-    _require_enabled()
+    _require_enabled(db)
     acl.assert_admin(user)
     rows = db.execute(select(RAGIndexJob).order_by(RAGIndexJob.created_at.desc()).limit(100)).scalars()
     return [RAGIndexJobOut.model_validate(row) for row in rows]

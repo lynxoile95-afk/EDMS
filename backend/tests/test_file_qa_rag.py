@@ -146,13 +146,15 @@ def test_english_pdf_rag_index_keeps_page_provenance(db, project, users, monkeyp
     assert "engineering specification" in row.text_original
 
 
-def test_file_qa_status_is_safe_and_feature_off(client, users, monkeypatch) -> None:
+def test_file_qa_status_keeps_sqlite_page_visible_when_advanced_flag_is_off(client, users, monkeypatch) -> None:
     monkeypatch.setattr(settings, "file_qa_enabled", False)
     from tests.conftest import auth_headers
 
     response = client.get("/api/v1/file-qa/status", headers=auth_headers(client, users["dcc"].email))
     assert response.status_code == 200
-    assert response.json()["enabled"] is False
+    assert response.json()["enabled"] is True
+    assert response.json()["mode"] == "basic"
+    assert response.json()["advanced_supported"] is False
 
 
 def test_file_qa_sqlite_notice_is_exact_when_enabled(client, users, monkeypatch) -> None:
@@ -163,6 +165,66 @@ def test_file_qa_sqlite_notice_is_exact_when_enabled(client, users, monkeypatch)
     assert response.status_code == 200
     assert response.json()["message"] == "پرسش و پاسخ پیشرفته فقط با PostgreSQL فعال است"
     assert response.json()["advanced_supported"] is False
+
+
+def test_file_qa_rebuild_remains_admin_only_on_sqlite(client, project, users, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "file_qa_enabled", False)
+    from tests.conftest import auth_headers
+
+    response = client.post(
+        "/api/v1/file-qa/admin/rebuild",
+        headers=auth_headers(client, users["dcc"].email),
+        json={"file_ids": [], "project_id": str(project.id), "force": True},
+    )
+    assert response.status_code == 403
+
+
+def test_file_qa_sqlite_keyword_search_returns_page_and_highlight(client, db, project, users, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "file_qa_enabled", False)
+    session = UploadSession(project_id=project.id, created_by_id=users["dcc"].id)
+    db.add(session)
+    db.flush()
+    source = SourceFile(
+        session_id=session.id,
+        project_id=project.id,
+        original_filename="7100-00-EB-EL-SPE-7052.pdf",
+        storage_key="7100-00-EB-EL-SPE-7052.pdf",
+        sha256="5" * 64,
+        uploaded_by_id=users["dcc"].id,
+    )
+    db.add(source)
+    db.flush()
+    db.add(
+        DocumentChunkV2(
+            file_id=source.id,
+            project_id=project.id,
+            index_version="persian-rag-v2",
+            chunk_index=0,
+            page_no=3,
+            text_original="English SPECIFICATION for the electrical heat tracing system",
+            text_normalized="english specification for the electrical heat tracing system",
+            content_hash="6" * 64,
+            source="page:3",
+            source_document=source.original_filename,
+            embedding_model="intfloat/multilingual-e5-small",
+            embedding_dimensions=384,
+            is_active=True,
+        )
+    )
+    db.commit()
+    from tests.conftest import auth_headers
+
+    response = client.get(
+        f"/api/v1/file-qa/search?q=SPECIFICATION&project_id={project.id}",
+        headers=auth_headers(client, users["dcc"].email),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["mode"] == "basic"
+    item = response.json()["items"][0]
+    assert item["document_code"] == "7100-00-EB-EL-SPE-7052"
+    assert item["page_no"] == 3
+    assert "<mark>SPECIFICATION</mark>" in item["highlight"]
+    assert item["page_url"].endswith("#page=3")
 
 
 def test_file_qa_empty_answer_is_exact_and_does_not_need_an_ai_key(client, project, users, monkeypatch) -> None:

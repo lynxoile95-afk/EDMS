@@ -560,9 +560,11 @@ python3 skills/vendor/task-observer/scripts/session-start-scan.sh
 
 ## ۱۷. پرسش و پاسخ از فایل‌ها — Persian RAG v2
 
-این قابلیت افزایشی و خاموش است و رفتار login، upload، transmittal، MDL، permissions،
-PDF preview/download، جست‌وجوی legacy و `LLM_QA_ENABLED` را تغییر نمی‌دهد. عملیات کامل
-در [`docs/file-qa-rag.md`](docs/file-qa-rag.md) آمده است.
+این قابلیت افزایشی است و رفتار login، upload، transmittal، MDL، permissions،
+PDF preview/download، جست‌وجوی legacy و `LLM_QA_ENABLED` را تغییر نمی‌دهد. منوی آن و
+حالت جست‌وجوی پایه در Preview پنهان نمی‌شوند؛ `FILE_QA_ENABLED` مسیر پیشرفتهٔ
+PostgreSQL/semantic و LLM را کنترل می‌کند. عملیات کامل در
+[`docs/file-qa-rag.md`](docs/file-qa-rag.md) آمده است.
 
 پس از گرفتن backup پایگاه‌داده، migration را اجرا کنید:
 
@@ -602,10 +604,14 @@ SQLite با خطا crash نمی‌کند و این پیام را نشان می�
 پرسش و پاسخ پیشرفته فقط با PostgreSQL فعال است
 ```
 
-در Preview، fallback keyword/LIKE ممکن است کار کند؛ semantic RAG فقط PostgreSQL/pgvector است.
+در Preview، منو و صفحه فعال می‌مانند و mode برابر `basic` است؛ جست‌وجوی متن با
+LIKE روی index متنی additive انجام می‌شود و semantic RAG فقط PostgreSQL/pgvector است.
+مدیر سیستم می‌تواند از صفحه File-QA دکمهٔ «ایندکس همه فایل‌های موجود» را برای صف‌گذاری
+resumable و throttled استفاده کند.
 
 مسیرهای جدید عبارت‌اند از `GET /api/v1/file-qa/status`,
-`GET /api/v1/file-qa/documents?q=...`, `POST /api/v1/file-qa/ask` (JSON برای فایل‌های
+`GET /api/v1/file-qa/search?q=...`, `GET /api/v1/file-qa/documents?q=...`,
+`POST /api/v1/file-qa/ask` (JSON برای فایل‌های
 EDMS یا multipart با یک PDF/DOCX موقت)، `GET /api/v1/file-qa/history/{session_id}`،
 `POST /api/v1/file-qa/clear` و endpointهای admin rebuild. همهٔ فایل‌های EDMS با ACL
 فعلی و current revision فیلتر می‌شوند؛ حداکثر ۱۰ فایل در هر پرسش قابل انتخاب است.

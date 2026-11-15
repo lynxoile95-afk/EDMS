@@ -1,6 +1,8 @@
 # پرسش و پاسخ از فایل‌ها (Persian RAG v2)
 
-این قابلیت افزایشی و خاموش است. مسیرهای جدید از credential فعال و رمزنگاری‌شدهٔ
+این قابلیت افزایشی است. صفحه و جست‌وجوی پایه برای کاربر واردشده حتی در Preview
+SQLite قابل مشاهده است؛ `FILE_QA_ENABLED` فقط مسیر پیشرفتهٔ PostgreSQL/semantic و
+پاسخ‌گویی LLM را کنترل می‌کند. مسیرهای جدید از credential فعال و رمزنگاری‌شدهٔ
 بخش AI Upload استفاده می‌کنند؛ `FILE_QA_MODEL` فقط نام مدل را override می‌کند و
 کلید تازه‌ای ایجاد نمی‌کند.
 
@@ -41,8 +43,9 @@ DOCX از paragraph و table row استخراج می‌شود و PDF از page �
 
 ## API و دسترسی
 
-* `GET /api/v1/file-qa/status` — وضعیت flag، backend، مدل و تعداد فایل‌های قابل دسترس
-* `GET /api/v1/file-qa/documents?q=...&project_id=...` — picker با ACL فعلی
+* `GET /api/v1/file-qa/status` — وضعیت mode (`hybrid`, `keyword_only` یا `basic`)، backend، مدل، AI و تعداد فایل‌های قابل دسترس
+* `GET /api/v1/file-qa/search?q=...&project_id=...` — جست‌وجوی متن با snippet/highlight، کد مدرک، Rev، صفحه و لینک بازکردن صفحه؛ در SQLite با LIKE اجرا می‌شود
+* `GET /api/v1/file-qa/documents?q=...&project_id=...` — picker با ACL فعلی و وضعیت indexed هر فایل
 * `POST /api/v1/file-qa/ask` — JSON برای فایل‌های EDMS؛ multipart با `file` برای یک
   PDF/DOCX موقت؛ در هر پرسش حداکثر ۱۰ فایل انتخابی
 * `GET /api/v1/file-qa/history/{session_id}` — فقط صاحب نشست
@@ -55,14 +58,20 @@ source cardها فقط filename/page/excerpt و لینک نسبی authenticated 
 
 ## SQLite و rollback
 
-در SQLite، server با خطا متوقف نمی‌شود و status این پیام را نشان می‌دهد:
+در SQLite، server با خطا متوقف نمی‌شود؛ منو و صفحه پنهان نمی‌شوند و status این پیام
+را نشان می‌دهد:
 
 ```text
 پرسش و پاسخ پیشرفته فقط با PostgreSQL فعال است
 ```
 
-در این حالت retrieval محدود LIKE/keyword ممکن است کار کند، اما semantic vector
-فعال نمی‌شود. برای خاموش‌کردن بدون حذف داده:
+در این حالت mode برابر `basic` است و retrieval با جدول additive متن نرمال‌شده و
+LIKE/keyword اجرا می‌شود؛ semantic vector فعال نمی‌شود. Uploadهای PDF/DOCX در صورت
+وجود worker به‌صورت background برای همین index صف می‌شوند و مدیر سیستم می‌تواند از
+دکمهٔ «ایندکس همه فایل‌های موجود» استفاده کند. این دکمه resumable و throttled است و
+فقط با اقدام صریح مدیر فایل‌های موجود را بازسازی می‌کند؛ upload معمولی فایل‌های قدیمی را
+خودکار بازنویسی نمی‌کند. برای خاموش‌کردن مسیر پیشرفته بدون
+حذف داده:
 
 ```dotenv
 FILE_QA_ENABLED=false

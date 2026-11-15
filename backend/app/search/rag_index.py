@@ -233,7 +233,9 @@ def _upsert_chunk(
 
 
 def _run_job_in_session(db: Session, job: RAGIndexJob) -> dict:
-    if not settings.file_qa_enabled:
+    # SQLite Preview always permits the additive plain-text index. PostgreSQL
+    # keeps the existing FILE_QA_ENABLED gate for advanced RAG workers.
+    if not settings.file_qa_enabled and db.get_bind().dialect.name == "postgresql":
         job.status = "disabled"
         job.error_message = "FILE_QA_ENABLED=false"
         db.commit()

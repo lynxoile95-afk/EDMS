@@ -13,6 +13,7 @@ htmlcov/
 # ---- Node / frontend ----
 node_modules/
 dist/
+frontend/public/pdfjs/
 .vite/
 *.local
 

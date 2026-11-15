@@ -140,7 +140,7 @@ def commit_session(session_id: uuid.UUID, db: DbSession, user: CurrentUser) -> C
 
             enqueue_index_jobs(
                 db,
-                [source_file.id for source_file in session.files],
+                [file.id for file in session.files],
                 requested_by_id=user.id,
             )
         except Exception:  # noqa: BLE001 - upload success is already committed
@@ -149,13 +149,13 @@ def commit_session(session_id: uuid.UUID, db: DbSession, user: CurrentUser) -> C
 
     # The Persian RAG index is independent from the legacy SEARCH_INDEXING flag.
     # Its own job table/profile keeps the 384-dimensional backfill additive.
-    if settings.file_qa_enabled:
+    if settings.file_qa_enabled or db.get_bind().dialect.name == "sqlite":
         try:
             from app.search.rag_index import enqueue_rag_index_jobs
 
             enqueue_rag_index_jobs(
                 db,
-                [source_file.id for source_file in session.files],
+                [file.id for file in session.files],
                 requested_by_id=user.id,
             )
         except Exception:  # noqa: BLE001 - optional feature never breaks upload

@@ -77,7 +77,6 @@ export function Layout() {
   const [unread, setUnread] = useState(0);
   const [inboxCount, setInboxCount] = useState(0);
   const [queueCount, setQueueCount] = useState(0);
-  const [fileQaEnabled, setFileQaEnabled] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -90,20 +89,6 @@ export function Layout() {
           ? "پرسش و پاسخ از فایل‌ها"
           : "سامانه هوشمند مدیریت اسناد مهندسی | EDMS-AI";
   }, [location.pathname]);
-
-  useEffect(() => {
-    let active = true;
-    api.get<{ enabled: boolean }>("/file-qa/status")
-      .then((value) => {
-        if (active) setFileQaEnabled(value.enabled);
-      })
-      .catch(() => {
-        if (active) setFileQaEnabled(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -351,7 +336,6 @@ export function Layout() {
                 </p>
               ) : null}
               {group.items
-                .filter((item) => item.to !== "/file-qa" || (fileQaEnabled && Boolean(project) && (Boolean(user?.is_superuser) || Boolean(project?.member_role))))
                 .map((item) => (
                 <NavLink
                   key={`${group.title}-${item.label}`}

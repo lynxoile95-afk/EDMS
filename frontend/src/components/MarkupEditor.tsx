@@ -181,43 +181,48 @@ function bounds(annotation: Pick<MarkupAnnotation, "points" | "kind">): Normaliz
   };
 }
 
-function MarkupTextBox({
+export function MarkupTextBox({
   box,
   text,
   color,
   fontSize,
   kind,
+  viewport,
 }: {
   box: NormalizedMarkupBox;
   text: string | null | undefined;
   color: string;
   fontSize: number;
   kind: "sticky_note" | "free_text" | "callout";
+  viewport: { width: number; height: number };
 }) {
   const sticky = kind === "sticky_note";
+  // The outer SVG uses normalized coordinates; HTML needs page-sized units for CSS pixels.
   return (
-    <foreignObject x={box.x} y={box.y} width={box.w} height={box.h} pointerEvents="none" overflow="hidden">
-      <div
-        style={{
-          boxSizing: "border-box",
-          width: "100%",
-          height: "100%",
-          overflow: "hidden",
-          padding: sticky ? "3px 4px" : "2px 4px",
-          color: sticky ? "#482c00" : color,
-          fontFamily: "Arial, sans-serif",
-          fontSize: `${Math.max(8, Math.min(36, fontSize * (sticky ? 0.75 : 1)))}px`,
-          lineHeight: 1.15,
-          direction: "rtl",
-          textAlign: "right",
-          whiteSpace: "pre-wrap",
-          overflowWrap: "anywhere",
-          wordBreak: "break-word",
-        }}
-      >
-        {text || "نظر"}
-      </div>
-    </foreignObject>
+    <svg x={box.x} y={box.y} width={box.w} height={box.h} viewBox={`0 0 ${box.w * viewport.width} ${box.h * viewport.height}`} preserveAspectRatio="none" pointerEvents="none" overflow="hidden">
+      <foreignObject x="0" y="0" width="100%" height="100%" overflow="hidden">
+        <div
+          style={{
+            boxSizing: "border-box",
+            width: "100%",
+            height: "100%",
+            overflow: "hidden",
+            padding: sticky ? "3px 4px" : "2px 4px",
+            color: sticky ? "#482c00" : color,
+            fontFamily: "Arial, sans-serif",
+            fontSize: `${Math.max(8, Math.min(36, fontSize * (sticky ? 0.75 : 1)))}px`,
+            lineHeight: 1.15,
+            direction: "rtl",
+            textAlign: "right",
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
+          }}
+        >
+          {text || "نظر"}
+        </div>
+      </foreignObject>
+    </svg>
   );
 }
 
@@ -1072,8 +1077,8 @@ export function MarkupEditor({
                   {annotation.kind === "ellipse" ? <ellipse {...common} cx={box.x + box.w / 2} cy={box.y + box.h / 2} rx={box.w / 2} ry={box.h / 2} fill="none" /> : null}
                   {annotation.kind === "revision_cloud" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="none" strokeDasharray="0.012 0.006" /> : null}
                   {annotation.kind === "sticky_note" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="#fff2a8" fillOpacity={0.9} /> : null}
-                  {annotation.kind === "free_text" ? <MarkupTextBox box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="free_text" /> : null}
-                  {annotation.kind === "sticky_note" ? <MarkupTextBox box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="sticky_note" /> : null}
+                  {annotation.kind === "free_text" ? <MarkupTextBox viewport={viewport} box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="free_text" /> : null}
+                  {annotation.kind === "sticky_note" ? <MarkupTextBox viewport={viewport} box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="sticky_note" /> : null}
                   {annotation.kind === "callout" ? (
                     <>
                       {(() => {
@@ -1082,7 +1087,7 @@ export function MarkupEditor({
                         return <line {...common} x1={anchor.x} y1={anchor.y} x2={target.x} y2={target.y} markerEnd="url(#markup-arrow-head)" />;
                       })()}
                       <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="white" fillOpacity={0.92} />
-                      <MarkupTextBox box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="callout" />
+                      <MarkupTextBox viewport={viewport} box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="callout" />
                     </>
                   ) : null}
                   {selected && !readOnly ? (

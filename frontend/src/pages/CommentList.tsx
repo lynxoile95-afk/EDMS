@@ -1003,14 +1003,14 @@ export function CommentList() {
           <div className="flex items-center justify-between gap-2">
             <span className="text-[9.5px] text-[#5c6b78]">فایل با احراز هویت از انبار اسناد دریافت شده است.</span>
             <div className="flex items-center gap-2">
-              {previewAttachment && !previewIsPdf ? (
+              {previewAttachment ? (
                 <Button
                   variant="primary"
                   className="px-2 py-1 text-[10px]"
                   disabled={previewDownloading}
                   onClick={() => void downloadCommentAttachment(previewAttachment)}
                 >
-                  {previewDownloading ? "در حال دریافت…" : "دریافت فایل اصلی"}
+                  {previewDownloading ? "در حال دریافت…" : previewIsPdf ? "دریافت نسخه اصلی فایل" : "دریافت فایل اصلی"}
                 </Button>
               ) : null}
               <Button variant="secondary" className="px-2 py-1 text-[10px]" onClick={closeAttachmentPreview}>بستن</Button>

@@ -2359,14 +2359,14 @@ export function TransmittalDetail() {
             <div className="flex items-center justify-between gap-2">
               <span className="text-[9.5px] text-[#5c6b78]">فایل از انبار اسناد و با احراز هویت دریافت شده است.</span>
               <div className="flex items-center gap-2">
-                {previewAttachment && !previewIsPdf ? (
+                {previewAttachment ? (
                   <Button
                     variant="primary"
                     className="btn-sm"
                     disabled={downloadingAttachmentId === previewAttachment.id}
                     onClick={() => void downloadAttachment(previewAttachment)}
                   >
-                    {downloadingAttachmentId === previewAttachment.id ? "در حال دریافت…" : "دریافت فایل اصلی"}
+                    {downloadingAttachmentId === previewAttachment.id ? "در حال دریافت…" : previewIsPdf ? "دریافت نسخه اصلی فایل" : "دریافت فایل اصلی"}
                   </Button>
                 ) : null}
                 <Button className="btn-sm" onClick={() => closeAttachmentPreview()}>بستن</Button>

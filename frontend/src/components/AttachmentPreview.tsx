@@ -200,14 +200,6 @@ export function AttachmentPreview({
             onOpenOriginal={openOriginal}
           />
         </div>
-        <div className="flex flex-wrap items-center justify-center gap-2 border-t border-[#d8d2b9] bg-[#fbfaf2] px-2 py-1.5">
-          <Button variant="primary" className="btn-sm" onClick={onDownload} disabled={downloading}>
-            {downloading ? "در حال دریافت…" : "دریافت نسخه اصلی فایل"}
-          </Button>
-          <Button className="btn-sm" onClick={openOriginal} disabled={opening}>
-            {opening ? "در حال بازکردن…" : "باز کردن نسخه اصلی"}
-          </Button>
-        </div>
       </div>
     );
   }

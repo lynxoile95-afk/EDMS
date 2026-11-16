@@ -4,8 +4,9 @@ import DateObject from "react-date-object";
 import gregorian from "react-date-object/calendars/gregorian";
 import persian from "react-date-object/calendars/persian";
 import persian_fa from "react-date-object/locales/persian_fa";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
+import { getMarkupSession } from "@/lib/markups";
 import { useAuth } from "@/lib/auth";
 import type { Comment, CommentAttachment, CommentList as CommentListType, DocumentAttachment } from "@/lib/types";
 import { AttachmentPreview } from "@/components/AttachmentPreview";
@@ -418,7 +419,9 @@ function AttachmentRow({
 
 export function CommentList() {
   const { revisionId } = useParams<{ revisionId: string }>();
+  const [search] = useSearchParams();
   const { hasRole } = useAuth();
+  const markupSessionId = search.get("markup_session_id");
   const [lists, setLists] = useState<CommentListType[]>([]);
   const [revisionDetails, setRevisionDetails] = useState<RevisionDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -442,6 +445,9 @@ export function CommentList() {
   const [previewActionError, setPreviewActionError] = useState<string | null>(null);
   const [previewDownloading, setPreviewDownloading] = useState(false);
   const [previewOpening, setPreviewOpening] = useState(false);
+  const [markupPrefillLoading, setMarkupPrefillLoading] = useState(false);
+  const [markupPrefillDone, setMarkupPrefillDone] = useState(false);
+  const [markupPrefillActive, setMarkupPrefillActive] = useState(false);
   const previewRequestRef = useRef(0);
   const previewUrlRef = useRef<string | null>(null);
   const openedUrlRef = useRef<string | null>(null);
@@ -473,6 +479,55 @@ export function CommentList() {
   }, [revisionId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!markupSessionId || !revisionId || !canRegister || markupPrefillDone) return;
+    let cancelled = false;
+    setMarkupPrefillLoading(true);
+    void (async () => {
+      try {
+        const session = await getMarkupSession(markupSessionId);
+        if (session.revision_id !== revisionId) {
+          throw new Error("نشست نشانه‌گذاری به این بازنگری متصل نیست.");
+        }
+        const outputFiles = await Promise.all(
+          session.outputs.map(async (output) => {
+            const blob = await api.blobData(
+              `/transmittals/${session.transmittal_id}/attachments/${output.attachment_id}/preview`,
+            );
+            return new File([blob], output.filename, { type: "application/pdf" });
+          }),
+        );
+        if (cancelled) return;
+        const pages = session.annotations.map((annotation) => annotation.page_no);
+        const firstPage = pages.length ? String(Math.min(...pages)) : "";
+        const lastPage = pages.length ? String(Math.max(...pages)) : "";
+        setForm((previous) => ({
+          ...previous,
+          text: `خروجی بازبینی PDF «${session.original_filename}» برای ثبت در Comment Registration آماده شد.`,
+          fromPageNo: firstPage,
+          toPageNo: lastPage,
+        }));
+        setFiles(outputFiles);
+        setRemovedAttachmentIds([]);
+        setEditing(null);
+        setModalError(null);
+        setMarkupPrefillActive(true);
+        setMarkupPrefillDone(true);
+        setModalOpen(true);
+      } catch (err) {
+        if (!cancelled) {
+          setActionError(err instanceof ApiError ? err.detail : "پیش‌پر کردن فرم ثبت نظر از خروجی بازبینی ناموفق بود.");
+          setMarkupPrefillDone(true);
+        }
+      } finally {
+        if (!cancelled) setMarkupPrefillLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canRegister, markupPrefillDone, markupSessionId, revisionId]);
 
   const comments = useMemo(() => lists.flatMap((list) => list.comments), [lists]);
   const returnTransmittalId = useMemo(
@@ -506,6 +561,12 @@ export function CommentList() {
     if (busy) return;
     setModalOpen(false);
     setEditing(null);
+    if (markupPrefillActive) {
+      // Files created from authenticated output blobs are temporary browser
+      // objects; never keep them around after the registration dialog closes.
+      setFiles([]);
+      setMarkupPrefillActive(false);
+    }
   };
 
   const closeAttachmentPreview = () => {
@@ -655,6 +716,7 @@ export function CommentList() {
       setEditing(null);
       setFiles([]);
       setRemovedAttachmentIds([]);
+      setMarkupPrefillActive(false);
       await load();
     } catch (err) {
       setModalError(err instanceof ApiError ? err.detail : "ذخیره ثبت نظر ناموفق بود.");
@@ -707,6 +769,7 @@ export function CommentList() {
           }
         />
         {actionError ? <div className="px-4 pt-3"><ErrorBox message={actionError} /></div> : null}
+        {markupPrefillLoading ? <div className="px-4 pt-3 text-[11px] text-slate-500">در حال آماده‌سازی خروجی‌های بازبینی برای فرم ثبت نظر…</div> : null}
         {comments.length === 0 ? (
           <EmptyState title="نظری ثبت نشده است" description="کارشناسان می‌توانند نظر خود را روی این مدرک ثبت کنند." action={canRegister ? <Button onClick={openNew}>Add New Comment</Button> : undefined} />
         ) : (

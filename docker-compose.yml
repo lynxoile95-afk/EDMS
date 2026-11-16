@@ -7,6 +7,7 @@ x-backend-env: &backend-env
     SEARCH_INDEXING_ENABLED: ${SEARCH_INDEXING_ENABLED:-false}
     LLM_QA_ENABLED: ${LLM_QA_ENABLED:-false}
     FILE_QA_ENABLED: ${FILE_QA_ENABLED:-false}
+    REVIEW_MARKUP_ENABLED: ${REVIEW_MARKUP_ENABLED:-true}
     EMBEDDING_CACHE_DIR: /home/edms/.cache/huggingface
     OMP_NUM_THREADS: 1
     TOKENIZERS_PARALLELISM: "false"

@@ -104,8 +104,28 @@ def assert_can_review(db: Session, user: User, project_id: uuid.UUID) -> None:
         ProjectRole.PROJECT_CONTROL,
         ProjectRole.PMO,
         ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
     ):
         raise AccessDenied("این عملیات تنها برای کارشناس بازبین یا DCC مجاز است.")
+
+
+DOCUMENT_COMMENT_CAPABILITY = "document.comment"
+
+
+def assert_can_comment(db: Session, user: User, project_id: uuid.UUID) -> None:
+    """Enforce the ``document.comment`` capability through existing roles."""
+    if not has_role(
+        db,
+        user,
+        project_id,
+        ProjectRole.REVIEWER,
+        ProjectRole.DCC,
+        ProjectRole.PROJECT_CONTROL,
+        ProjectRole.PMO,
+        ProjectRole.PROJECT_MANAGER,
+        ProjectRole.SYSTEM_ADMIN,
+    ):
+        raise AccessDenied("نقش شما قابلیت ثبت نشانه‌گذاری و نظر روی مدرک را ندارد.")
 
 
 def assert_admin(user: User) -> None:

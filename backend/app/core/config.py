@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     comment_attachment_max_mb: int = 20
     comment_attachment_allowed_extensions: str = "pdf,docx,xlsx,dwg,png,jpg,zip"
 
+    # PDF review markup is an additive capability and is on by default.  It can
+    # be disabled for an installation without changing the existing role ACL.
+    review_markup_enabled: bool = True
+
     @property
     def comment_attachment_extensions(self) -> set[str]:
         return {

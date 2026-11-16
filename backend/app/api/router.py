@@ -15,6 +15,7 @@ from app.api.routes import (
     file_qa,
     mdl,
     manual_transmittals,
+    markups,
     notifications,
     projects,
     registration,
@@ -35,6 +36,7 @@ api_router.include_router(review.router)
 api_router.include_router(documents.router)
 api_router.include_router(transmittals.router)
 api_router.include_router(manual_transmittals.router)
+api_router.include_router(markups.router)
 api_router.include_router(registration.router)
 api_router.include_router(ddm.router)
 api_router.include_router(comments.router)

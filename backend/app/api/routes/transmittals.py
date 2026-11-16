@@ -1509,6 +1509,19 @@ def download_attachment(
         project_id=transmittal.project_id,
         after={"attachment_id": str(attachment_id)},
     )
+    if attachment.get("markup_session_id"):
+        audit.record(
+            db,
+            action="markup.download",
+            entity_type="markup_session",
+            entity_id=str(attachment["markup_session_id"]),
+            actor=user,
+            project_id=transmittal.project_id,
+            after={
+                "output": "pdf" if attachment.get("related_type") == "markup_pdf" else "sheet",
+                "attachment_id": str(attachment_id),
+            },
+        )
     storage = get_storage()
     try:
         content = storage.get_bytes(attachment["storage_key"])
@@ -1619,6 +1632,8 @@ async def update_attachment(
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    if attachment.get("kind") == "comment":
+        raise HTTPException(status_code=409, detail="خروجی Comment فقط از داخل جلسه نشانه‌گذاری مدیریت می‌شود.")
     _assert_attachments_editable(
         transmittal,
         allow_native_append=attachment.get("kind") == "native" and kind == "native",
@@ -1842,6 +1857,8 @@ def delete_attachment(
     attachment = next((item for item in attachments if str(item.get("id")) == str(attachment_id)), None)
     if attachment is None:
         raise HTTPException(status_code=404, detail="پیوست یافت نشد.")
+    if attachment.get("kind") == "comment":
+        raise HTTPException(status_code=409, detail="خروجی Comment فقط از داخل جلسه نشانه‌گذاری مدیریت می‌شود.")
     _assert_attachments_editable(
         transmittal,
         allow_native_append=attachment.get("kind") == "native",

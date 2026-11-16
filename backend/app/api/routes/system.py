@@ -43,5 +43,8 @@ def capabilities(user: CurrentUser, db: DbSession) -> dict:
         "vlm_base_url": runtime.base_url,
         "vlm_endpoint_allowed": vlm.endpoint_trusted(),
         "vlm_remote_allowed": runtime.remote_consent,
+        # Safe, non-secret feature flags are exposed so existing UI actions can
+        # disappear when an installation disables an additive capability.
+        "review_markup_enabled": settings.review_markup_enabled,
         "note_fa": EXTRACTION_NOTE_FA,
     }

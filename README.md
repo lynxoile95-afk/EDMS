@@ -17,6 +17,7 @@
               →  گروه‌بندی گیرندگان از DDM  →  پیش‌نویس برگه ارسال
               →  صدور نهایی + شماره + PDF فارسی + اعلان و کارتابل
               →  تأییدیه دریافت (Acknowledge) و فهرست نظرات (Comment List)
+              → بازبینی نشانه‌گذاری PDF آفلاین و Comment Sheet بدون تغییر فایل اصلی
 ```
 
 اصل طراحی: **هوش مصنوعی پیشنهاد می‌دهد، قاعده تصمیم می‌گیرد.** هیچ مدلی به‌تنهایی مدرک را «ثبت» نمی‌کند؛ هر فیلد با درصد اطمینان، منبع استخراج، متن خام، مرجع برش تصویر و نسخه مدل ذخیره می‌شود تا قابل ممیزی باشد.
@@ -497,6 +498,7 @@ python3 skills/vendor/task-observer/scripts/session-start-scan.sh
 | اعضای پروژه | `GET /projects/{id}/members` (نقش + دیسیپلین؛ خوراک دیالوگ ارجاع) |
 | DDM | `GET/POST /projects/{id}/ddm/rules` · `PATCH/DELETE …/{rule_id}` · `POST /projects/{id}/ddm/simulate` |
 | نظرات | `GET /revisions/{id}/comment-lists` · `POST /revisions/{id}/comments` · `POST /comments/{id}/respond` · `/close` |
+| نشانه‌گذاری PDF | `POST/GET /markups` · `GET /markups/{id}` · `PUT /markups/{id}/annotations` · `POST /markups/{id}/submit` · `/annotations/{number}/reply` · `DELETE /markups/{id}`؛ خروجی‌ها با مسیر موجود دانلود پیوست ترانسمیتال دریافت می‌شوند |
 | فایل | `GET /files/source-files/{id}` · `/files/sheets/{id}/thumbnail` · `/files/sheets/{id}/title-block` · `/files/results/{id}/raw-text` |
 | اعلان | `GET /notifications` · `POST /notifications/{id}/read` · `POST /notifications/read-all` |
 | مدیریت | `GET /admin/status` · `GET/POST /admin/users` · `PATCH /admin/users/{id}/active` · `GET /admin/audit` |

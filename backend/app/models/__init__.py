@@ -23,6 +23,7 @@ from app.models.documents import (
     ValidationIssue,
 )
 from app.models.registration import RegistrationRow
+from app.models.markups import MarkupAnnotation, MarkupSession
 from app.models.ai import AICredential, AISettings
 from app.models.search import (
     DocumentChunk,
@@ -52,6 +53,8 @@ from app.models.transmittal import (
 
 __all__ = [
     "RegistrationRow",
+    "MarkupSession",
+    "MarkupAnnotation",
     "AICredential",
     "AISettings",
     "DocumentChunk",

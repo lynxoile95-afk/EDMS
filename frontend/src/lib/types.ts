@@ -422,7 +422,7 @@ export interface DocumentAttachment {
   /** Null for transmittal-level related files shown in the Letters tab. */
   line_id: string | null;
   revision_id: string | null;
-  kind: "pdf" | "native" | "related";
+  kind: "pdf" | "native" | "related" | "comment";
   related_type?: "letter" | "correspondence" | "meeting_minutes" | "image" | string | null;
   filename: string;
   content_type: string;
@@ -522,6 +522,77 @@ export interface TransmittalDetail extends Transmittal {
   reply_sheet: ReplySheet | null;
   os_available: boolean;
   os_transmittal_id: string | null;
+}
+
+export type MarkupKind =
+  | "sticky_note"
+  | "highlight"
+  | "rectangle"
+  | "revision_cloud"
+  | "arrow"
+  | "free_text"
+  | "freehand";
+
+export type MarkupReplyStatus = "open" | "closed" | "accepted" | "rejected" | "resolved";
+
+export interface MarkupPoint {
+  x: number;
+  y: number;
+}
+
+export interface MarkupAnnotation {
+  id: string;
+  number: number;
+  kind: MarkupKind;
+  page_no: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  points: MarkupPoint[];
+  text: string | null;
+  color: string;
+  author_id: string | null;
+  author_name: string | null;
+  created_at: string;
+  updated_at: string;
+  reply_status: MarkupReplyStatus;
+  reply_text: string | null;
+  replied_by_id: string | null;
+  replied_by_name: string | null;
+  replied_at: string | null;
+}
+
+export interface MarkupSession {
+  id: string;
+  transmittal_id: string;
+  project_id: string;
+  source_file_id: string | null;
+  revision_id: string | null;
+  file_id: string;
+  document_code: string | null;
+  revision_label: string | null;
+  original_filename: string;
+  original_sha256: string;
+  page_count: number;
+  status: "draft" | "submitted";
+  draft_version: number;
+  last_saved_at: string | null;
+  submitted_at: string | null;
+  author_id: string;
+  author_name: string | null;
+  can_edit: boolean;
+  can_reply: boolean;
+  submitted_pdf_attachment_id: string | null;
+  comment_sheet_attachment_id: string | null;
+  outputs: { attachment_id: string; filename: string; kind: "pdf" | "sheet"; download_url: string }[];
+  annotations: MarkupAnnotation[];
+}
+
+export interface MarkupSubmitResult {
+  session: MarkupSession;
+  outputs: { attachment_id: string; filename: string; kind: "pdf" | "sheet"; download_url: string }[];
+  annotation_count: number;
 }
 
 export interface CommentAttachment {

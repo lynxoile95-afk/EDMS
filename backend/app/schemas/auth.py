@@ -47,8 +47,20 @@ def _validate_mobile(value: str) -> str:
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    # Preview deployments intentionally use the non-routable ``.local``
+    # bootstrap address. EmailStr rejects reserved test domains, so login uses
+    # the same lightweight syntax check while account creation keeps strict
+    # deliverable-email validation.
+    email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=4, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            raise ValueError("ایمیل معتبر نیست.")
+        return value
 
 
 class TokenPair(BaseModel):

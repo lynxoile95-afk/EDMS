@@ -7,6 +7,9 @@ import type {
   CommentList as CommentListType,
   DocumentRecord,
   FlowHistory,
+  MarkupAnnotation,
+  MarkupReplyStatus,
+  MarkupSession,
   ProjectMember,
   ReplySheet,
   ReplySheetRow,
@@ -14,8 +17,10 @@ import type {
   TransmittalLine,
   TransmittalReferral,
 } from "@/lib/types";
+import { createMarkupSession, downloadMarkupOutput, replyToMarkup, saveMarkupAnnotations, submitMarkupSession } from "@/lib/markups";
 import { Button, EmptyState, ErrorBox, Modal, Spinner } from "@/components/ui";
 import { AttachmentPreview } from "@/components/AttachmentPreview";
+import { MarkupEditor } from "@/components/MarkupEditor";
 import { FieldGrid, FField, IconButton, Ribbon, StatusLamp, Window } from "@/components/window";
 import {
   IconAdd,
@@ -177,6 +182,17 @@ export function TransmittalDetail() {
   const [previewAttachment, setPreviewAttachment] = useState<Detail["attachments"][number] | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewPdfData, setPreviewPdfData] = useState<ArrayBuffer | null>(null);
+  const [previewMarkupSession, setPreviewMarkupSession] = useState<MarkupSession | null>(null);
+  const [previewMarkupAnnotations, setPreviewMarkupAnnotations] = useState<MarkupAnnotation[]>([]);
+  const [previewMarkupDirty, setPreviewMarkupDirty] = useState(false);
+  const [previewMarkupBusy, setPreviewMarkupBusy] = useState(false);
+  const [previewMarkupError, setPreviewMarkupError] = useState<string | null>(null);
+  const [previewMarkupNotice, setPreviewMarkupNotice] = useState<string | null>(null);
+  const [previewMarkupSelectedId, setPreviewMarkupSelectedId] = useState<string | null>(null);
+  const [previewMarkupPage, setPreviewMarkupPage] = useState(1);
+  const [previewMarkupReplyDrafts, setPreviewMarkupReplyDrafts] = useState<Record<string, string>>({});
+  const [previewMarkupReplyStatuses, setPreviewMarkupReplyStatuses] = useState<Record<string, Extract<MarkupReplyStatus, "accepted" | "rejected" | "resolved">>>({});
+  const [reviewMarkupEnabled, setReviewMarkupEnabled] = useState(true);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewActionError, setPreviewActionError] = useState<string | null>(null);
@@ -194,7 +210,11 @@ export function TransmittalDetail() {
     setLoading(true);
     setError(null);
     try {
-      const detail = await api.get<Detail>(`/transmittals/${transmittalId}`);
+      const [detail, capabilities] = await Promise.all([
+        api.get<Detail>(`/transmittals/${transmittalId}`),
+        api.get<{ review_markup_enabled?: boolean }>("/system/capabilities").catch(() => null),
+      ]);
+      setReviewMarkupEnabled(capabilities?.review_markup_enabled !== false);
       setData(detail);
       setRemarks(detail.remarks ?? "");
       const revisionIds = Array.from(new Set(detail.lines.map((line) => line.revision_id)));
@@ -260,6 +280,17 @@ export function TransmittalDetail() {
 
   const canManage =
     hasRole("dcc") || hasRole("project_control") || hasRole("pmo") || hasRole("project_manager") || hasRole("system_admin");
+  const canCreateCommentCopy = Boolean(
+    reviewMarkupEnabled &&
+      user &&
+      (user.is_superuser ||
+        hasRole("reviewer") ||
+        hasRole("dcc") ||
+        hasRole("project_control") ||
+        hasRole("pmo") ||
+        hasRole("project_manager") ||
+        hasRole("system_admin")),
+  );
   const issued = ["issued", "final", "partially_acknowledged", "acknowledged", "closed"].includes(data.status);
   const isFinal = data.is_final || data.status === "final" || data.status === "closed";
   const attachmentsLocked = issued || data.status === "cancelled";
@@ -680,7 +711,10 @@ export function TransmittalDetail() {
     }
   };
 
-  const closeAttachmentPreview = () => {
+  const closeAttachmentPreview = (force = false) => {
+    if (!force && previewMarkupDirty && previewMarkupSession?.can_edit && !window.confirm("تغییرات نشانه‌گذاری ذخیره‌نشده است. پنجره بسته شود؟")) {
+      return;
+    }
     previewRequestRef.current += 1;
     if (previewUrlRef.current) {
       URL.revokeObjectURL(previewUrlRef.current);
@@ -689,12 +723,31 @@ export function TransmittalDetail() {
     setPreviewAttachment(null);
     setPreviewUrl(null);
     setPreviewPdfData(null);
+    setPreviewMarkupSession(null);
+    setPreviewMarkupAnnotations([]);
+    setPreviewMarkupDirty(false);
+    setPreviewMarkupBusy(false);
+    setPreviewMarkupError(null);
+    setPreviewMarkupNotice(null);
+    setPreviewMarkupSelectedId(null);
+    setPreviewMarkupPage(1);
+    setPreviewMarkupReplyDrafts({});
+    setPreviewMarkupReplyStatuses({});
     setPreviewLoading(false);
     setPreviewError(null);
     setPreviewActionError(null);
   };
 
-  const openAttachmentPreview = async (attachment: Detail["attachments"][number]) => {
+  const openAttachmentPreview = async (attachment: Detail["attachments"][number], preserveMarkup = false) => {
+    if (!preserveMarkup) {
+      setPreviewMarkupSession(null);
+      setPreviewMarkupAnnotations([]);
+      setPreviewMarkupDirty(false);
+      setPreviewMarkupError(null);
+      setPreviewMarkupNotice(null);
+      setPreviewMarkupSelectedId(null);
+      setPreviewMarkupPage(1);
+    }
     const requestId = previewRequestRef.current + 1;
     previewRequestRef.current = requestId;
     if (previewUrlRef.current) {
@@ -730,6 +783,146 @@ export function TransmittalDetail() {
     }
   };
 
+  const openMarkupViewer = async (attachment: Detail["attachments"][number]) => {
+    setPreviewMarkupBusy(true);
+    setPreviewMarkupError(null);
+    setPreviewMarkupNotice(null);
+    try {
+      const session = await createMarkupSession(data.id, attachment.id);
+      setPreviewMarkupSession(session);
+      setPreviewMarkupAnnotations(session.annotations);
+      setPreviewMarkupDirty(false);
+      setPreviewMarkupSelectedId(null);
+      setPreviewMarkupPage(1);
+      setPreviewMarkupReplyDrafts({});
+      setPreviewMarkupReplyStatuses({});
+      try {
+        const local = localStorage.getItem(`edms-markup-draft:${session.id}`);
+        if (session.can_edit && local) {
+          const parsed = JSON.parse(local) as { annotations?: MarkupAnnotation[]; version?: number };
+          if (Array.isArray(parsed.annotations) && (parsed.version ?? 0) >= session.draft_version) {
+            setPreviewMarkupAnnotations(parsed.annotations);
+            setPreviewMarkupDirty(true);
+            setPreviewMarkupNotice("نسخه محلی ذخیره‌نشده بازیابی شد؛ ذخیره خودکار فعال است.");
+          }
+        }
+      } catch {
+        // A malformed browser backup must not prevent opening the authenticated PDF.
+      }
+      await openAttachmentPreview(attachment, true);
+    } catch (err) {
+      setPreviewMarkupError(err instanceof ApiError ? err.detail : "آماده‌سازی بازبینی PDF ناموفق بود.");
+    } finally {
+      setPreviewMarkupBusy(false);
+    }
+  };
+
+  const changePreviewMarkup = (next: MarkupAnnotation[]) => {
+    setPreviewMarkupAnnotations(next);
+    setPreviewMarkupDirty(true);
+    setPreviewMarkupNotice("تغییرات در حافظه نگه‌داری شد؛ ذخیره خودکار فعال است.");
+    if (previewMarkupSession) {
+      try {
+        localStorage.setItem(
+          `edms-markup-draft:${previewMarkupSession.id}`,
+          JSON.stringify({ version: previewMarkupSession.draft_version + 1, annotations: next }),
+        );
+      } catch {
+        setPreviewMarkupNotice("ذخیره محلی مرورگر در دسترس نیست؛ اتصال را حفظ کنید.");
+      }
+    }
+  };
+
+  const savePreviewMarkup = useCallback(async () => {
+    if (!previewMarkupSession?.can_edit || !previewMarkupDirty) return true;
+    setPreviewMarkupBusy(true);
+    setPreviewMarkupError(null);
+    try {
+      const saved = await saveMarkupAnnotations(
+        previewMarkupSession.id,
+        previewMarkupAnnotations,
+        previewMarkupSession.draft_version,
+      );
+      setPreviewMarkupSession(saved);
+      setPreviewMarkupAnnotations(saved.annotations);
+      setPreviewMarkupDirty(false);
+      setPreviewMarkupNotice("پیش‌نویس نشانه‌گذاری ذخیره شد.");
+      localStorage.removeItem(`edms-markup-draft:${saved.id}`);
+      return true;
+    } catch (err) {
+      setPreviewMarkupError(err instanceof ApiError ? err.detail : "ذخیره پیش‌نویس ناموفق بود؛ دوباره تلاش کنید.");
+      return false;
+    } finally {
+      setPreviewMarkupBusy(false);
+    }
+  }, [previewMarkupAnnotations, previewMarkupDirty, previewMarkupSession]);
+
+  useEffect(() => {
+    if (!previewMarkupDirty || !previewMarkupSession?.can_edit) return;
+    const timer = window.setTimeout(() => void savePreviewMarkup(), 1600);
+    return () => window.clearTimeout(timer);
+  }, [previewMarkupDirty, previewMarkupSession?.can_edit, savePreviewMarkup]);
+
+  const submitPreviewMarkup = async () => {
+    if (!previewMarkupSession?.can_edit) return;
+    if (!(await savePreviewMarkup())) return;
+    if (!window.confirm("پس از ثبت نهایی، جلسه و فایل‌های Comment قفل می‌شوند. ادامه می‌دهید؟")) return;
+    setPreviewMarkupBusy(true);
+    setPreviewMarkupError(null);
+    try {
+      const result = await submitMarkupSession(previewMarkupSession.id);
+      setPreviewMarkupSession(result.session);
+      setPreviewMarkupAnnotations(result.session.annotations);
+      setPreviewMarkupDirty(false);
+      setPreviewMarkupNotice("ثبت نهایی انجام شد؛ فایل‌ها به‌عنوان Comment ایجاد شدند.");
+      localStorage.removeItem(`edms-markup-draft:${result.session.id}`);
+      if (result.session.revision_id) {
+        const revisionPath = `/documents/${result.session.revision_id}/comments?markup_session_id=${result.session.id}`;
+        closeAttachmentPreview(true);
+        navigate(revisionPath);
+      }
+    } catch (err) {
+      setPreviewMarkupError(err instanceof ApiError ? err.detail : "ثبت نهایی و تولید خروجی ناموفق بود.");
+    } finally {
+      setPreviewMarkupBusy(false);
+    }
+  };
+
+  const replyPreviewMarkup = async (
+    annotation: MarkupAnnotation,
+    status: Extract<MarkupReplyStatus, "accepted" | "rejected" | "resolved">,
+  ) => {
+    if (!previewMarkupSession?.can_reply) return;
+    const text = (previewMarkupReplyDrafts[annotation.id] ?? "").trim();
+    if (!text) return;
+    setPreviewMarkupBusy(true);
+    setPreviewMarkupError(null);
+    try {
+      const updated = await replyToMarkup(previewMarkupSession.id, annotation.number, text, status);
+      setPreviewMarkupSession(updated);
+      setPreviewMarkupAnnotations(updated.annotations);
+      setPreviewMarkupReplyDrafts((current) => ({ ...current, [annotation.id]: "" }));
+      setPreviewMarkupNotice(`پاسخ نظر ${persianDigits(annotation.number)} ثبت شد.`);
+    } catch (err) {
+      setPreviewMarkupError(err instanceof ApiError ? err.detail : "ثبت پاسخ ناموفق بود.");
+    } finally {
+      setPreviewMarkupBusy(false);
+    }
+  };
+
+  const downloadPreviewMarkupOutput = async (output: MarkupSession["outputs"][number]) => {
+    if (!previewMarkupSession) return;
+    setPreviewMarkupBusy(true);
+    setPreviewMarkupError(null);
+    try {
+      await downloadMarkupOutput(previewMarkupSession.transmittal_id, output.attachment_id, output.filename);
+    } catch (err) {
+      setPreviewMarkupError(err instanceof ApiError ? err.detail : "دریافت خروجی نشانه‌گذاری ناموفق بود.");
+    } finally {
+      setPreviewMarkupBusy(false);
+    }
+  };
+
   const deleteAttachment = async (attachment: Detail["attachments"][number]) => {
     if (!window.confirm(`پیوست «${attachment.filename}» حذف شود؟`)) return;
     setBusy(true);
@@ -745,7 +938,7 @@ export function TransmittalDetail() {
   };
 
   const openAttachmentEdit = (attachment: Detail["attachments"][number]) => {
-    if (attachment.kind === "related") return;
+    if (attachment.kind === "related" || attachment.kind === "comment") return;
     setAttachmentEditError(null);
     setEditAttachment(attachment);
     setAttachmentEditForm({ filename: attachment.filename, kind: attachment.kind });
@@ -1144,10 +1337,18 @@ export function TransmittalDetail() {
                             <span className="text-[#7a8794]">{fileSize(attachment.size_bytes)}</span>
                             <IconButton icon={accessible ? <IconView /> : <IconLock />} label={accessible ? "مشاهده پیوست" : "دسترسی مشاهده ندارید"} disabled={!accessible || busy} onClick={() => void openAttachmentPreview(attachment)} />
                             <IconButton icon={<IconArchive />} label={accessible ? "دانلود پیوست" : "دسترسی دانلود ندارید"} disabled={!accessible || busy} onClick={() => void downloadAttachment(attachment)} />
-                            {canManageAttachments && (attachment.kind !== "native" || canManageNative) ? (
+                            {attachment.kind === "pdf" && canCreateCommentCopy ? (
+                              <IconButton
+                                icon={<IconEdit />}
+                                label="ایجاد کپی برای کامنت"
+                                disabled={!accessible || busy}
+                                onClick={() => void openMarkupViewer(attachment)}
+                              />
+                            ) : null}
+                            {canManageAttachments && attachment.kind !== "comment" && (attachment.kind !== "native" || canManageNative) ? (
                               <IconButton icon={<IconEdit />} label="ویرایش پیوست" onClick={() => openAttachmentEdit(attachment)} />
                             ) : null}
-                            {canManageAttachments && (attachment.kind !== "native" || canManageNative) ? (
+                            {canManageAttachments && attachment.kind !== "comment" && (attachment.kind !== "native" || canManageNative) ? (
                               <IconButton icon={<IconDelete />} label="حذف پیوست" disabled={busy} onClick={() => void deleteAttachment(attachment)} />
                             ) : null}
                           </div>
@@ -2064,41 +2265,130 @@ export function TransmittalDetail() {
         </div>
       </Modal>
 
-      {/* ---------- مشاهده واقعی PDF و فایل Native ---------- */}
+      {/* ---------- existing attachment viewer, with additive PDF markup mode ---------- */}
       <Modal
         open={Boolean(previewAttachment)}
-        title={previewAttachment ? `مشاهده پیوست — ${previewAttachment.filename}` : "مشاهده پیوست"}
+        title={previewAttachment ? `${previewMarkupSession ? "بازبینی و ایجاد کپی Comment" : "مشاهده پیوست"} — ${previewAttachment.filename}` : "مشاهده پیوست"}
         onClose={closeAttachmentPreview}
         width="max-w-6xl"
         footer={
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[9.5px] text-[#5c6b78]">
-              فایل از انبار اسناد و با احراز هویت دریافت شده است.
-            </span>
-            <div className="flex items-center gap-2">
-              {previewAttachment ? (
-                <Button
-                  variant="primary"
-                  className="btn-sm"
-                  disabled={downloadingAttachmentId === previewAttachment.id}
-                  onClick={() => void downloadAttachment(previewAttachment)}
-                >
-                  {downloadingAttachmentId === previewAttachment.id ? "در حال دریافت…" : "دریافت فایل اصلی"}
-                </Button>
-              ) : null}
-              <Button className="btn-sm" onClick={closeAttachmentPreview}>
-                بستن
-              </Button>
+          previewMarkupSession ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[9.5px] text-[#5c6b78]">
+                {previewMarkupSession.status === "draft" ? "پیش‌نویس شخصی · ذخیره خودکار فعال است" : "جلسه ثبت نهایی‌شده و فقط خواندنی است"}
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                {previewMarkupSession.status === "draft" && previewMarkupSession.can_edit ? (
+                  <>
+                    <Button className="btn-sm" disabled={previewMarkupBusy || !previewMarkupDirty} onClick={() => void savePreviewMarkup()}>
+                      ذخیره دستی
+                    </Button>
+                    <Button variant="primary" className="btn-sm" disabled={previewMarkupBusy} onClick={() => void submitPreviewMarkup()}>
+                      {previewMarkupBusy ? "در حال پردازش…" : "ثبت نهایی و ثبت در Comment"}
+                    </Button>
+                  </>
+                ) : null}
+                {previewMarkupSession.outputs.map((output) => (
+                  <Button key={output.attachment_id} className="btn-sm" disabled={previewMarkupBusy} onClick={() => void downloadPreviewMarkupOutput(output)}>
+                    {output.kind === "pdf" ? "دریافت PDF نشانه‌گذاری" : "دریافت Comment Sheet"}
+                  </Button>
+                ))}
+                <Button className="btn-sm" onClick={() => closeAttachmentPreview()}>بستن</Button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[9.5px] text-[#5c6b78]">فایل از انبار اسناد و با احراز هویت دریافت شده است.</span>
+              <div className="flex items-center gap-2">
+                {previewAttachment ? (
+                  <Button
+                    variant="primary"
+                    className="btn-sm"
+                    disabled={downloadingAttachmentId === previewAttachment.id}
+                    onClick={() => void downloadAttachment(previewAttachment)}
+                  >
+                    {downloadingAttachmentId === previewAttachment.id ? "در حال دریافت…" : "دریافت فایل اصلی"}
+                  </Button>
+                ) : null}
+                <Button className="btn-sm" onClick={() => closeAttachmentPreview()}>بستن</Button>
+              </div>
+            </div>
+          )
         }
       >
         {previewActionError ? (
-          <div className="mb-2 border border-[#c98a86] bg-[#fdeeee] px-2 py-1.5 text-[10px] text-[#8a2b25]" role="alert">
+          <div className="mb-2 border border-[#c98a86] bg-[#fdeeee] px-2 py-1 text-[10px] text-[#8a2b25]" role="alert">
             {previewActionError}
           </div>
         ) : null}
-        {previewAttachment ? (
+        {previewMarkupSession ? (
+          <>
+            {previewMarkupError ? <ErrorBox message={previewMarkupError} /> : null}
+            {previewMarkupNotice ? <div className="mb-1 border border-[#a8c6a8] bg-[#eef8ee] px-2 py-1 text-[10px] text-[#356d39]" role="status">{previewMarkupNotice}</div> : null}
+            <div className="flex h-[62vh] min-h-[30rem] min-w-0 flex-col gap-1 lg:flex-row" dir="ltr">
+              <div className="min-h-0 min-w-0 flex-1">
+                {previewLoading || !previewPdfData ? (
+                  <Spinner label="در حال دریافت PDF اصلی برای بازبینی…" />
+                ) : (
+                  <MarkupEditor
+                    data={previewPdfData}
+                    annotations={previewMarkupAnnotations}
+                    onChange={changePreviewMarkup}
+                    readOnly={!previewMarkupSession.can_edit}
+                    initialPage={previewMarkupPage}
+                    onPageChange={setPreviewMarkupPage}
+                    selectedId={previewMarkupSelectedId}
+                    onSelectedIdChange={setPreviewMarkupSelectedId}
+                  />
+                )}
+              </div>
+              <aside className="flex max-h-[25vh] w-full shrink-0 flex-col border border-[#a8a284] bg-white text-[10px] lg:max-h-none lg:w-[20rem]" dir="rtl">
+                <div className="flex items-center justify-between border-b border-[#a8a284] bg-[#eef3f8] px-2 py-1 font-bold text-[#1f3864]">
+                  <span>فهرست نظرات</span><span>{persianDigits(previewMarkupAnnotations.length)}</span>
+                </div>
+                <div className="min-h-0 flex-1 overflow-auto">
+                  {[...previewMarkupAnnotations].sort((a, b) => a.number - b.number).map((annotation) => (
+                    <div
+                      key={annotation.id}
+                      className={`border-b border-[#e6e1c8] p-2 text-right ${previewMarkupSelectedId === annotation.id ? "bg-[#fffbe4]" : "hover:bg-[#f8fafc]"}`}
+                    >
+                      <button
+                        type="button"
+                        className="block w-full text-right"
+                        onClick={() => { setPreviewMarkupPage(annotation.page_no); setPreviewMarkupSelectedId(annotation.id); }}
+                      >
+                        <span className="flex items-center justify-between font-bold text-[#1f4e79]"><span>نظر {persianDigits(annotation.number)}</span><span>صفحه {persianDigits(annotation.page_no)}</span></span>
+                        <span className="mt-1 block whitespace-pre-wrap break-words text-[#33475b]">{annotation.text || "نشانه‌گذاری بدون متن"}</span>
+                      </button>
+                      {previewMarkupSession.can_reply && previewMarkupSession.status === "submitted" ? (
+                        <div className="mt-1 flex gap-1">
+                          <input
+                            className="input min-w-0 flex-1 py-0 text-[9px]"
+                            value={previewMarkupReplyDrafts[annotation.id] ?? ""}
+                            onChange={(event) => setPreviewMarkupReplyDrafts((current) => ({ ...current, [annotation.id]: event.target.value }))}
+                            placeholder="پاسخ مالک…"
+                          />
+                          <select
+                            className="input w-auto py-0 text-[9px]"
+                            value={previewMarkupReplyStatuses[annotation.id] ?? "resolved"}
+                            onChange={(event) => setPreviewMarkupReplyStatuses((current) => ({ ...current, [annotation.id]: event.target.value as Extract<MarkupReplyStatus, "accepted" | "rejected" | "resolved"> }))}
+                            aria-label={`وضعیت پاسخ نظر ${annotation.number}`}
+                          >
+                            <option value="accepted">پذیرفته</option>
+                            <option value="rejected">رد</option>
+                            <option value="resolved">حل‌شده</option>
+                          </select>
+                          <Button className="btn-sm" disabled={previewMarkupBusy || !(previewMarkupReplyDrafts[annotation.id] ?? "").trim()} onClick={() => void replyPreviewMarkup(annotation, previewMarkupReplyStatuses[annotation.id] ?? "resolved")}>ثبت</Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                  {!previewMarkupAnnotations.length ? <p className="p-3 text-center text-[#5c6b78]">هنوز نشانه‌ای ثبت نشده است.</p> : null}
+                </div>
+              </aside>
+            </div>
+          </>
+        ) : previewAttachment ? (
           <AttachmentPreview
             attachment={previewAttachment}
             url={previewUrl}

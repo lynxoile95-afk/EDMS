@@ -19,6 +19,7 @@ import { TransmittalDetail } from "@/pages/TransmittalDetail";
 import { CommentList } from "@/pages/CommentList";
 import { SearchPage } from "@/pages/Search";
 import { FileQAPage } from "@/pages/FileQA";
+import { MarkupSessionPage } from "@/pages/MarkupSession";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
@@ -73,6 +74,8 @@ export default function App() {
               <Route path="/transmittals" element={<Transmittals />} />
               <Route path="/transmittals/new" element={<ManualTransmittalPage />} />
               <Route path="/transmittals/:transmittalId" element={<TransmittalDetail />} />
+              <Route path="/markups/new" element={<MarkupSessionPage />} />
+              <Route path="/markups/:sessionId" element={<MarkupSessionPage />} />
               <Route path="/documents/:revisionId/comments" element={<CommentList />} />
               <Route path="/search" element={<SearchPage />} />
               <Route path="/file-qa" element={<FileQAPage />} />

@@ -438,6 +438,10 @@ export function TransmittalDetail() {
   const visibleAttachments = (data.attachments ?? []).filter((attachment) => attachment.kind !== "comment");
   const nativeAttachments = visibleAttachments.filter((attachment) => attachment.kind === "native");
   const relatedAttachments = visibleAttachments.filter((attachment) => attachment.kind === "related");
+  const previewIsPdf = Boolean(
+    previewAttachment &&
+      (previewAttachment.kind === "pdf" || previewAttachment.content_type.toLowerCase() === "application/pdf" || previewAttachment.filename.toLowerCase().endsWith(".pdf")),
+  );
 
   // --- review route -------------------------------------------------------
   const stage = data.stage ?? "draft";
@@ -2355,7 +2359,7 @@ export function TransmittalDetail() {
             <div className="flex items-center justify-between gap-2">
               <span className="text-[9.5px] text-[#5c6b78]">فایل از انبار اسناد و با احراز هویت دریافت شده است.</span>
               <div className="flex items-center gap-2">
-                {previewAttachment ? (
+                {previewAttachment && !previewIsPdf ? (
                   <Button
                     variant="primary"
                     className="btn-sm"

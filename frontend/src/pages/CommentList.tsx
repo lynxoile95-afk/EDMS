@@ -617,6 +617,10 @@ export function CommentList() {
   );
   const returnTransmittalPath = returnTransmittalId ? `/transmittals/${returnTransmittalId}` : "/transmittals/new";
   const existingAttachments = editing?.attachments ?? [];
+  const previewIsPdf = Boolean(
+    previewAttachment &&
+      (previewAttachment.mime_type.toLowerCase() === "application/pdf" || previewAttachment.file_name.toLowerCase().endsWith(".pdf")),
+  );
 
   const openNew = () => {
     setEditing(null);
@@ -999,7 +1003,7 @@ export function CommentList() {
           <div className="flex items-center justify-between gap-2">
             <span className="text-[9.5px] text-[#5c6b78]">فایل با احراز هویت از انبار اسناد دریافت شده است.</span>
             <div className="flex items-center gap-2">
-              {previewAttachment ? (
+              {previewAttachment && !previewIsPdf ? (
                 <Button
                   variant="primary"
                   className="px-2 py-1 text-[10px]"

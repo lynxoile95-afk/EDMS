@@ -164,7 +164,9 @@ function pointRectangles(points: MarkupPoint[]): MarkupPoint[][] {
   return [points.length ? points : [{ x: 0.05, y: 0.05 }, { x: 0.2, y: 0.12 }]];
 }
 
-function bounds(annotation: Pick<MarkupAnnotation, "points" | "kind">): { x: number; y: number; w: number; h: number } {
+type NormalizedMarkupBox = { x: number; y: number; w: number; h: number };
+
+function bounds(annotation: Pick<MarkupAnnotation, "points" | "kind">): NormalizedMarkupBox {
   const sourcePoints = annotation.kind === "callout" && annotation.points.length >= 3 ? annotation.points.slice(1) : annotation.points;
   const points = sourcePoints.length ? sourcePoints : [{ x: 0.05, y: 0.05 }, { x: 0.2, y: 0.12 }];
   const xs = points.map((point) => point.x);
@@ -177,6 +179,46 @@ function bounds(annotation: Pick<MarkupAnnotation, "points" | "kind">): { x: num
     w: Math.max(0.012, Math.max(...xs) - x),
     h: Math.max(0.012, Math.max(...ys) - y),
   };
+}
+
+function MarkupTextBox({
+  box,
+  text,
+  color,
+  fontSize,
+  kind,
+}: {
+  box: NormalizedMarkupBox;
+  text: string | null | undefined;
+  color: string;
+  fontSize: number;
+  kind: "sticky_note" | "free_text" | "callout";
+}) {
+  const sticky = kind === "sticky_note";
+  return (
+    <foreignObject x={box.x} y={box.y} width={box.w} height={box.h} pointerEvents="none" overflow="hidden">
+      <div
+        style={{
+          boxSizing: "border-box",
+          width: "100%",
+          height: "100%",
+          overflow: "hidden",
+          padding: sticky ? "3px 4px" : "2px 4px",
+          color: sticky ? "#482c00" : color,
+          fontFamily: "Arial, sans-serif",
+          fontSize: `${Math.max(8, Math.min(36, fontSize * (sticky ? 0.75 : 1)))}px`,
+          lineHeight: 1.15,
+          direction: "rtl",
+          textAlign: "right",
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+          wordBreak: "break-word",
+        }}
+      >
+        {text || "نظر"}
+      </div>
+    </foreignObject>
+  );
 }
 
 function colorFor(annotation: Pick<MarkupAnnotation, "color">): string {
@@ -1007,7 +1049,6 @@ export function MarkupEditor({
                 pointerEvents: isTextTool(tool) ? "none" as const : "auto" as const,
               };
               const p = annotation.points;
-              const textSize = Math.max(0.012, Math.min(0.06, (annotation.font_size ?? fontSize) / 600));
               if (annotation.kind === "freehand") {
                 return <polyline key={annotation.id} {...common} className={animationClass} points={p.map((item) => `${item.x},${item.y}`).join(" ")} fill="none" />;
               }
@@ -1031,8 +1072,8 @@ export function MarkupEditor({
                   {annotation.kind === "ellipse" ? <ellipse {...common} cx={box.x + box.w / 2} cy={box.y + box.h / 2} rx={box.w / 2} ry={box.h / 2} fill="none" /> : null}
                   {annotation.kind === "revision_cloud" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="none" strokeDasharray="0.012 0.006" /> : null}
                   {annotation.kind === "sticky_note" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="#fff2a8" fillOpacity={0.9} /> : null}
-                  {annotation.kind === "free_text" ? <text {...common} x={box.x} y={box.y + box.h * 0.8} fontSize={textSize} fill={stroke} stroke="none">{annotation.text || "نظر"}</text> : null}
-                  {annotation.kind === "sticky_note" ? <text x={box.x + 0.006} y={box.y + Math.min(0.03, box.h * 0.55)} fontSize={textSize * 0.75} fill="#482c00" stroke="none">{annotation.text || "نظر"}</text> : null}
+                  {annotation.kind === "free_text" ? <MarkupTextBox box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="free_text" /> : null}
+                  {annotation.kind === "sticky_note" ? <MarkupTextBox box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="sticky_note" /> : null}
                   {annotation.kind === "callout" ? (
                     <>
                       {(() => {
@@ -1041,10 +1082,25 @@ export function MarkupEditor({
                         return <line {...common} x1={anchor.x} y1={anchor.y} x2={target.x} y2={target.y} markerEnd="url(#markup-arrow-head)" />;
                       })()}
                       <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="white" fillOpacity={0.92} />
-                      <text x={box.x + 0.006} y={box.y + box.h * 0.65} fontSize={textSize} fill={stroke} stroke="none">{annotation.text || "نظر"}</text>
+                      <MarkupTextBox box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="callout" />
                     </>
                   ) : null}
-                  {selected && !readOnly ? <rect data-resize-handle="true" x={box.x + box.w - 0.012} y={box.y + box.h - 0.012} width="0.024" height="0.024" fill="white" stroke={stroke} strokeWidth={width} pointerEvents={isTextTool(tool) ? "none" : "auto"} /> : null}
+                  {selected && !readOnly ? (
+                    <rect
+                      data-resize-handle="true"
+                      x={box.x + box.w - 0.012}
+                      y={box.y + box.h - 0.012}
+                      width="0.024"
+                      height="0.024"
+                      fill="white"
+                      stroke={stroke}
+                      strokeWidth={width}
+                      pointerEvents={isTextTool(tool) ? "none" : "auto"}
+                      style={{ cursor: "nwse-resize" }}
+                    >
+                      <title>برای تغییر اندازه، دستگیره گوشه را بکشید</title>
+                    </rect>
+                  ) : null}
                 </g>
               );
             })}

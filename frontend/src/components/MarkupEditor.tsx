@@ -671,12 +671,24 @@ export function MarkupEditor({
     gestureHistoryRecordedRef.current = false;
 
     if (tool === "pan") {
-      panRef.current = {
-        x: event.clientX,
-        y: event.clientY,
-        scrollLeft: hostRef.current.scrollLeft,
-        scrollTop: hostRef.current.scrollTop,
-      };
+      const annotationId = target.closest("[data-markup-id]")?.getAttribute("data-markup-id");
+      const current = annotationId ? annotationsRef.current.find((annotation) => annotation.id === annotationId) : null;
+      if (current) {
+        select(current.id);
+        drawingRef.current = {
+          start: point,
+          points: current.points,
+          sourceId: current.id,
+          mode: target.closest("[data-resize-handle]") ? "resize" : "move",
+        };
+      } else {
+        panRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+          scrollLeft: hostRef.current.scrollLeft,
+          scrollTop: hostRef.current.scrollTop,
+        };
+      }
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
@@ -1117,7 +1129,12 @@ export function MarkupEditor({
                   {annotation.kind === "ellipse" ? <ellipse {...common} cx={box.x + box.w / 2} cy={box.y + box.h / 2} rx={box.w / 2} ry={box.h / 2} fill="none" /> : null}
                   {annotation.kind === "revision_cloud" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="none" strokeDasharray="0.012 0.006" /> : null}
                   {annotation.kind === "sticky_note" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="#fff2a8" fillOpacity={0.9} /> : null}
-                  {annotation.kind === "free_text" ? <MarkupTextBox viewport={viewport} box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="free_text" /> : null}
+                  {annotation.kind === "free_text" ? (
+                    <>
+                      <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="transparent" stroke="none" />
+                      <MarkupTextBox viewport={viewport} box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="free_text" />
+                    </>
+                  ) : null}
                   {annotation.kind === "sticky_note" ? <MarkupTextBox viewport={viewport} box={box} text={annotation.text} color={stroke} fontSize={annotation.font_size ?? fontSize} kind="sticky_note" /> : null}
                   {annotation.kind === "callout" ? (
                     <>

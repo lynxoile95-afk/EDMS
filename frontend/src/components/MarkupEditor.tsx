@@ -76,7 +76,7 @@ const TOOL_LABELS: Record<Tool, string> = {
 const TOOL_GROUPS: Tool[][] = [
   ["select", "pan"],
   ["highlight"],
-  ["free_text", "callout"],
+  ["sticky_note", "free_text", "callout"],
   ["rectangle", "ellipse", "revision_cloud", "arrow", "freehand", "eraser"],
 ];
 const TEXT_TOOLS: TextTool[] = ["highlight", "underline", "strikethrough"];
@@ -254,6 +254,7 @@ export function MarkupEditor({
   const [documentPageCount, setDocumentPageCount] = useState(0);
   const [page, setPage] = useState(initialPage);
   const [tool, setTool] = useState<Tool>(readOnly ? "select" : "select");
+  const [stylesOpen, setStylesOpen] = useState(false);
   const [color, setColor] = useState(DEFAULT_MARKUP_COLOR);
   const [strokeWidth, setStrokeWidth] = useState(DEFAULT_MARKUP_STROKE_WIDTH);
   const [fontSize, setFontSize] = useState(16);
@@ -789,6 +790,7 @@ export function MarkupEditor({
         return;
       }
       if (event.key === "Escape") {
+        setStylesOpen(false);
         drawingRef.current = null;
         textGestureRef.current = null;
         panRef.current = null;
@@ -820,11 +822,61 @@ export function MarkupEditor({
                 icon={<ToolIcon tool={item} />}
                 label={TOOL_LABELS[item]}
                 active={tool === item}
-                onClick={() => setTool(item)}
+                onClick={() => {
+                  setTool(item);
+                  setStylesOpen(false);
+                }}
               />
             ))}
           </div>
         )) : <span className="flex items-center px-2 font-bold text-[#5c6b78]">جلسه ثبت نهایی‌شده — فقط خواندنی</span>}
+        {!readOnly ? (
+          <div className="relative flex items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1">
+            <RibbonButton
+              icon={<IconStickyNote className="h-3.5 w-3.5" style={{ color }} />}
+              label="سبک کامنت"
+              active={stylesOpen}
+              onClick={() => setStylesOpen((open) => !open)}
+            />
+            {stylesOpen ? (
+              <div
+                className="absolute right-0 top-full z-50 mt-1 w-[17rem] rounded border border-[#9eabb7] bg-white p-1.5 text-[#33475b] shadow-xl"
+                role="dialog"
+                aria-label="سبک‌های کامنت"
+                dir="rtl"
+              >
+                <div className="flex items-center justify-between border-b border-[#d3d9de] px-1 pb-1 text-[9px] font-bold">
+                  <span>سبک‌های کامنت</span>
+                  <span className="flex items-center gap-1 font-normal text-[#687887]">
+                    <IconStickyNote className="h-4 w-4" style={{ color }} />
+                    <span>یادداشت</span>
+                  </span>
+                </div>
+                <div className="grid grid-cols-4 gap-1 p-1" role="menu" aria-label="انتخاب رنگ یادداشت">
+                  {MARKUP_COLOR_PALETTE.map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={color.toLowerCase() === item.value}
+                      className={`flex min-h-[3.35rem] flex-col items-center justify-center gap-0.5 rounded border px-1 py-0.5 text-[8px] transition-colors hover:border-[#1f4e79] hover:bg-[#eef5fa] focus:outline-none focus:ring-2 focus:ring-[#1f4e79] ${color.toLowerCase() === item.value ? "border-[#1f4e79] bg-[#dbe8f3] font-bold" : "border-[#d3d9de]"}`}
+                      title={`سبک یادداشت: ${item.label}`}
+                      onClick={() => {
+                        changeColor(item.value);
+                        setTool("sticky_note");
+                        setStylesOpen(false);
+                      }}
+                    >
+                      <IconStickyNote className="h-6 w-6" style={{ color: item.value }} />
+                      <span className="whitespace-nowrap">{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="border-t border-[#e4e8eb] px-1 pt-1 text-[8px] text-[#687887]">انتخاب سبک، ابزار یادداشت را فعال می‌کند.</p>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {!readOnly ? (
           <div className="flex items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1">
             <RibbonButton icon={<IconUndo className="h-3.5 w-3.5" />} label="برگرداندن" disabled={!historyRef.current.length} onClick={undo} />

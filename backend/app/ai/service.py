@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.adapters import AIAdapter, ConnectionResult, ProviderCredential, build_adapter
 from app.ai.crypto import decrypt_secret, encrypt_secret, mask_secret
+from app.ai.endpoints import has_remote_consent, provider_is_local
 from app.ai.registry import get_provider
 from app.core.config import settings
 from app.models import AICredential, AISettings
@@ -211,7 +212,7 @@ def credential_summary(row: AICredential) -> dict[str, Any]:
         "isActive": bool(row.is_active),
         "isFallback": bool(row.is_fallback),
         "remoteConsent": bool(row.remote_consent),
-        "isLocal": bool(catalog.get("isLocal", False)),
+        "isLocal": provider_is_local(row.provider_id, row.base_url),
         "visionCapableModels": catalog.get("visionCapableModels", []),
     }
 
@@ -247,6 +248,8 @@ def validate_provider_input(
     if catalog is None:
         raise ValueError("سرویس‌دهنده انتخاب‌شده در فهرست پشتیبانی‌شده نیست.")
     normalized_url = _validate_url(base_url)
+    if provider_id == "ollama" and not provider_is_local(provider_id, normalized_url) and urlparse(normalized_url).scheme != "https":
+        raise ValueError("برای Ollama ابری از آدرس HTTPS استفاده کنید.")
     if require_key and catalog.get("keyRequired") and not api_key.strip():
         raise ValueError("برای این سرویس‌دهنده وارد کردن API Key الزامی است.")
     if not model.strip():
@@ -295,6 +298,10 @@ def save_credential(
         require_key=False,
     )
     provider_id = catalog["id"]
+    # Never trust a client-supplied marker; it records an explicit consent on save.
+    clean_extra.pop("ollama_cloud_consent", None)
+    if provider_id == "ollama" and not provider_is_local(provider_id, clean_url) and remote_consent:
+        clean_extra["ollama_cloud_consent"] = True
     old_key = decrypt_secret(row.api_key_encrypted) if row and row.api_key_encrypted else ""
     effective_key = old_key if api_key is None else api_key.strip()
     if catalog.get("keyRequired") and not effective_key:
@@ -327,6 +334,8 @@ def save_credential(
         row.last_test_latency_ms = None
         row.last_test_status = None
         row.last_test_message = None
+    if (is_active or is_fallback or row.is_active or row.is_fallback) and not has_remote_consent(row.provider_id, row.base_url, row.remote_consent, row.extra or {}):
+        raise PermissionError("برای فعال کردن سرویس ابری، تأیید ارسال به سرور عمومی الزامی است.")
     db.flush()
     if is_active or is_fallback:
         prefs = _settings_row(db)
@@ -350,9 +359,9 @@ def set_active_credentials(db: Session, *, active_id: uuid.UUID | None, fallback
         raise ValueError("Credential جایگزین پیدا نشد.")
     if active and fallback and active.id == fallback.id:
         raise ValueError("Credential فعال و جایگزین باید متفاوت باشند.")
-    if active and not bool((get_provider(active.provider_id) or {}).get("isLocal", False)) and not active.remote_consent:
+    if active and not has_remote_consent(active.provider_id, active.base_url, active.remote_consent, active.extra or {}):
         raise PermissionError("برای فعال کردن سرویس ابری، تأیید ارسال به سرور عمومی الزامی است.")
-    if fallback and not bool((get_provider(fallback.provider_id) or {}).get("isLocal", False)) and not fallback.remote_consent:
+    if fallback and not has_remote_consent(fallback.provider_id, fallback.base_url, fallback.remote_consent, fallback.extra or {}):
         raise PermissionError("برای فعال کردن سرویس جایگزین ابری، تأیید ارسال به سرور عمومی الزامی است.")
     for row in db.execute(select(AICredential)).scalars():
         row.is_active = bool(active and row.id == active.id)
@@ -420,4 +429,4 @@ def result_payload(result: ConnectionResult) -> dict[str, Any]:
 
 
 def active_provider_is_remote(runtime: RuntimeCredential) -> bool:
-    return not bool((get_provider(runtime.provider_id) or {}).get("isLocal", False))
+    return not provider_is_local(runtime.provider_id, runtime.base_url)

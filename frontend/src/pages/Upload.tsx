@@ -20,7 +20,7 @@ interface AICredential {
   name: string;
   baseUrl: string;
   model: string;
-  extra: Record<string, string>;
+  extra: Record<string, string | boolean>;
   keyMasked: string | null;
   keySet: boolean;
   status: "untested" | "connected" | "failed" | string;
@@ -56,10 +56,22 @@ interface AIForm {
   isActive: boolean;
 }
 
+function isLocalAIEndpoint(providerId: string, baseUrl: string): boolean {
+  const provider = providerById(providerId);
+  if (!provider.isLocal) return false;
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase().replace(/\.$/, "");
+    if (["localhost", "ollama", "vlm", "[::1]"].includes(host) || /\.(localhost|local|internal)$/.test(host)) return true;
+    const parts = host.split(".").map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+    return parts[0] === 10 || parts[0] === 127 || (parts[0] === 192 && parts[1] === 168) || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31);
+  } catch { return false; }
+}
+
 function newAIForm(providerId: string, credential?: AICredential | null): AIForm {
   const provider = providerById(providerId);
   const extra = Object.fromEntries(
-    (provider.extraFields ?? []).map((field) => [field.id, credential?.extra?.[field.id] ?? field.default ?? ""]),
+    (provider.extraFields ?? []).map((field) => [field.id, String(credential?.extra?.[field.id] ?? field.default ?? "")]),
   );
   return {
     provider: provider.id,
@@ -68,7 +80,7 @@ function newAIForm(providerId: string, credential?: AICredential | null): AIForm
     apiKey: "",
     model: credential?.model ?? provider.defaultModel,
     extra,
-    remoteConsent: credential?.remoteConsent ?? provider.isLocal,
+    remoteConsent: credential?.remoteConsent === true && (provider.id !== "ollama" || credential.extra?.ollama_cloud_consent === true),
     isActive: credential?.isActive ?? false,
   };
 }
@@ -215,7 +227,7 @@ export function UploadPage() {
       setAiError(`فیلد «${missing.label}» الزامی است.`);
       return false;
     }
-    if (aiForm.isActive && !provider.isLocal && !aiForm.remoteConsent) {
+    if (aiForm.isActive && !isLocalAIEndpoint(aiForm.provider, aiForm.baseUrl) && !aiForm.remoteConsent) {
       setAiError("برای فعال کردن سرویس ابری، ابتدا تأیید ارسال به سرور عمومی را انتخاب کنید.");
       return false;
     }
@@ -743,7 +755,7 @@ export function UploadPage() {
                         className="ltr"
                         value={aiForm.baseUrl}
                         readOnly={!selectedAIProvider.baseUrlEditable}
-                        onChange={(event) => setAiForm((current) => ({ ...current, baseUrl: event.target.value }))}
+                        onChange={(event) => setAiForm((current) => ({ ...current, baseUrl: event.target.value, remoteConsent: current.baseUrl === event.target.value ? current.remoteConsent : false }))}
                       />
                       {!selectedAIProvider.baseUrlEditable ? <span className="mt-0.5 block text-[9px] text-[#64748b]">آدرس این سرویس ثابت است.</span> : null}
                     </label>
@@ -820,11 +832,11 @@ export function UploadPage() {
                     </label>
                   </div>
 
-                  {!selectedAIProvider.isLocal ? (
+                  {!isLocalAIEndpoint(aiForm.provider, aiForm.baseUrl) ? (
                     <label className="flex items-start gap-2 border border-[#c9a2a2] bg-[#fbeeee] px-2 py-1.5">
                       <input type="checkbox" className="mt-1" checked={aiForm.remoteConsent} onChange={(event) => setAiForm((current) => ({ ...current, remoteConsent: event.target.checked }))} />
                       <span className="text-[10px] leading-5 text-[#8a2020]">
-                        تأیید ارسال به سرور عمومی: با فعال بودن این گزینه، برش کادر مشخصات مدارک می‌تواند به سرویس بیرونی ارسال شود. برای قراردادن این Provider به‌عنوان Active الزامی است؛ Providerهای محلی مانند Ollama و LM Studio به این تأیید نیاز ندارند.
+                        تأیید ارسال به سرور عمومی: متن پرسش‌ها، بخش‌هایی از سند و برش کادر مشخصات مدارک ممکن است به سرویس بیرونی ارسال شود. برای فعال‌سازی سرویس ابری این تأیید الزامی است.
                       </span>
                     </label>
                   ) : null}

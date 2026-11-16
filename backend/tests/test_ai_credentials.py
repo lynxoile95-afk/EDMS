@@ -264,3 +264,67 @@ def test_unsaved_test_returns_safe_failure_reason(client: TestClient, users, mon
     assert payload["status"] == 401
     assert "نامعتبر" in payload["message"]
     assert "wrong-secret" not in response.text
+
+
+def test_ollama_headers_include_key_only_when_supplied():
+    FakeClient.calls = []
+    FakeClient.response = FakeResponse({"models": [{"name": "model"}]})
+    for key in ("test-only-secret", ""):
+        result = build_adapter(ProviderCredential(
+            provider_id="ollama", api_type="ollama", base_url="https://ollama.com",
+            model="model", api_key=key,
+        ), FakeClient).test_connection()
+        assert result.ok
+        headers = FakeClient.calls[-1]["headers"]
+        assert headers.get("Authorization") == ("Bearer test-only-secret" if key else None)
+        assert key == "" or key not in json.dumps(asdict(result))
+
+
+def test_ollama_cloud_consent_and_legacy_local_behavior(client: TestClient, users, db):
+    from app.ai.endpoints import has_remote_consent, provider_is_local
+    from app.extraction.vlm import VLMExtractor
+    from app.ai.service import _row_runtime
+
+    assert provider_is_local("ollama", "http://localhost:11434")
+    assert provider_is_local("ollama", "http://172.16.0.2:11434")
+    assert not provider_is_local("ollama", "https://ollama.com")
+    assert not provider_is_local("ollama", "http://172.200.1.1")
+    assert not has_remote_consent("ollama", "https://ollama.com", True, {})
+
+    admin = auth_headers(client, "admin@edms-test.com")
+    payload = {"provider": "ollama", "name": "Cloud", "base_url": "https://ollama.com",
+               "model": "model", "api_key": "test-only-secret"}
+    saved = client.post("/api/v1/ai/credentials", headers=admin, json=payload)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["isLocal"] is False
+    denied = client.put("/api/v1/ai/active", headers=admin, json={"credential_id": saved.json()["id"]})
+    assert denied.status_code == 400
+    row = db.get(AICredential, uuid.UUID(saved.json()["id"]))
+    row.remote_consent = True  # Legacy flag was previously auto-set for local Ollama.
+    db.commit()
+    assert not VLMExtractor._runtime_is_trusted(_row_runtime(row))
+    denied = client.put("/api/v1/ai/active", headers=admin, json={"credential_id": str(row.id)})
+    assert denied.status_code == 400
+    saved = client.post("/api/v1/ai/credentials", headers=admin, json={**payload, "remote_consent": True, "is_active": True})
+    assert saved.status_code == 200, saved.text
+    db.refresh(row)
+    assert VLMExtractor._runtime_is_trusted(_row_runtime(row))
+    assert row.extra["ollama_cloud_consent"] is True
+    denied = client.post("/api/v1/ai/credentials", headers=admin, json={**payload, "remote_consent": False})
+    assert denied.status_code == 400
+
+
+def test_ollama_cloud_denies_file_qa_without_explicit_consent(monkeypatch):
+    import pytest
+
+    from app.ai.service import RuntimeCredential
+    from app.search import file_qa
+
+    runtime = RuntimeCredential(
+        credential_id=None, provider_id="ollama", api_type="ollama", base_url="https://ollama.com",
+        model="model", api_key="test-key", extra={}, remote_consent=True, enabled=True,
+    )
+    monkeypatch.setattr(file_qa, "active_runtime", lambda _db: runtime)
+    monkeypatch.setattr(file_qa.settings, "file_qa_model", "")
+    with pytest.raises(file_qa.FileQAUnavailable, match="تأیید"):
+        file_qa.answer_from_hits("پرسش", [object()], None)

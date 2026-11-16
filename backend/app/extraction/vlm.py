@@ -124,18 +124,16 @@ class VLMExtractor:
 
     @staticmethod
     def _is_local_runtime(runtime) -> bool:
-        from app.ai.registry import get_provider
+        from app.ai.endpoints import host_is_local
 
-        host = runtime.base_url.split("//")[-1].split("/")[0].split(":")[0]
-        catalog = get_provider(runtime.provider_id) or {}
-        return bool(catalog.get("isLocal")) or host in {"localhost", "127.0.0.1", "vlm", "ollama", "0.0.0.0"} or host.startswith(
-            ("10.", "192.168.", "172.", "vlm")
-        ) or host.endswith(".local") or host.endswith(".internal")
+        return host_is_local(runtime.base_url)
 
     @classmethod
     def _runtime_is_trusted(cls, runtime) -> bool:
         """Local providers are safe; cloud providers require explicit consent."""
-        return cls._is_local_runtime(runtime) or bool(runtime.remote_consent)
+        from app.ai.endpoints import has_remote_consent
+
+        return cls._is_local_runtime(runtime) or has_remote_consent(runtime.provider_id, runtime.base_url, runtime.remote_consent, runtime.extra)
 
     @staticmethod
     def _runtime_has_key(runtime) -> bool:

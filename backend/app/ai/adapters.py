@@ -434,7 +434,10 @@ class AzureOpenAIAdapter(OpenAICompatibleAdapter):
 
 class OllamaAdapter(AIAdapter):
     def _headers(self) -> dict[str, str]:
-        return {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
+        if self.credential.api_key:
+            headers["Authorization"] = f"Bearer {self.credential.api_key}"
+        return headers
 
     def grounded_text(
         self,

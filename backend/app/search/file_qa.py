@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from app.ai.adapters import ProviderCredential, build_adapter
+from app.ai.endpoints import has_remote_consent, host_is_local
 from app.ai.registry import get_provider
 from app.ai.service import active_runtime
 from app.core.config import settings
@@ -46,6 +47,8 @@ def answer_from_hits(question: str, hits: list[RAGHit], db) -> str:
     if not model:
         raise FileQAUnavailable("مدل Credential فعال برای پاسخ‌گویی تنظیم نشده است.")
     catalog = get_provider(runtime.provider_id) or {}
+    if not host_is_local(runtime.base_url) and not has_remote_consent(runtime.provider_id, runtime.base_url, runtime.remote_consent, runtime.extra):
+        raise FileQAUnavailable("برای استفاده از سرویس ابری، تأیید ارسال داده الزامی است.")
     if not runtime.enabled:
         raise FileQAUnavailable("Credential فعال هوش مصنوعی برای پاسخ‌گویی فعال نیست.")
     if catalog.get("keyRequired", True) and not runtime.api_key:

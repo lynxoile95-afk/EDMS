@@ -157,6 +157,32 @@ function rectanglePoints(start: MarkupPoint, end: MarkupPoint): MarkupPoint[] {
   ];
 }
 
+// Measure with the same font, wrapping and padding as the note displayed on the page.
+export function sizeStickyNote(points: MarkupPoint[], text: string, fontSize: number, viewport: { width: number; height: number }): MarkupPoint[] {
+  const pageWidth = Math.max(1, viewport.width);
+  const pageHeight = Math.max(1, viewport.height);
+  const [start, end] = rectanglePoints(points[0], points[1]);
+  const width = Math.min(pageWidth, Math.max((end.x - start.x) * pageWidth, Math.min(300, pageWidth * 0.6)));
+  const measure = document.createElement("div");
+  Object.assign(measure.style, {
+    position: "fixed", left: "-10000px", top: "0", visibility: "hidden", pointerEvents: "none",
+    boxSizing: "border-box", width: `${width}px`, height: "auto", padding: "3px 4px",
+    fontFamily: "Arial, sans-serif", fontSize: `${Math.max(8, Math.min(36, fontSize * 0.75))}px`,
+    lineHeight: "1.15", direction: "rtl", textAlign: "right", whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere", wordBreak: "break-word",
+  });
+  measure.textContent = text;
+  document.body.appendChild(measure);
+  const measuredHeight = measure.getBoundingClientRect().height;
+  measure.remove();
+  const height = Math.min(pageHeight, Math.max((end.y - start.y) * pageHeight, measuredHeight + 2, 24));
+  const w = width / pageWidth;
+  const h = height / pageHeight;
+  const x = Math.min(start.x, 1 - w);
+  const y = Math.min(start.y, 1 - h);
+  return [{ x, y }, { x: x + w, y: y + h }];
+}
+
 function pointRectangles(points: MarkupPoint[]): MarkupPoint[][] {
   if (points.length >= 4 && points.length % 2 === 0) {
     return Array.from({ length: points.length / 2 }, (_, index) => points.slice(index * 2, index * 2 + 2));
@@ -809,6 +835,9 @@ export function MarkupEditor({
         return;
       }
       created.text = entered.trim() || "نظر";
+      if (tool === "sticky_note") {
+        created.points = sizeStickyNote(created.points, created.text, fontSize, viewport);
+      }
     }
     publish([...annotationsRef.current, created]);
     setLastCreatedId(created.id);

@@ -1,6 +1,7 @@
 /** Tiny inline SVG icon set — no icon font, no network, RTL-safe. */
 
 import type { SVGProps } from "react";
+import type { MarkupKind } from "@/lib/types";
 
 type IconProps = SVGProps<SVGSVGElement>;
 
@@ -218,6 +219,12 @@ export const IconCursor = (p: IconProps) => (
   </svg>
 );
 
+export const IconHand = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M8 11V5a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v6-3a1.5 1.5 0 0 1 3 0v5c0 5-3 8-7 8h-1c-3 0-5-2-6-4l-2-4a1.5 1.5 0 0 1 2.7-1.3z" />
+  </svg>
+);
+
 export const IconStickyNote = (p: IconProps) => (
   <svg {...base} {...p}>
     <path d="M5 3h14v13l-5 5H5z" />
@@ -229,6 +236,54 @@ export const IconHighlight = (p: IconProps) => (
   <svg {...base} {...p}>
     <path d="M5 16l8-8 4 4-8 8H5z" />
     <path d="M13 8l2-2 4 4-2 2M4 21h16" />
+  </svg>
+);
+
+export const IconUnderline = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M6 4v6a6 6 0 0 0 12 0V4" />
+    <path d="M4 20h16" />
+  </svg>
+);
+
+export const IconStrikethrough = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M6 7a4 4 0 0 1 7.5-2M18 17a4 4 0 0 1-7.5 2" />
+    <path d="M4 12h16" />
+  </svg>
+);
+
+export const IconCallout = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4 4h15v10H9l-5 4z" />
+    <path d="M8 8h7M8 11h4" />
+  </svg>
+);
+
+export const IconEllipse = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <ellipse cx="12" cy="12" rx="8" ry="6" />
+  </svg>
+);
+
+export const IconEraser = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5 15l8-10a2 2 0 0 1 3-.2l3.2 3.2a2 2 0 0 1-.1 2.8l-7.4 7.4H7z" />
+    <path d="M13 18h7" />
+  </svg>
+);
+
+export const IconUndo = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M9 7H4v5" />
+    <path d="M4 12c2-5 10-7 15-3 2 1.5 2 4.5 0 6" />
+  </svg>
+);
+
+export const IconRedo = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M15 7h5v5" />
+    <path d="M20 12c-2-5-10-7-15-3-2 1.5-2 4.5 0 6" />
   </svg>
 );
 
@@ -292,3 +347,19 @@ export const IconPerson = (p: IconProps) => (
     <path d="M5 20a7 7 0 0 1 14 0" />
   </svg>
 );
+
+export function MarkupKindIcon({ kind, ...props }: { kind: MarkupKind } & IconProps) {
+  switch (kind) {
+    case "sticky_note": return <IconStickyNote {...props} />;
+    case "highlight": return <IconHighlight {...props} />;
+    case "underline": return <IconUnderline {...props} />;
+    case "strikethrough": return <IconStrikethrough {...props} />;
+    case "rectangle": return <IconRectangle {...props} />;
+    case "ellipse": return <IconEllipse {...props} />;
+    case "revision_cloud": return <IconCloud {...props} />;
+    case "arrow": return <IconArrow {...props} />;
+    case "free_text": return <IconText {...props} />;
+    case "callout": return <IconCallout {...props} />;
+    case "freehand": return <IconPen {...props} />;
+  }
+}

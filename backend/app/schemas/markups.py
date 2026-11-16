@@ -12,10 +12,14 @@ from pydantic import BaseModel, Field, field_validator
 MarkupKind = Literal[
     "sticky_note",
     "highlight",
+    "underline",
+    "strikethrough",
     "rectangle",
+    "ellipse",
     "revision_cloud",
     "arrow",
     "free_text",
+    "callout",
     "freehand",
 ]
 ReplyStatus = Literal["open", "closed", "accepted", "rejected", "resolved"]
@@ -35,7 +39,7 @@ class MarkupAnnotationInput(BaseModel):
     color: str = Field(default="#d64545", pattern=r"^#[0-9A-Fa-f]{6}$")
     # Stored in the feature-owned appearance table so existing markup columns
     # and the source document schema remain untouched.
-    stroke_width: float = Field(default=2.5, ge=1, le=6)
+    stroke_width: float = Field(default=2.5, ge=1, le=10)
 
     @field_validator("text")
     @classmethod
@@ -81,7 +85,7 @@ class MarkupAnnotationOut(BaseModel):
     points: list[MarkupPoint]
     text: str | None = None
     color: str
-    stroke_width: float = Field(default=2.5, ge=1, le=6)
+    stroke_width: float = Field(default=2.5, ge=1, le=10)
     author_id: uuid.UUID | None = None
     author_name: str | None = None
     created_at: datetime

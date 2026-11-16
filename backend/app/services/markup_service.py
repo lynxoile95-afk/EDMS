@@ -46,7 +46,7 @@ from app.services.storage import build_key, get_storage
 
 DEFAULT_MARKUP_STROKE_WIDTH = 2.5
 MIN_MARKUP_STROKE_WIDTH = 1.0
-MAX_MARKUP_STROKE_WIDTH = 6.0
+MAX_MARKUP_STROKE_WIDTH = 10.0
 
 
 def _safe_stroke_width(value: float | None) -> float:

@@ -46,7 +46,7 @@ def _stroke_width(value: Any, default: float = 2.5) -> float:
         width = float(value if value is not None else default)
     except (TypeError, ValueError):
         return default
-    return min(max(width, 1.0), 6.0)
+    return min(max(width, 1.0), 10.0)
 
 
 def _rect(page: Any, points: list[Any]) -> Any:
@@ -80,6 +80,13 @@ def _page_points(page: Any, points: list[Any]) -> list[Any]:
     ]
 
 
+def _point_rects(page: Any, points: list[Any]) -> list[Any]:
+    """Turn normalized point pairs into independent text-selection rectangles."""
+    if len(points) >= 4 and len(points) % 2 == 0:
+        return [_rect(page, points[index : index + 2]) for index in range(0, len(points), 2)]
+    return [_rect(page, points)]
+
+
 def _shape(text: str) -> str:
     try:
         import arabic_reshaper
@@ -93,23 +100,52 @@ def _shape(text: str) -> str:
 def _insert_text(page: Any, rect: Any, text: str, color: tuple[float, float, float], *, size: float = 10) -> None:
     if not text:
         return
-    # PyMuPDF can embed the bundled font in the flattened copy.  A short
-    # fallback keeps rendering usable in a minimal test image.
+    # PyMuPDF can embed the bundled font in the flattened copy.  Fit short
+    # Persian notes into small callout/note boxes instead of silently dropping
+    # the textbox when the requested size is too wide or tall.
+    requested = max(5.0, min(float(size), 48.0))
     kwargs: dict[str, Any] = {
         "fontfile": str(FONT_PATH) if FONT_PATH.exists() else None,
-        "fontsize": max(5, min(size, 48)),
-        "fontname": "helv",
+        "fontsize": requested,
+        "fontname": "EDMSMarkupFont" if FONT_PATH.exists() else "helv",
         "color": color,
         "align": 0,
         "overlay": True,
     }
     if kwargs["fontfile"] is None:
         kwargs.pop("fontfile")
+    shaped = _shape(text)
+    for candidate in sorted({requested, 16.0, 14.0, 12.0, 10.0, 8.0, 6.0, 5.0}, reverse=True):
+        if candidate > requested:
+            continue
+        kwargs["fontsize"] = candidate
+        try:
+            remaining = page.insert_textbox(rect, shaped, **kwargs)
+            if remaining >= 0:
+                return
+        except Exception:
+            break
+    # A final unbounded insert keeps the text visible even when a legacy
+    # PyMuPDF/font combination rejects a textbox rectangle.
+    fallback = dict(kwargs)
+    fallback["fontsize"] = 5.0
     try:
-        page.insert_textbox(rect, _shape(text), **kwargs)
+        page.insert_text((rect.x0 + 2, rect.y0 + 7), shaped, **fallback)
     except Exception:
-        kwargs.pop("fontfile", None)
-        page.insert_textbox(rect, text, **kwargs)
+        fallback.pop("fontfile", None)
+        fallback["fontname"] = "helv"
+        page.insert_text((rect.x0 + 2, rect.y0 + 7), text, **fallback)
+
+
+def _draw_arrow(page: Any, start: Any, end: Any, color: tuple[float, float, float], width: float) -> None:
+    import fitz
+
+    page.draw_line(start, end, color=color, width=width, overlay=True)
+    angle = math.atan2(end.y - start.y, end.x - start.x)
+    length = max(8, min(20, math.hypot(end.x - start.x, end.y - start.y) / 5 or 10))
+    wing_a = fitz.Point(end.x - length * math.cos(angle - 0.48), end.y - length * math.sin(angle - 0.48))
+    wing_b = fitz.Point(end.x - length * math.cos(angle + 0.48), end.y - length * math.sin(angle + 0.48))
+    page.draw_polyline([wing_a, end, wing_b], color=color, width=width, overlay=True)
 
 
 def _draw_annotation(page: Any, annotation: Any) -> None:
@@ -124,7 +160,18 @@ def _draw_annotation(page: Any, annotation: Any) -> None:
     text = str(annotation.get("text") or "")
     try:
         if kind == "highlight":
-            page.draw_rect(rect, color=color, fill=color, width=line_width, fill_opacity=0.28, overlay=True)
+            for item_rect in _point_rects(page, points):
+                page.draw_rect(item_rect, color=color, fill=color, width=line_width, fill_opacity=0.28, overlay=True)
+        elif kind in {"underline", "strikethrough"}:
+            for item_rect in _point_rects(page, points):
+                y = item_rect.y1 if kind == "underline" else item_rect.y0 + item_rect.height * 0.52
+                page.draw_line(
+                    fitz.Point(item_rect.x0, y),
+                    fitz.Point(item_rect.x1, y),
+                    color=color,
+                    width=line_width,
+                    overlay=True,
+                )
         elif kind in {"rectangle", "revision_cloud"}:
             if kind == "rectangle":
                 page.draw_rect(rect, color=color, width=line_width, overlay=True)
@@ -143,17 +190,23 @@ def _draw_annotation(page: Any, annotation: Any) -> None:
                     page.draw_circle(fitz.Point(rect.x0, y), radius, color=color, width=line_width, overlay=True)
                     page.draw_circle(fitz.Point(rect.x1, y), radius, color=color, width=line_width, overlay=True)
                     y += radius * 1.7
+        elif kind == "ellipse":
+            page.draw_oval(rect, color=color, width=line_width, overlay=True)
         elif kind == "arrow":
             if len(page_points) >= 2:
                 start, end = page_points[0], page_points[-1]
             else:
                 start, end = fitz.Point(rect.x0, rect.y0), fitz.Point(rect.x1, rect.y1)
-            page.draw_line(start, end, color=color, width=line_width, overlay=True)
-            angle = math.atan2(end.y - start.y, end.x - start.x)
-            length = max(8, min(20, rect.width / 5 or 10))
-            wing_a = fitz.Point(end.x - length * math.cos(angle - 0.48), end.y - length * math.sin(angle - 0.48))
-            wing_b = fitz.Point(end.x - length * math.cos(angle + 0.48), end.y - length * math.sin(angle + 0.48))
-            page.draw_polyline([wing_a, end, wing_b], color=color, width=line_width, overlay=True)
+            _draw_arrow(page, start, end, color, line_width)
+        elif kind == "callout":
+            # Callout points are [leader anchor, box top-left, box bottom-right].
+            box_points = points[1:] if len(points) >= 3 else points
+            box = _rect(page, box_points)
+            anchor = page_points[0] if page_points else fitz.Point(box.x0, box.y0)
+            target = fitz.Point(min(max(anchor.x, box.x0), box.x1), min(max(anchor.y, box.y0), box.y1))
+            _draw_arrow(page, anchor, target, color, line_width)
+            page.draw_rect(box, color=color, fill=(1.0, 1.0, 1.0), width=line_width, fill_opacity=0.92, overlay=True)
+            _insert_text(page, box + (4, 3, -4, -3), text or "نظر", color, size=max(8, min(18, box.height * 0.55)))
         elif kind == "freehand":
             if len(page_points) >= 2:
                 page.draw_polyline(page_points, color=color, width=line_width, closePath=False, overlay=True)
@@ -167,13 +220,16 @@ def _draw_annotation(page: Any, annotation: Any) -> None:
             _insert_text(page, rect, text, color, size=9)
     except TypeError:
         # Older PyMuPDF builds do not expose opacity/overlay in every primitive.
-        if kind in {"rectangle", "revision_cloud", "highlight"}:
+        if kind in {"rectangle", "revision_cloud", "ellipse", "highlight"}:
             page.draw_rect(rect, color=color, width=line_width)
+        elif kind in {"underline", "strikethrough"}:
+            y = rect.y1 if kind == "underline" else rect.y0 + rect.height * 0.52
+            page.draw_line(fitz.Point(rect.x0, y), fitz.Point(rect.x1, y), color=color, width=line_width)
         elif kind == "freehand" and len(page_points) >= 2:
             page.draw_polyline(page_points, color=color, width=line_width)
-        elif kind == "arrow" and len(page_points) >= 2:
+        elif kind in {"arrow", "callout"} and len(page_points) >= 2:
             page.draw_line(page_points[0], page_points[-1], color=color, width=line_width)
-        elif kind in {"sticky_note", "free_text"}:
+        elif kind in {"sticky_note", "free_text", "callout"}:
             _insert_text(page, rect, text or "نظر", color, size=9)
 
 

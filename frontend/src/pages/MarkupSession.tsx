@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { MarkupEditor } from "@/components/MarkupEditor";
 import { ErrorBox, Button, Modal, Spinner } from "@/components/ui";
 import { PdfViewer } from "@/components/PdfViewer";
 import { Window } from "@/components/window";
+import { IconDelete, MarkupKindIcon } from "@/components/icons";
 import { api, ApiError } from "@/lib/api";
 import {
   createMarkupSession,
   downloadMarkupOutput,
+  MARKUP_FINAL_SUBMIT_LABEL,
+  markupKindLabel,
   getMarkupSession,
   replyToMarkup,
   saveMarkupAnnotations,
@@ -57,6 +60,7 @@ export function MarkupSessionPage() {
   const [commentSheetData, setCommentSheetData] = useState<ArrayBuffer | null>(null);
   const [commentSheetLoading, setCommentSheetLoading] = useState(false);
   const [commentSheetError, setCommentSheetError] = useState<string | null>(null);
+  const submittingRef = useRef(false);
 
   const isNew = !routeSessionId || routeSessionId === "new";
   const queryTransmittalId = search.get("transmittal_id") ?? "";
@@ -213,6 +217,14 @@ export function MarkupSessionPage() {
     cancelAnnotationEdit();
   };
 
+  const deleteAnnotation = (annotation: MarkupAnnotation) => {
+    if (!session?.can_edit || session.status !== "draft") return;
+    if (!window.confirm(`نشانه‌گذاری ${persianDigits(annotation.number)} حذف شود؟`)) return;
+    changeAnnotations(annotations.filter((item) => item.id !== annotation.id));
+    if (selectedId === annotation.id) setSelectedId(null);
+    if (editingAnnotationId === annotation.id) cancelAnnotationEdit();
+  };
+
   const closeCommentSheet = () => {
     setCommentSheetFilename(null);
     setCommentSheetData(null);
@@ -239,25 +251,30 @@ export function MarkupSessionPage() {
   };
 
   const submit = async () => {
-    if (!session || !session.can_edit) return;
-    if (dirty && !(await save())) return;
-    if (!window.confirm("پس از ثبت نهایی، جلسه و PDF نشانه‌گذاری‌شده قفل می‌شوند. ادامه می‌دهید؟")) return;
-    setBusy(true);
-    setError(null);
+    if (!session || !session.can_edit || submittingRef.current) return;
+    submittingRef.current = true;
     try {
-      const result = await submitMarkupSession(session.id);
-      setSession(result.session);
-      setAnnotations(result.session.annotations);
-      setSavedOutputs(result.outputs);
-      setDirty(false);
-      localStorage.removeItem(localKey(session.id));
-      setNotice(`ثبت نهایی انجام شد؛ ${persianDigits(result.annotation_count)} نظر در Comment Sheet ثبت شد.`);
-      const commentSheet = result.outputs.find((output) => output.kind === "sheet");
-      if (commentSheet) await openCommentSheet(result.session.transmittal_id, commentSheet);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "ثبت نهایی و تولید خروجی ناموفق بود.");
+      if (dirty && !(await save())) return;
+      if (!window.confirm("ثبت نهایی و ثبت در Comment، جلسه و PDF نشانه‌گذاری‌شده را قفل می‌کند. ادامه می‌دهید؟")) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const result = await submitMarkupSession(session.id);
+        setSession(result.session);
+        setAnnotations(result.session.annotations);
+        setSavedOutputs(result.outputs);
+        setDirty(false);
+        localStorage.removeItem(localKey(session.id));
+        setNotice(`ثبت نهایی انجام شد؛ ${persianDigits(result.annotation_count)} نظر در Comment Sheet ثبت شد.`);
+        const commentSheet = result.outputs.find((output) => output.kind === "sheet");
+        if (commentSheet) await openCommentSheet(result.session.transmittal_id, commentSheet);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.detail : "ثبت نهایی و تولید خروجی ناموفق بود.");
+      } finally {
+        setBusy(false);
+      }
     } finally {
-      setBusy(false);
+      submittingRef.current = false;
     }
   };
 
@@ -320,7 +337,7 @@ export function MarkupSessionPage() {
             {dirty ? <span className="font-bold text-[#9a3d32]">● تغییر ذخیره‌نشده</span> : <span className="text-[#3f8f45]">● ذخیره‌شده</span>}
           </div>
           <div className="flex items-center gap-1">
-            {session.status === "draft" && session.can_edit ? <Button variant="primary" className="btn-sm" disabled={busy} onClick={() => void submit()}>ثبت نهایی و تولید Comment</Button> : null}
+            {session.status === "draft" && session.can_edit ? <Button variant="primary" className="btn-sm" disabled={busy} aria-label={MARKUP_FINAL_SUBMIT_LABEL} title={MARKUP_FINAL_SUBMIT_LABEL} onClick={() => void submit()}>{busy ? "در حال پردازش…" : MARKUP_FINAL_SUBMIT_LABEL}</Button> : null}
             {savedOutputs.map((output) => (
               <Button key={output.attachment_id} className="btn-sm" disabled={busy} onClick={() => void downloadOutput(output.attachment_id, output.filename)}>
                 {output.kind === "pdf" ? "دریافت PDF نشانه‌گذاری" : "دریافت Comment Sheet"}
@@ -355,7 +372,7 @@ export function MarkupSessionPage() {
                     className="flex w-full items-center justify-between text-right font-bold text-[#1f4e79] hover:underline"
                     onClick={() => { setPage(annotation.page_no); setSelectedId(annotation.id); }}
                   >
-                    <span>{labelText(annotation)}</span><span>صفحه {persianDigits(annotation.page_no)}</span>
+                    <span className="flex items-center gap-1"><MarkupKindIcon kind={annotation.kind} className="h-3.5 w-3.5 shrink-0" /><span>{labelText(annotation)}</span></span><span>صفحه {persianDigits(annotation.page_no)}</span>
                   </button>
                   {editingAnnotationId === annotation.id ? (
                     <div className="mt-1 border border-[#b9c5cf] bg-[#fbfcfd] p-1">
@@ -375,14 +392,25 @@ export function MarkupSessionPage() {
                     <div className="mt-1 flex items-start gap-1">
                       <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[#33475b]">{annotation.text || "نشانه‌گذاری بدون متن"}</p>
                       {session.status === "draft" && session.can_edit ? (
-                        <button
-                          type="button"
-                          className="shrink-0 text-[9px] font-bold text-[#1f4e79] underline hover:text-[#153552]"
-                          onClick={() => beginAnnotationEdit(annotation)}
-                          aria-label={`ویرایش نظر ${annotation.number}`}
-                        >
-                          ویرایش نظر
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            className="text-[9px] font-bold text-[#1f4e79] underline hover:text-[#153552]"
+                            onClick={() => beginAnnotationEdit(annotation)}
+                            aria-label={`ویرایش نظر ${annotation.number}`}
+                          >
+                            ویرایش نظر
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded p-0.5 text-[#9a3d32] hover:bg-[#fdeeee]"
+                            onClick={() => deleteAnnotation(annotation)}
+                            aria-label={`حذف نظر ${annotation.number}`}
+                            title="حذف نشانه‌گذاری"
+                          >
+                            <IconDelete className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       ) : null}
                     </div>
                   )}
@@ -461,5 +489,5 @@ export function MarkupSessionPage() {
 }
 
 function labelText(annotation: MarkupAnnotation): string {
-  return `${persianDigits(annotation.number)} · ${annotation.kind}`;
+  return `${persianDigits(annotation.number)} · ${markupKindLabel(annotation.kind)}`;
 }

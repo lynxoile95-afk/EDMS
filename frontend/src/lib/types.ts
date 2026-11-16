@@ -527,10 +527,14 @@ export interface TransmittalDetail extends Transmittal {
 export type MarkupKind =
   | "sticky_note"
   | "highlight"
+  | "underline"
+  | "strikethrough"
   | "rectangle"
+  | "ellipse"
   | "revision_cloud"
   | "arrow"
   | "free_text"
+  | "callout"
   | "freehand";
 
 export type MarkupReplyStatus = "open" | "closed" | "accepted" | "rejected" | "resolved";
@@ -554,6 +558,8 @@ export interface MarkupAnnotation {
   color: string;
   /** PDF points; optional keeps older sessions compatible with the default width. */
   stroke_width?: number;
+  /** Editor-only size for text-like annotations; old server sessions omit it. */
+  font_size?: number;
   author_id: string | null;
   author_name: string | null;
   created_at: string;

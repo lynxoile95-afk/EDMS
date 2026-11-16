@@ -14,7 +14,26 @@ export interface MarkupPointInput {
 export const DEFAULT_MARKUP_COLOR = "#d64545";
 export const DEFAULT_MARKUP_STROKE_WIDTH = 2.5;
 export const MIN_MARKUP_STROKE_WIDTH = 1;
-export const MAX_MARKUP_STROKE_WIDTH = 6;
+export const MAX_MARKUP_STROKE_WIDTH = 10;
+export const MARKUP_FINAL_SUBMIT_LABEL = "ثبت نهایی و ثبت در Comment";
+
+export const MARKUP_KIND_LABELS: Record<MarkupAnnotation["kind"], string> = {
+  sticky_note: "یادداشت",
+  highlight: "هایلایت",
+  underline: "خط‌زیر",
+  strikethrough: "خط‌خورده",
+  rectangle: "مستطیل",
+  ellipse: "بیضی",
+  revision_cloud: "ابر بازبینی",
+  arrow: "پیکان",
+  free_text: "متن",
+  callout: "کالوت",
+  freehand: "قلم",
+};
+
+export function markupKindLabel(kind: MarkupAnnotation["kind"]): string {
+  return MARKUP_KIND_LABELS[kind] ?? kind;
+}
 
 /** The palette deliberately excludes white and near-white strokes on PDF pages. */
 export const MARKUP_COLOR_PALETTE = [

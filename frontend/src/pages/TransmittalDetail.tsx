@@ -20,6 +20,8 @@ import type {
 import {
   createMarkupSession,
   downloadMarkupOutput,
+  MARKUP_FINAL_SUBMIT_LABEL,
+  markupKindLabel,
   replyToMarkup,
   saveMarkupAnnotations,
   submitMarkupSession,
@@ -42,6 +44,7 @@ import {
   IconFlow,
   IconLock,
   IconMail,
+  MarkupKindIcon,
   IconPaperclip,
   IconPrint,
   IconRefresh,
@@ -208,6 +211,7 @@ export function TransmittalDetail() {
   const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null);
   const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
   const previewRequestRef = useRef(0);
+  const previewMarkupSubmittingRef = useRef(false);
   const previewUrlRef = useRef<string | null>(null);
   const openedUrlRef = useRef<string | null>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -901,48 +905,61 @@ export function TransmittalDetail() {
     cancelPreviewMarkupEdit();
   };
 
+  const deletePreviewMarkup = (annotation: MarkupAnnotation) => {
+    if (!previewMarkupSession?.can_edit || previewMarkupSession.status !== "draft") return;
+    if (!window.confirm(`نشانه‌گذاری ${persianDigits(annotation.number)} حذف شود؟`)) return;
+    changePreviewMarkup(previewMarkupAnnotations.filter((item) => item.id !== annotation.id));
+    if (previewMarkupSelectedId === annotation.id) setPreviewMarkupSelectedId(null);
+    if (previewMarkupEditingId === annotation.id) cancelPreviewMarkupEdit();
+  };
+
   const submitPreviewMarkup = async () => {
-    if (!previewMarkupSession?.can_edit) return;
-    if (!(await savePreviewMarkup())) return;
-    if (!window.confirm("پس از ثبت نهایی، جلسه و فایل‌های Comment قفل می‌شوند. ادامه می‌دهید؟")) return;
-    setPreviewMarkupBusy(true);
-    setPreviewMarkupError(null);
+    if (!previewMarkupSession?.can_edit || previewMarkupSubmittingRef.current) return;
+    previewMarkupSubmittingRef.current = true;
     try {
-      const result = await submitMarkupSession(previewMarkupSession.id);
-      setPreviewMarkupSession(result.session);
-      setPreviewMarkupAnnotations(result.session.annotations);
-      setPreviewMarkupDirty(false);
-      setPreviewMarkupNotice("ثبت نهایی انجام شد؛ Comment Sheet در پنجره پیش‌نمایش باز می‌شود.");
-      localStorage.removeItem(`edms-markup-draft:${result.session.id}`);
-      const commentSheet = result.outputs.find((output) => output.kind === "sheet");
-      if (commentSheet) {
-        await openAttachmentPreview(
-          {
-            id: commentSheet.attachment_id,
-            line_id: null,
-            revision_id: result.session.revision_id,
-            kind: "comment",
-            related_type: "comment_sheet",
-            filename: commentSheet.filename,
-            content_type: "application/pdf",
-            size_bytes: 0,
-            uploaded_at: new Date().toISOString(),
-            uploaded_by_id: user?.id ?? null,
-            uploaded_by_name: user?.full_name ?? null,
-            access_user_ids: [],
-            access_restricted: false,
-          },
-          false,
-        );
-        setPreviewActionError("Comment Sheet نتیجه ثبت نهایی باز شد.");
-      } else {
-        setPreviewActionError("ثبت نهایی انجام شد، اما Comment Sheet در پاسخ سامانه پیدا نشد.");
+      if (!(await savePreviewMarkup())) return;
+      if (!window.confirm("ثبت نهایی و ثبت در Comment، جلسه و فایل‌های Comment را قفل می‌کند. ادامه می‌دهید؟")) return;
+      setPreviewMarkupBusy(true);
+      setPreviewMarkupError(null);
+      try {
+        const result = await submitMarkupSession(previewMarkupSession.id);
+        setPreviewMarkupSession(result.session);
+        setPreviewMarkupAnnotations(result.session.annotations);
+        setPreviewMarkupDirty(false);
+        setPreviewMarkupNotice("ثبت نهایی انجام شد؛ Comment Sheet در پنجره پیش‌نمایش باز می‌شود.");
+        localStorage.removeItem(`edms-markup-draft:${result.session.id}`);
+        const commentSheet = result.outputs.find((output) => output.kind === "sheet");
+        if (commentSheet) {
+          await openAttachmentPreview(
+            {
+              id: commentSheet.attachment_id,
+              line_id: null,
+              revision_id: result.session.revision_id,
+              kind: "comment",
+              related_type: "comment_sheet",
+              filename: commentSheet.filename,
+              content_type: "application/pdf",
+              size_bytes: 0,
+              uploaded_at: new Date().toISOString(),
+              uploaded_by_id: user?.id ?? null,
+              uploaded_by_name: user?.full_name ?? null,
+              access_user_ids: [],
+              access_restricted: false,
+            },
+            false,
+          );
+          setPreviewActionError("Comment Sheet نتیجه ثبت نهایی باز شد.");
+        } else {
+          setPreviewActionError("ثبت نهایی انجام شد، اما Comment Sheet در پاسخ سامانه پیدا نشد.");
+        }
+        await load();
+      } catch (err) {
+        setPreviewMarkupError(err instanceof ApiError ? err.detail : "ثبت نهایی و تولید خروجی ناموفق بود.");
+      } finally {
+        setPreviewMarkupBusy(false);
       }
-      await load();
-    } catch (err) {
-      setPreviewMarkupError(err instanceof ApiError ? err.detail : "ثبت نهایی و تولید خروجی ناموفق بود.");
     } finally {
-      setPreviewMarkupBusy(false);
+      previewMarkupSubmittingRef.current = false;
     }
   };
 
@@ -2337,8 +2354,8 @@ export function TransmittalDetail() {
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 {previewMarkupSession.status === "draft" && previewMarkupSession.can_edit ? (
-                  <Button variant="primary" className="btn-sm" disabled={previewMarkupBusy} onClick={() => void submitPreviewMarkup()}>
-                    {previewMarkupBusy ? "در حال پردازش…" : "ثبت نهایی و ثبت در Comment"}
+                  <Button variant="primary" className="btn-sm" disabled={previewMarkupBusy} aria-label={MARKUP_FINAL_SUBMIT_LABEL} title={MARKUP_FINAL_SUBMIT_LABEL} onClick={() => void submitPreviewMarkup()}>
+                    {previewMarkupBusy ? "در حال پردازش…" : MARKUP_FINAL_SUBMIT_LABEL}
                   </Button>
                 ) : null}
                 {previewMarkupSession.outputs.map((output) => (
@@ -2410,7 +2427,7 @@ export function TransmittalDetail() {
                         className="block w-full text-right"
                         onClick={() => { setPreviewMarkupPage(annotation.page_no); setPreviewMarkupSelectedId(annotation.id); }}
                       >
-                        <span className="flex items-center justify-between font-bold text-[#1f4e79]"><span>نظر {persianDigits(annotation.number)}</span><span>صفحه {persianDigits(annotation.page_no)}</span></span>
+                        <span className="flex items-center justify-between font-bold text-[#1f4e79]"><span className="flex items-center gap-1"><MarkupKindIcon kind={annotation.kind} className="h-3.5 w-3.5 shrink-0" /><span>نظر {persianDigits(annotation.number)} · {markupKindLabel(annotation.kind)}</span></span><span>صفحه {persianDigits(annotation.page_no)}</span></span>
                       </button>
                       {previewMarkupEditingId === annotation.id ? (
                         <div className="mt-1 border border-[#b9c5cf] bg-[#fbfcfd] p-1">
@@ -2430,14 +2447,25 @@ export function TransmittalDetail() {
                         <div className="mt-1 flex items-start gap-1">
                           <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[#33475b]">{annotation.text || "نشانه‌گذاری بدون متن"}</span>
                           {previewMarkupSession.status === "draft" && previewMarkupSession.can_edit ? (
-                            <button
-                              type="button"
-                              className="shrink-0 text-[9px] font-bold text-[#1f4e79] underline hover:text-[#153552]"
-                              onClick={() => beginPreviewMarkupEdit(annotation)}
-                              aria-label={`ویرایش نظر ${annotation.number}`}
-                            >
-                              ویرایش نظر
-                            </button>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                className="text-[9px] font-bold text-[#1f4e79] underline hover:text-[#153552]"
+                                onClick={() => beginPreviewMarkupEdit(annotation)}
+                                aria-label={`ویرایش نظر ${annotation.number}`}
+                              >
+                                ویرایش نظر
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded p-0.5 text-[#9a3d32] hover:bg-[#fdeeee]"
+                                onClick={() => deletePreviewMarkup(annotation)}
+                                aria-label={`حذف نظر ${annotation.number}`}
+                                title="حذف نشانه‌گذاری"
+                              >
+                                <IconDelete className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           ) : null}
                         </div>
                       )}

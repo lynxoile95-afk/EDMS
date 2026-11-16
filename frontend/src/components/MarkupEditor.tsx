@@ -16,15 +16,23 @@ import {
 } from "@/lib/markups";
 import {
   IconArrow,
+  IconCallout,
   IconCloud,
   IconCursor,
   IconDelete,
+  IconEllipse,
+  IconEraser,
   IconFit,
+  IconHand,
   IconHighlight,
   IconPen,
+  IconRedo,
   IconRectangle,
   IconStickyNote,
+  IconStrikethrough,
   IconText,
+  IconUnderline,
+  IconUndo,
   IconZoomIn,
   IconZoomOut,
 } from "./icons";
@@ -32,8 +40,10 @@ import { Spinner } from "./ui";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
-type Tool = "select" | MarkupKind;
+type Tool = "select" | "pan" | "eraser" | MarkupKind;
 type PdfData = ArrayBuffer | Uint8Array;
+type TextTool = "highlight" | "underline" | "strikethrough";
+type TextLayerItem = { text: string; x: number; y: number; width: number; height: number };
 type DraftAnnotation = Omit<MarkupAnnotation, "created_at" | "updated_at" | "reply_status" | "reply_text" | "replied_by_id" | "replied_by_name" | "replied_at" | "author_id" | "author_name"> & {
   created_at: string;
   updated_at: string;
@@ -48,28 +58,46 @@ type DraftAnnotation = Omit<MarkupAnnotation, "created_at" | "updated_at" | "rep
 
 const TOOL_LABELS: Record<Tool, string> = {
   select: "انتخاب",
-  sticky_note: "یادداشت",
+  pan: "دست",
   highlight: "هایلایت",
-  rectangle: "مستطیل",
-  revision_cloud: "ابر بازنگری",
-  arrow: "پیکان",
+  underline: "خط‌زیر",
+  strikethrough: "خط‌خورده",
+  sticky_note: "یادداشت",
   free_text: "متن",
+  callout: "کالوت",
+  rectangle: "مستطیل",
+  ellipse: "بیضی",
+  revision_cloud: "ابر بازبینی",
+  arrow: "پیکان",
   freehand: "قلم",
+  eraser: "پاک‌کن",
 };
 
-const TOOL_ORDER: Tool[] = ["select", "sticky_note", "highlight", "rectangle", "revision_cloud", "arrow", "free_text", "freehand"];
+const TOOL_GROUPS: Tool[][] = [
+  ["select", "pan"],
+  ["highlight", "underline", "strikethrough"],
+  ["sticky_note", "free_text", "callout"],
+  ["rectangle", "ellipse", "revision_cloud", "arrow", "freehand", "eraser"],
+];
+const TEXT_TOOLS: TextTool[] = ["highlight", "underline", "strikethrough"];
 
 function ToolIcon({ tool }: { tool: Tool }) {
   const props = { className: "h-4 w-4" };
   switch (tool) {
     case "select": return <IconCursor {...props} />;
+    case "pan": return <IconHand {...props} />;
     case "sticky_note": return <IconStickyNote {...props} />;
     case "highlight": return <IconHighlight {...props} />;
+    case "underline": return <IconUnderline {...props} />;
+    case "strikethrough": return <IconStrikethrough {...props} />;
     case "rectangle": return <IconRectangle {...props} />;
+    case "ellipse": return <IconEllipse {...props} />;
     case "revision_cloud": return <IconCloud {...props} />;
     case "arrow": return <IconArrow {...props} />;
     case "free_text": return <IconText {...props} />;
+    case "callout": return <IconCallout {...props} />;
     case "freehand": return <IconPen {...props} />;
+    case "eraser": return <IconEraser {...props} />;
   }
 }
 
@@ -107,6 +135,8 @@ function RibbonButton({
 
 const MIN_ZOOM = 0.55;
 const MAX_ZOOM = 2.5;
+const MIN_FONT_SIZE = 8;
+const MAX_FONT_SIZE = 36;
 
 function clamp(value: number, minimum = 0, maximum = 1): number {
   return Math.min(Math.max(value, minimum), maximum);
@@ -127,8 +157,16 @@ function rectanglePoints(start: MarkupPoint, end: MarkupPoint): MarkupPoint[] {
   ];
 }
 
-function bounds(annotation: Pick<MarkupAnnotation, "points">): { x: number; y: number; w: number; h: number } {
-  const points = annotation.points.length ? annotation.points : [{ x: 0.05, y: 0.05 }, { x: 0.2, y: 0.12 }];
+function pointRectangles(points: MarkupPoint[]): MarkupPoint[][] {
+  if (points.length >= 4 && points.length % 2 === 0) {
+    return Array.from({ length: points.length / 2 }, (_, index) => points.slice(index * 2, index * 2 + 2));
+  }
+  return [points.length ? points : [{ x: 0.05, y: 0.05 }, { x: 0.2, y: 0.12 }]];
+}
+
+function bounds(annotation: Pick<MarkupAnnotation, "points" | "kind">): { x: number; y: number; w: number; h: number } {
+  const sourcePoints = annotation.kind === "callout" && annotation.points.length >= 3 ? annotation.points.slice(1) : annotation.points;
+  const points = sourcePoints.length ? sourcePoints : [{ x: 0.05, y: 0.05 }, { x: 0.2, y: 0.12 }];
   const xs = points.map((point) => point.x);
   const ys = points.map((point) => point.y);
   const x = Math.min(...xs);
@@ -143,6 +181,29 @@ function bounds(annotation: Pick<MarkupAnnotation, "points">): { x: number; y: n
 
 function colorFor(annotation: Pick<MarkupAnnotation, "color">): string {
   return normalizeMarkupColor(annotation.color);
+}
+
+function annotationsEqual(left: MarkupAnnotation[], right: MarkupAnnotation[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function annotationContent(annotation: MarkupAnnotation) {
+  return {
+    kind: annotation.kind,
+    page_no: annotation.page_no,
+    points: annotation.points,
+    text: annotation.text,
+    color: annotation.color,
+    stroke_width: annotation.stroke_width,
+  };
+}
+
+function annotationContentEqual(left: MarkupAnnotation[], right: MarkupAnnotation[]): boolean {
+  return left.length === right.length && left.every((annotation, index) => JSON.stringify(annotationContent(annotation)) === JSON.stringify(annotationContent(right[index])));
+}
+
+function isTextTool(tool: Tool): tool is TextTool {
+  return TEXT_TOOLS.includes(tool as TextTool);
 }
 
 export interface MarkupEditorProps {
@@ -173,16 +234,29 @@ export function MarkupEditor({
   onSelectedIdChange,
 }: MarkupEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const pageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const textLayerRef = useRef<HTMLDivElement | null>(null);
   const documentRef = useRef<PDFDocumentProxy | null>(null);
   const loadingTaskRef = useRef<ReturnType<typeof pdfjs.getDocument> | null>(null);
   const renderTaskRef = useRef<RenderTask | null>(null);
   const drawingRef = useRef<{ start: MarkupPoint; points: MarkupPoint[]; sourceId?: string; mode: "draw" | "move" | "resize" } | null>(null);
+  const textGestureRef = useRef<{ start: MarkupPoint; end: MarkupPoint } | null>(null);
+  const panRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+  const erasedIdsRef = useRef(new Set<string>());
+  const annotationsRef = useRef<MarkupAnnotation[]>(annotations);
+  const historyRef = useRef<MarkupAnnotation[][]>([]);
+  const futureRef = useRef<MarkupAnnotation[][]>([]);
+  const suppressExternalHistoryRef = useRef(false);
+  const gestureHistoryRecordedRef = useRef(false);
+  const [textLayerItems, setTextLayerItems] = useState<TextLayerItem[]>([]);
+  const [, setHistoryVersion] = useState(0);
   const [documentPageCount, setDocumentPageCount] = useState(0);
   const [page, setPage] = useState(initialPage);
   const [tool, setTool] = useState<Tool>(readOnly ? "select" : "select");
   const [color, setColor] = useState(DEFAULT_MARKUP_COLOR);
   const [strokeWidth, setStrokeWidth] = useState(DEFAULT_MARKUP_STROKE_WIDTH);
+  const [fontSize, setFontSize] = useState(16);
   const [zoom, setZoom] = useState(1);
   const [fitScale, setFitScale] = useState(1);
   const [viewport, setViewport] = useState({ width: 612, height: 792 });
@@ -198,6 +272,36 @@ export function MarkupEditor({
     [annotations, page],
   );
 
+  useEffect(() => {
+    if (annotationsEqual(annotationsRef.current, annotations)) {
+      // publish/undo/redo update the ref before notifying the parent. Clear
+      // this guard on the next render so a later external edit is undoable.
+      suppressExternalHistoryRef.current = false;
+      return;
+    }
+    if (suppressExternalHistoryRef.current) {
+      suppressExternalHistoryRef.current = false;
+    } else if (!annotationContentEqual(annotationsRef.current, annotations)) {
+      historyRef.current = [...historyRef.current, annotationsRef.current.map((annotation) => ({ ...annotation, points: annotation.points.map((point) => ({ ...point })) }))];
+      futureRef.current = [];
+    }
+    annotationsRef.current = annotations;
+    setHistoryVersion((version) => version + 1);
+  }, [annotations]);
+
+  const recordHistory = () => {
+    historyRef.current = [...historyRef.current, annotationsRef.current.map((annotation) => ({ ...annotation, points: annotation.points.map((point) => ({ ...point })) }))];
+    futureRef.current = [];
+    setHistoryVersion((version) => version + 1);
+  };
+
+  const publish = (next: MarkupAnnotation[], record = true) => {
+    if (record) recordHistory();
+    suppressExternalHistoryRef.current = true;
+    annotationsRef.current = next;
+    onChange(next);
+  };
+
   const select = useCallback((id: string | null) => {
     setLocalSelectedId(id);
     onSelectedIdChange?.(id);
@@ -208,6 +312,7 @@ export function MarkupEditor({
     if (!selected) return;
     setColor(colorFor(selected));
     setStrokeWidth(normalizeMarkupStrokeWidth(selected.stroke_width));
+    setFontSize(selected.font_size ? Math.min(Math.max(selected.font_size, MIN_FONT_SIZE), MAX_FONT_SIZE) : 16);
   }, [annotations, effectiveSelectedId]);
 
   useEffect(() => {
@@ -262,6 +367,45 @@ export function MarkupEditor({
       loadingTaskRef.current = null;
     };
   }, [data, onPageCount]);
+
+  useEffect(() => {
+    const document = documentRef.current;
+    if (!document || !documentPageCount) {
+      setTextLayerItems([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const pdfPage = await document.getPage(Math.min(page, document.numPages));
+        const baseViewport = pdfPage.getViewport({ scale: 1 });
+        const content = await pdfPage.getTextContent();
+        const items: TextLayerItem[] = [];
+        for (const raw of content.items) {
+          if (!("str" in raw) || !raw.str.trim()) continue;
+          const item = raw as { str: string; transform: number[]; width: number; height: number };
+          const transform = pdfjs.Util.transform(baseViewport.transform, item.transform);
+          const height = Math.max(4, Math.hypot(transform[2], transform[3]));
+          const x = transform[4];
+          const y = transform[5] - height;
+          items.push({
+            text: item.str,
+            x: clamp(x / Math.max(baseViewport.width, 1)),
+            y: clamp(y / Math.max(baseViewport.height, 1)),
+            width: clamp(item.width / Math.max(baseViewport.width, 1), 0, 1 - clamp(x / Math.max(baseViewport.width, 1))),
+            height: clamp(height / Math.max(baseViewport.height, 1)),
+          });
+        }
+        if (!cancelled) setTextLayerItems(items);
+        pdfPage.cleanup();
+      } catch {
+        if (!cancelled) setTextLayerItems([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [documentPageCount, page]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -331,14 +475,18 @@ export function MarkupEditor({
   };
 
   const updateAnnotation = (id: string, nextPoints: MarkupPoint[]) => {
-    onChange(annotations.map((annotation) => annotation.id === id ? { ...annotation, points: nextPoints } : annotation));
+    if (!gestureHistoryRecordedRef.current) {
+      recordHistory();
+      gestureHistoryRecordedRef.current = true;
+    }
+    publish(annotationsRef.current.map((annotation) => annotation.id === id ? { ...annotation, points: nextPoints } : annotation), false);
   };
 
   const changeColor = (value: string) => {
     const nextColor = normalizeMarkupColor(value);
     setColor(nextColor);
     if (readOnly || !effectiveSelectedId) return;
-    onChange(annotations.map((annotation) => annotation.id === effectiveSelectedId
+    publish(annotationsRef.current.map((annotation) => annotation.id === effectiveSelectedId
       ? { ...annotation, color: nextColor, updated_at: new Date().toISOString() }
       : annotation));
   };
@@ -347,23 +495,120 @@ export function MarkupEditor({
     const nextWidth = normalizeMarkupStrokeWidth(value);
     setStrokeWidth(nextWidth);
     if (readOnly || !effectiveSelectedId) return;
-    onChange(annotations.map((annotation) => annotation.id === effectiveSelectedId
+    publish(annotationsRef.current.map((annotation) => annotation.id === effectiveSelectedId
       ? { ...annotation, stroke_width: nextWidth, updated_at: new Date().toISOString() }
       : annotation));
+  };
+
+  const changeFontSize = (value: number) => {
+    const nextSize = Math.min(Math.max(value, MIN_FONT_SIZE), MAX_FONT_SIZE);
+    setFontSize(nextSize);
+    if (readOnly || !effectiveSelectedId) return;
+    publish(annotationsRef.current.map((annotation) => annotation.id === effectiveSelectedId
+      ? { ...annotation, font_size: nextSize, updated_at: new Date().toISOString() }
+      : annotation));
+  };
+
+  const undo = useCallback(() => {
+    if (readOnly || !historyRef.current.length) return;
+    const previous = historyRef.current.pop();
+    if (!previous) return;
+    futureRef.current.push(annotationsRef.current);
+    suppressExternalHistoryRef.current = true;
+    annotationsRef.current = previous;
+    onChange(previous);
+    setHistoryVersion((version) => version + 1);
+    if (effectiveSelectedId && !previous.some((annotation) => annotation.id === effectiveSelectedId)) select(null);
+  }, [effectiveSelectedId, onChange, readOnly, select]);
+
+  const redo = useCallback(() => {
+    if (readOnly || !futureRef.current.length) return;
+    const next = futureRef.current.pop();
+    if (!next) return;
+    historyRef.current.push(annotationsRef.current);
+    suppressExternalHistoryRef.current = true;
+    annotationsRef.current = next;
+    onChange(next);
+    setHistoryVersion((version) => version + 1);
+  }, [onChange, readOnly]);
+
+  const removeAnnotation = (id: string) => {
+    if (readOnly || !annotationsRef.current.some((annotation) => annotation.id === id)) return;
+    publish(annotationsRef.current.filter((annotation) => annotation.id !== id));
+    if (effectiveSelectedId === id) select(null);
+  };
+
+  const eraseAt = (event: React.PointerEvent<HTMLDivElement>) => {
+    const target = (event.target as HTMLElement).closest("[data-markup-id]")
+      ?? (document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest("[data-markup-id]");
+    const id = target?.getAttribute("data-markup-id");
+    if (!id || erasedIdsRef.current.has(id)) return;
+    erasedIdsRef.current.add(id);
+    removeAnnotation(id);
+  };
+
+  const selectedTextGeometry = (): { points: MarkupPoint[]; text: string } | null => {
+    const selection = window.getSelection();
+    const pageElement = pageRef.current;
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed || !pageElement) return null;
+    const range = selection.getRangeAt(0);
+    if (!textLayerRef.current?.contains(range.commonAncestorContainer)) return null;
+    const pageRect = pageElement.getBoundingClientRect();
+    const rects = Array.from(range.getClientRects())
+      .filter((rect) => rect.width > 1 && rect.height > 1)
+      .map((rect) => ({
+        left: clamp((rect.left - pageRect.left) / Math.max(pageRect.width, 1)),
+        top: clamp((rect.top - pageRect.top) / Math.max(pageRect.height, 1)),
+        right: clamp((rect.right - pageRect.left) / Math.max(pageRect.width, 1)),
+        bottom: clamp((rect.bottom - pageRect.top) / Math.max(pageRect.height, 1)),
+      }))
+      .filter((rect) => rect.right > rect.left && rect.bottom > rect.top);
+    if (!rects.length) return null;
+    return {
+      points: rects.flatMap((rect) => [
+        { x: rect.left, y: rect.top },
+        { x: rect.right, y: rect.bottom },
+      ]),
+      text: selection.toString().trim(),
+    };
   };
 
   const pointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (readOnly || !hostRef.current) return;
     const target = event.target as HTMLElement;
-    const svg = target.closest("svg");
     const point = pointFromEvent(event, event.currentTarget);
-    event.currentTarget.setPointerCapture(event.pointerId);
+    gestureHistoryRecordedRef.current = false;
 
+    if (tool === "pan") {
+      panRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        scrollLeft: hostRef.current.scrollLeft,
+        scrollTop: hostRef.current.scrollTop,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (tool === "eraser") {
+      erasedIdsRef.current = new Set();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      eraseAt(event);
+      return;
+    }
+    if (isTextTool(tool)) {
+      // Do not capture the pointer here: the browser must keep native text
+      // selection working in the PDF.js text layer. Pointer-up uses the
+      // selection rectangles and falls back to a manually dragged line/box.
+      textGestureRef.current = { start: point, end: point };
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
     if (tool === "select") {
       const annotationId = target.closest("[data-markup-id]")?.getAttribute("data-markup-id") ?? null;
-      const current = annotationId ? annotations.find((annotation) => annotation.id === annotationId) : null;
+      const current = annotationId ? annotationsRef.current.find((annotation) => annotation.id === annotationId) : null;
       select(annotationId);
-      if (current && svg) {
+      if (current) {
         drawingRef.current = {
           start: point,
           points: current.points,
@@ -377,40 +622,120 @@ export function MarkupEditor({
   };
 
   const pointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (panRef.current && hostRef.current) {
+      const pan = panRef.current;
+      hostRef.current.scrollLeft = pan.scrollLeft - (event.clientX - pan.x);
+      hostRef.current.scrollTop = pan.scrollTop - (event.clientY - pan.y);
+      return;
+    }
+    if (tool === "eraser") {
+      eraseAt(event);
+      return;
+    }
+    if (textGestureRef.current) {
+      textGestureRef.current.end = pointFromEvent(event, event.currentTarget);
+      return;
+    }
     const draft = drawingRef.current;
     if (!draft || !hostRef.current) return;
     const point = pointFromEvent(event, event.currentTarget);
     if (draft.mode === "draw") {
-      draft.points = tool === "freehand" ? [...draft.points, point] : [draft.start, point];
+      if (tool === "freehand") {
+        const nextPoints = [...draft.points, point];
+        draft.points = nextPoints.length > 1000 ? nextPoints.filter((_item, index) => index % 2 === 0).slice(-1000) : nextPoints;
+      } else {
+        draft.points = [draft.start, point];
+      }
       return;
     }
-    const source = annotations.find((annotation) => annotation.id === draft.sourceId);
+    const source = annotationsRef.current.find((annotation) => annotation.id === draft.sourceId);
     if (!source) return;
     const delta = { x: point.x - draft.start.x, y: point.y - draft.start.y };
     if (draft.mode === "move") {
       updateAnnotation(source.id, draft.points.map((item) => ({ x: clamp(item.x + delta.x), y: clamp(item.y + delta.y) })));
     } else {
-      const original = bounds({ points: draft.points });
-      updateAnnotation(source.id, rectanglePoints({ x: original.x, y: original.y }, point));
+      const original = bounds({ points: draft.points, kind: source.kind });
+      const resizedBox = rectanglePoints({ x: original.x, y: original.y }, point);
+      const resizedPoints = source.kind === "callout" && draft.points.length >= 3
+        ? [draft.points[0], ...resizedBox]
+        : resizedBox;
+      updateAnnotation(source.id, resizedPoints);
     }
   };
 
   const pointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (panRef.current) {
+      panRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      return;
+    }
+    if (tool === "eraser") {
+      erasedIdsRef.current = new Set();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      return;
+    }
+    if (isTextTool(tool)) {
+      const gesture = textGestureRef.current;
+      textGestureRef.current = null;
+      if (!gesture || readOnly) return;
+      const snapped = selectedTextGeometry();
+      const points = snapped?.points ?? rectanglePoints(gesture.start, gesture.end);
+      const created: DraftAnnotation = {
+        id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+        number: annotationsRef.current.length ? Math.max(...annotationsRef.current.map((annotation) => annotation.number)) + 1 : 1,
+        kind: tool,
+        page_no: page,
+        points: points.length > 1 ? points : [gesture.start, { x: clamp(gesture.start.x + 0.08), y: clamp(gesture.start.y + 0.03) }],
+        text: snapped?.text || null,
+        color: normalizeMarkupColor(color),
+        stroke_width: normalizeMarkupStrokeWidth(strokeWidth),
+        font_size: fontSize,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        reply_status: "open",
+        reply_text: null,
+        replied_by_id: null,
+        replied_by_name: null,
+        replied_at: null,
+        author_id: null,
+        author_name: null,
+      };
+      publish([...annotationsRef.current, created]);
+      select(created.id);
+      window.getSelection()?.removeAllRanges();
+      setTool("select");
+      return;
+    }
+
     const draft = drawingRef.current;
     drawingRef.current = null;
     if (!draft || readOnly) return;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-    if (draft.mode !== "draw") return;
-    const points = tool === "freehand" ? draft.points : rectanglePoints(draft.start, draft.points[draft.points.length - 1] ?? draft.start);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (draft.mode !== "draw") {
+      gestureHistoryRecordedRef.current = false;
+      return;
+    }
+    const end = draft.points[draft.points.length - 1] ?? draft.start;
+    const points = tool === "freehand" ? draft.points : tool === "callout"
+      ? (() => {
+          const halfWidth = Math.max(Math.abs(end.x - draft.start.x) * 0.45, 0.05);
+          const halfHeight = Math.max(Math.abs(end.y - draft.start.y) * 0.35, 0.04);
+          return [draft.start, ...rectanglePoints(
+            { x: clamp(end.x - halfWidth), y: clamp(end.y - halfHeight) },
+            { x: clamp(end.x + halfWidth), y: clamp(end.y + halfHeight) },
+          )];
+        })()
+      : rectanglePoints(draft.start, end);
     const created: DraftAnnotation = {
       id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
-      number: annotations.length ? Math.max(...annotations.map((annotation) => annotation.number)) + 1 : 1,
+      number: annotationsRef.current.length ? Math.max(...annotationsRef.current.map((annotation) => annotation.number)) + 1 : 1,
       kind: tool as MarkupKind,
       page_no: page,
       points: points.length > 1 ? points : [draft.start, { x: clamp(draft.start.x + 0.08), y: clamp(draft.start.y + 0.05) }],
       text: null,
       color: normalizeMarkupColor(color),
       stroke_width: normalizeMarkupStrokeWidth(strokeWidth),
+      font_size: fontSize,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       reply_status: "open",
@@ -421,29 +746,52 @@ export function MarkupEditor({
       author_id: null,
       author_name: null,
     };
-    if (tool === "sticky_note" || tool === "free_text") {
-      created.text = window.prompt("متن نظر را وارد کنید:")?.trim() || "نظر";
+    if (tool === "sticky_note" || tool === "free_text" || tool === "callout") {
+      const entered = window.prompt("متن نظر را وارد کنید:");
+      if (entered === null) {
+        setTool("select");
+        return;
+      }
+      created.text = entered.trim() || "نظر";
     }
-    onChange([...annotations, created]);
+    publish([...annotationsRef.current, created]);
     select(created.id);
     setTool("select");
   };
 
   const removeSelected = useCallback(() => {
     if (readOnly || !effectiveSelectedId) return;
-    onChange(annotations.filter((annotation) => annotation.id !== effectiveSelectedId));
-    select(null);
-  }, [annotations, effectiveSelectedId, onChange, readOnly, select]);
+    removeAnnotation(effectiveSelectedId);
+  }, [effectiveSelectedId, readOnly]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        redo();
+        return;
+      }
+      if (event.key === "Escape") {
+        drawingRef.current = null;
+        textGestureRef.current = null;
+        panRef.current = null;
+        window.getSelection()?.removeAllRanges();
+        if (!readOnly) setTool("select");
+        return;
+      }
       if (event.key === "Delete" || event.key === "Backspace") removeSelected();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [removeSelected]);
+  }, [readOnly, redo, removeSelected, tool, undo]);
 
   const go = (next: number) => {
     const bounded = Math.min(Math.max(next, 1), Math.max(documentPageCount, 1));
@@ -454,7 +802,28 @@ export function MarkupEditor({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-[#e9edf0]" dir="rtl">
       <div className="flex flex-wrap items-stretch gap-1 border-b border-[#b9c5cf] bg-[#f7f8f2] px-2 py-1 text-[10px] shadow-sm">
-        <div className="flex items-center gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1" dir="ltr">
+        {!readOnly ? TOOL_GROUPS.map((group, groupIndex) => (
+          <div key={groupIndex} className={`flex flex-wrap items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1 ${groupIndex ? "border-r-2 border-r-[#c3ccd6]" : ""}`}>
+            {group.map((item) => (
+              <RibbonButton
+                key={item}
+                icon={<ToolIcon tool={item} />}
+                label={TOOL_LABELS[item]}
+                active={tool === item}
+                onClick={() => setTool(item)}
+              />
+            ))}
+          </div>
+        )) : <span className="flex items-center px-2 font-bold text-[#5c6b78]">جلسه ثبت نهایی‌شده — فقط خواندنی</span>}
+        {!readOnly ? (
+          <div className="flex items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1">
+            <RibbonButton icon={<IconUndo className="h-4 w-4" />} label="برگرداندن" disabled={!historyRef.current.length} onClick={undo} />
+            <RibbonButton icon={<IconRedo className="h-4 w-4" />} label="جلو" disabled={!futureRef.current.length} onClick={redo} />
+          </div>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap items-center gap-1 border-b border-[#c3ccd6] bg-white px-2 py-0.5 text-[9px]" dir="rtl">
+        <div className="flex items-center gap-0.5 rounded border border-[#d3d9de] bg-[#f7f8f2] px-1" dir="ltr">
           <RibbonButton
             icon={<IconArrow className="h-4 w-4 rotate-180" />}
             label="صفحه قبل"
@@ -469,23 +838,9 @@ export function MarkupEditor({
             disabled={loading || page >= documentPageCount}
           />
         </div>
-        <span className="mx-0.5 border-r border-[#c3ccd6]" />
         {!readOnly ? (
-          <div className="flex flex-wrap items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1">
-            {TOOL_ORDER.map((item) => (
-              <RibbonButton
-                key={item}
-                icon={<ToolIcon tool={item} />}
-                label={TOOL_LABELS[item]}
-                active={tool === item}
-                onClick={() => setTool(item)}
-              />
-            ))}
-          </div>
-        ) : <span className="flex items-center px-2 font-bold text-[#5c6b78]">جلسه ثبت نهایی‌شده — فقط خواندنی</span>}
-        {!readOnly ? (
-          <div className="flex min-h-[2.55rem] flex-wrap items-center gap-1 rounded border border-[#d3d9de] bg-white/70 px-1.5 py-0.5 text-[8px] text-[#33475b]" title="پالت رنگ خط">
-            <span className="font-bold">رنگ خط</span>
+          <div className="flex min-h-[2.35rem] flex-wrap items-center gap-1 rounded border border-[#d3d9de] bg-[#f7f8f2] px-1.5 py-0.5 text-[8px] text-[#33475b]" title="پالت رنگ خط">
+            <span className="font-bold">رنگ</span>
             <div className="flex items-center gap-0.5" role="group" aria-label="پالت رنگ خطوط">
               {MARKUP_COLOR_PALETTE.map((item) => (
                 <button
@@ -506,22 +861,20 @@ export function MarkupEditor({
           </div>
         ) : null}
         {!readOnly ? (
-          <label className="flex min-h-[2.55rem] min-w-[8.5rem] items-center gap-1 rounded border border-[#d3d9de] bg-white/70 px-1.5 py-0.5 text-[8px] text-[#33475b]" title="ضخامت خط">
+          <label className="flex min-h-[2.35rem] min-w-[9rem] items-center gap-1 rounded border border-[#d3d9de] bg-[#f7f8f2] px-1.5 py-0.5 text-[8px] text-[#33475b]" title="ضخامت خط">
             <span className="whitespace-nowrap font-bold">ضخامت</span>
-            <input
-              type="range"
-              min={MIN_MARKUP_STROKE_WIDTH}
-              max={MAX_MARKUP_STROKE_WIDTH}
-              step={0.5}
-              value={strokeWidth}
-              onChange={(event) => changeStrokeWidth(Number(event.target.value))}
-              aria-label="ضخامت خط"
-              className="w-16 accent-[#1f4e79]"
-            />
+            <input type="range" min={MIN_MARKUP_STROKE_WIDTH} max={MAX_MARKUP_STROKE_WIDTH} step={0.5} value={strokeWidth} onChange={(event) => changeStrokeWidth(Number(event.target.value))} aria-label="ضخامت خط" className="w-16 accent-[#1f4e79]" />
             <output className="min-w-[2.1rem] text-center" dir="ltr">{strokeWidth.toFixed(1)}</output>
           </label>
         ) : null}
-        <div className="flex items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1">
+        {!readOnly ? (
+          <label className="flex min-h-[2.35rem] min-w-[8.5rem] items-center gap-1 rounded border border-[#d3d9de] bg-[#f7f8f2] px-1.5 py-0.5 text-[8px] text-[#33475b]" title="اندازه متن">
+            <span className="whitespace-nowrap font-bold">اندازه متن</span>
+            <input type="range" min={MIN_FONT_SIZE} max={MAX_FONT_SIZE} step={1} value={fontSize} onChange={(event) => changeFontSize(Number(event.target.value))} aria-label="اندازه متن" className="w-14 accent-[#1f4e79]" />
+            <output className="min-w-[1.8rem] text-center" dir="ltr">{fontSize}</output>
+          </label>
+        ) : null}
+        <div className="flex items-stretch gap-0.5 rounded border border-[#d3d9de] bg-[#f7f8f2] px-1">
           <RibbonButton icon={<IconFit className="h-4 w-4" />} label="عرض متناسب" onClick={() => setZoom(1)} disabled={loading} />
           <RibbonButton icon={<IconZoomOut className="h-4 w-4" />} label="کوچک‌نمایی" onClick={() => setZoom((value) => Math.max(MIN_ZOOM, value - 0.15))} disabled={loading} />
           <span className="flex min-w-[2.5rem] items-center justify-center text-[9px]" dir="ltr">{Math.round(zoom * 100)}%</span>
@@ -532,6 +885,7 @@ export function MarkupEditor({
       {error ? <div className="m-2 border border-[#c98a86] bg-[#fdeeee] p-2 text-[10px] text-[#8a2b25]">{error}</div> : null}
       <div ref={hostRef} className="min-h-0 flex-1 overflow-auto p-4" dir="ltr">
         <div
+          ref={pageRef}
           className="relative mx-auto bg-white shadow-md"
           style={pageHostStyle}
           onPointerDown={pointerDown}
@@ -543,8 +897,32 @@ export function MarkupEditor({
             if (id) select(id);
           }}
         >
-          <canvas ref={canvasRef} className="absolute inset-0 block" aria-label="PDF page" />
-          <svg className="absolute inset-0 h-full w-full" viewBox="0 0 1 1" preserveAspectRatio="none" role="application" aria-label="لایه نشانه‌گذاری">
+          <canvas ref={canvasRef} className="absolute inset-0 z-0 block" aria-label="PDF page" />
+          <div
+            ref={textLayerRef}
+            className="absolute inset-0 z-10 select-text overflow-hidden"
+            style={{ pointerEvents: !readOnly && isTextTool(tool) ? "auto" : "none" }}
+            aria-label="لایه متن PDF برای انتخاب"
+          >
+            {textLayerItems.map((item, index) => (
+              <span
+                key={`${item.x}-${item.y}-${index}`}
+                className="absolute block whitespace-pre text-transparent"
+                style={{
+                  left: `${item.x * 100}%`,
+                  top: `${item.y * 100}%`,
+                  width: `${item.width * 100}%`,
+                  height: `${Math.max(item.height, 0.012) * 100}%`,
+                  fontSize: `${Math.max(8, item.height * viewport.height * scale * 0.82)}px`,
+                  lineHeight: 1,
+                  userSelect: "text",
+                }}
+              >
+                {item.text}
+              </span>
+            ))}
+          </div>
+          <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 1 1" preserveAspectRatio="none" role="application" aria-label="لایه نشانه‌گذاری">
             <defs>
               <marker id="markup-arrow-head" markerWidth="0.04" markerHeight="0.04" refX="0.035" refY="0.02" orient="auto" markerUnits="userSpaceOnUse">
                 <path d="M0,0 L0.04,0.02 L0,0.04 z" fill="context-stroke" />
@@ -559,8 +937,10 @@ export function MarkupEditor({
                 "data-markup-id": annotation.id,
                 stroke,
                 strokeWidth: selected ? width + 0.001 : width,
+                pointerEvents: isTextTool(tool) ? "none" as const : "auto" as const,
               };
               const p = annotation.points;
+              const textSize = Math.max(0.012, Math.min(0.06, (annotation.font_size ?? fontSize) / 600));
               if (annotation.kind === "freehand") {
                 return <polyline key={annotation.id} {...common} points={p.map((item) => `${item.x},${item.y}`).join(" ")} fill="none" />;
               }
@@ -570,14 +950,34 @@ export function MarkupEditor({
                 return <line key={annotation.id} {...common} x1={first.x} y1={first.y} x2={last.x} y2={last.y} markerEnd="url(#markup-arrow-head)" />;
               }
               return (
-                <g key={annotation.id} data-markup-id={annotation.id}>
-                  {annotation.kind === "highlight" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill={stroke} fillOpacity={0.25} /> : null}
+                <g key={annotation.id} data-markup-id={annotation.id} pointerEvents={isTextTool(tool) ? "none" : "auto"}>
+                  {annotation.kind === "highlight" ? pointRectangles(p).map((item, index) => {
+                    const itemBox = bounds({ points: item, kind: annotation.kind });
+                    return <rect key={index} {...common} x={itemBox.x} y={itemBox.y} width={itemBox.w} height={itemBox.h} fill={stroke} fillOpacity={0.25} />;
+                  }) : null}
+                  {annotation.kind === "underline" || annotation.kind === "strikethrough" ? pointRectangles(p).map((item, index) => {
+                    const itemBox = bounds({ points: item, kind: annotation.kind });
+                    const y = annotation.kind === "underline" ? itemBox.y + itemBox.h : itemBox.y + itemBox.h * 0.52;
+                    return <line key={index} {...common} x1={itemBox.x} y1={y} x2={itemBox.x + itemBox.w} y2={y} />;
+                  }) : null}
                   {annotation.kind === "rectangle" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="none" /> : null}
+                  {annotation.kind === "ellipse" ? <ellipse {...common} cx={box.x + box.w / 2} cy={box.y + box.h / 2} rx={box.w / 2} ry={box.h / 2} fill="none" /> : null}
                   {annotation.kind === "revision_cloud" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="none" strokeDasharray="0.012 0.006" /> : null}
                   {annotation.kind === "sticky_note" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="#fff2a8" fillOpacity={0.9} /> : null}
-                  {annotation.kind === "free_text" ? <text {...common} x={box.x} y={box.y + box.h * 0.8} fontSize={Math.max(0.014, box.h * 0.65)} fill={stroke} stroke="none">{annotation.text || "نظر"}</text> : null}
-                  {annotation.kind === "sticky_note" ? <text x={box.x + 0.006} y={box.y + Math.min(0.03, box.h * 0.55)} fontSize={Math.max(0.01, box.h * 0.24)} fill="#482c00" stroke="none">{annotation.text || "نظر"}</text> : null}
-                  {selected && !readOnly ? <rect data-resize-handle="true" x={box.x + box.w - 0.012} y={box.y + box.h - 0.012} width="0.024" height="0.024" fill="white" stroke={stroke} strokeWidth={width} /> : null}
+                  {annotation.kind === "free_text" ? <text {...common} x={box.x} y={box.y + box.h * 0.8} fontSize={textSize} fill={stroke} stroke="none">{annotation.text || "نظر"}</text> : null}
+                  {annotation.kind === "sticky_note" ? <text x={box.x + 0.006} y={box.y + Math.min(0.03, box.h * 0.55)} fontSize={textSize * 0.75} fill="#482c00" stroke="none">{annotation.text || "نظر"}</text> : null}
+                  {annotation.kind === "callout" ? (
+                    <>
+                      {(() => {
+                        const anchor = p[0] ?? { x: box.x, y: box.y };
+                        const target = { x: clamp(anchor.x, box.x, box.x + box.w), y: clamp(anchor.y, box.y, box.y + box.h) };
+                        return <line {...common} x1={anchor.x} y1={anchor.y} x2={target.x} y2={target.y} markerEnd="url(#markup-arrow-head)" />;
+                      })()}
+                      <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="white" fillOpacity={0.92} />
+                      <text x={box.x + 0.006} y={box.y + box.h * 0.65} fontSize={textSize} fill={stroke} stroke="none">{annotation.text || "نظر"}</text>
+                    </>
+                  ) : null}
+                  {selected && !readOnly ? <rect data-resize-handle="true" x={box.x + box.w - 0.012} y={box.y + box.h - 0.012} width="0.024" height="0.024" fill="white" stroke={stroke} strokeWidth={width} pointerEvents={isTextTool(tool) ? "none" : "auto"} /> : null}
                 </g>
               );
             })}

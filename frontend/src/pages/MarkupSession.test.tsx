@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/markups", () => ({
   createMarkupSession: mocks.create,
   getMarkupSession: mocks.get,
+  MARKUP_FINAL_SUBMIT_LABEL: "ثبت نهایی و ثبت در Comment",
+  markupKindLabel: (kind: string) => kind,
   saveMarkupAnnotations: mocks.save,
   submitMarkupSession: mocks.submit,
   replyToMarkup: mocks.reply,
@@ -181,7 +183,7 @@ describe("MarkupSessionPage", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "ویرایش متن نظر 1" }), { target: { value: "نظر اصلاح‌شده" } });
     fireEvent.click(screen.getByRole("button", { name: "ذخیره تغییر" }));
     expect(screen.getByText("نظر اصلاح‌شده")).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: /ثبت نهایی و تولید Comment/ }).at(-1)!);
+    fireEvent.click(screen.getAllByRole("button", { name: "ثبت نهایی و ثبت در Comment" }).at(-1)!);
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
     expect(mocks.save.mock.calls[0][1][0]).not.toHaveProperty("id");
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith("session-1"));

@@ -35,6 +35,8 @@ vi.mock("@/lib/api", () => ({
 vi.mock("@/lib/markups", () => ({
   createMarkupSession: vi.fn(),
   downloadMarkupOutput: vi.fn(),
+  MARKUP_FINAL_SUBMIT_LABEL: "ثبت نهایی و ثبت در Comment",
+  markupKindLabel: (kind: string) => kind,
   replyToMarkup: vi.fn(),
   saveMarkupAnnotations: vi.fn(),
   submitMarkupSession: vi.fn(),

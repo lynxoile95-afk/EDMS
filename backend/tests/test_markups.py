@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models import DocumentRevision, MDLItem
 from app.services import transmittal_service
+from app.services.markup_rendering import render_annotated_pdf
 from app.services.storage import get_storage
 from app.models.enums import PurposeOfIssue, TransmittalType
 from tests.conftest import auth_headers
@@ -48,6 +49,65 @@ def _draft(client: TestClient, db: Session, project, users):
     )[0]
     db.commit()
     return draft
+
+
+def test_rendering_supports_text_marks_ellipse_callout_and_persian_text():
+    source = _pdf()
+    annotations = [
+        {
+            "kind": "highlight",
+            "page_no": 1,
+            "points": [
+                {"x": 0.08, "y": 0.12},
+                {"x": 0.32, "y": 0.2},
+                {"x": 0.08, "y": 0.24},
+                {"x": 0.28, "y": 0.31},
+            ],
+            "text": None,
+            "color": "#d97706",
+            "stroke_width": 10,
+        },
+        {
+            "kind": "underline",
+            "page_no": 1,
+            "points": [{"x": 0.1, "y": 0.35}, {"x": 0.4, "y": 0.42}],
+            "text": None,
+            "color": "#1f4e79",
+            "stroke_width": 2,
+        },
+        {
+            "kind": "strikethrough",
+            "page_no": 1,
+            "points": [{"x": 0.1, "y": 0.45}, {"x": 0.4, "y": 0.52}],
+            "text": None,
+            "color": "#b91c1c",
+            "stroke_width": 2,
+        },
+        {
+            "kind": "ellipse",
+            "page_no": 1,
+            "points": [{"x": 0.45, "y": 0.1}, {"x": 0.75, "y": 0.3}],
+            "text": None,
+            "color": "#1f8a70",
+            "stroke_width": 3,
+        },
+        {
+            "kind": "callout",
+            "page_no": 1,
+            "points": [{"x": 0.78, "y": 0.4}, {"x": 0.55, "y": 0.45}, {"x": 0.9, "y": 0.62}],
+            "text": "نظر فارسی",
+            "color": "#7c3aed",
+            "stroke_width": 4,
+        },
+    ]
+    rendered = render_annotated_pdf(source, annotations)
+    assert rendered != source
+    document = fitz.open(stream=rendered, filetype="pdf")
+    try:
+        assert len(document[0].get_drawings()) >= 5
+        assert any(font[1] == "ttf" for font in document[0].get_fonts())
+    finally:
+        document.close()
 
 
 def test_markup_permissions_save_reload_submit_outputs_and_original_hash(

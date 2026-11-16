@@ -1,0 +1,447 @@
+[
+  {
+    "id": "openai",
+    "name": "OpenAI",
+    "icon": "AI",
+    "iconColor": "#111827",
+    "defaultBaseUrl": "https://api.openai.com/v1",
+    "apiType": "openai-compatible",
+    "suggestedModels": [
+      "gpt-4o-mini",
+      "gpt-4o",
+      "gpt-4.1-mini",
+      "gpt-4.1"
+    ],
+    "defaultModel": "gpt-4o-mini",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [
+      "gpt-4o-mini",
+      "gpt-4o",
+      "gpt-4.1-mini",
+      "gpt-4.1"
+    ],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "AI"
+  },
+  {
+    "id": "gemini",
+    "name": "Google Gemini",
+    "icon": "G",
+    "iconColor": "#4285f4",
+    "defaultBaseUrl": "https://generativelanguage.googleapis.com/v1beta",
+    "apiType": "gemini",
+    "suggestedModels": [
+      "gemini-2.0-flash",
+      "gemini-2.5-flash",
+      "gemini-2.5-pro",
+      "gemini-1.5-flash"
+    ],
+    "defaultModel": "gemini-2.0-flash",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [
+      "gemini-2.0-flash",
+      "gemini-2.5-flash",
+      "gemini-2.5-pro",
+      "gemini-1.5-flash"
+    ],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "gemini-generate",
+      "path": "/models/{model}:generateContent"
+    },
+    "avatar": "G"
+  },
+  {
+    "id": "anthropic",
+    "name": "Anthropic Claude",
+    "icon": "A",
+    "iconColor": "#d97757",
+    "defaultBaseUrl": "https://api.anthropic.com/v1",
+    "apiType": "anthropic",
+    "suggestedModels": [
+      "claude-3-5-haiku-latest",
+      "claude-3-5-sonnet-latest",
+      "claude-3-7-sonnet-latest",
+      "claude-sonnet-4-20250514"
+    ],
+    "defaultModel": "claude-3-5-haiku-latest",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [
+      "claude-3-5-sonnet-latest",
+      "claude-3-7-sonnet-latest",
+      "claude-sonnet-4-20250514"
+    ],
+    "supportsModelList": false,
+    "testEndpoint": {
+      "kind": "anthropic-messages",
+      "path": "/messages"
+    },
+    "avatar": "A"
+  },
+  {
+    "id": "azure-openai",
+    "name": "Azure OpenAI",
+    "icon": "AZ",
+    "iconColor": "#0078d4",
+    "defaultBaseUrl": "https://YOUR-RESOURCE.openai.azure.com",
+    "apiType": "azure",
+    "suggestedModels": [
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-4.1"
+    ],
+    "defaultModel": "gpt-4o",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-4.1"
+    ],
+    "supportsModelList": false,
+    "extraFields": [
+      {
+        "id": "deployment",
+        "label": "نام Deployment",
+        "required": true,
+        "placeholder": "my-gpt4o-deployment"
+      },
+      {
+        "id": "api_version",
+        "label": "API version",
+        "required": true,
+        "default": "2024-10-21",
+        "placeholder": "2024-10-21"
+      }
+    ],
+    "testEndpoint": {
+      "kind": "azure-chat",
+      "path": "/openai/deployments/{deployment}/chat/completions"
+    },
+    "avatar": "AZ"
+  },
+  {
+    "id": "mistral",
+    "name": "Mistral AI",
+    "icon": "M",
+    "iconColor": "#f97316",
+    "defaultBaseUrl": "https://api.mistral.ai/v1",
+    "apiType": "openai-compatible",
+    "suggestedModels": [
+      "pixtral-12b-2409",
+      "pixtral-large-latest",
+      "mistral-small-latest",
+      "mistral-large-latest"
+    ],
+    "defaultModel": "pixtral-large-latest",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [
+      "pixtral-12b-2409",
+      "pixtral-large-latest"
+    ],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "M"
+  },
+  {
+    "id": "groq",
+    "name": "Groq",
+    "icon": "GQ",
+    "iconColor": "#f97316",
+    "defaultBaseUrl": "https://api.groq.com/openai/v1",
+    "apiType": "openai-compatible",
+    "suggestedModels": [
+      "llama-3.2-11b-vision-preview",
+      "llama-3.2-90b-vision-preview",
+      "meta-llama/llama-4-scout-17b-16e-instruct"
+    ],
+    "defaultModel": "llama-3.2-11b-vision-preview",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [
+      "llama-3.2-11b-vision-preview",
+      "llama-3.2-90b-vision-preview",
+      "meta-llama/llama-4-scout-17b-16e-instruct"
+    ],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "GQ"
+  },
+  {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "icon": "DS",
+    "iconColor": "#2563eb",
+    "defaultBaseUrl": "https://api.deepseek.com/v1",
+    "apiType": "openai-compatible",
+    "suggestedModels": [
+      "deepseek-chat",
+      "deepseek-reasoner"
+    ],
+    "defaultModel": "deepseek-chat",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "DS"
+  },
+  {
+    "id": "xai",
+    "name": "xAI (Grok)",
+    "icon": "X",
+    "iconColor": "#111827",
+    "defaultBaseUrl": "https://api.x.ai/v1",
+    "apiType": "openai-compatible",
+    "suggestedModels": [
+      "grok-2-vision-1212",
+      "grok-2-latest",
+      "grok-3-mini"
+    ],
+    "defaultModel": "grok-2-vision-1212",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [
+      "grok-2-vision-1212",
+      "grok-2-vision-latest",
+      "grok-3-mini"
+    ],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "X"
+  },
+  {
+    "id": "openrouter",
+    "name": "OpenRouter",
+    "icon": "OR",
+    "iconColor": "#7c3aed",
+    "defaultBaseUrl": "https://openrouter.ai/api/v1",
+    "apiType": "openai-compatible",
+    "suggestedModels": [
+      "google/gemini-2.0-flash-001",
+      "openai/gpt-4o-mini",
+      "anthropic/claude-3.5-sonnet"
+    ],
+    "defaultModel": "google/gemini-2.0-flash-001",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [
+      "google/gemini-2.0-flash-001",
+      "openai/gpt-4o-mini",
+      "anthropic/claude-3.5-sonnet"
+    ],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "OR"
+  },
+  {
+    "id": "together",
+    "name": "Together AI",
+    "icon": "T",
+    "iconColor": "#0f766e",
+    "defaultBaseUrl": "https://api.together.xyz/v1",
+    "apiType": "openai-compatible",
+    "suggestedModels": [
+      "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+      "Qwen/Qwen2.5-VL-72B-Instruct",
+      "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    ],
+    "defaultModel": "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [
+      "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+      "Qwen/Qwen2.5-VL-72B-Instruct"
+    ],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "T"
+  },
+  {
+    "id": "perplexity",
+    "name": "Perplexity",
+    "icon": "P",
+    "iconColor": "#20a39e",
+    "defaultBaseUrl": "https://api.perplexity.ai",
+    "apiType": "openai-compatible",
+    "suggestedModels": [
+      "sonar",
+      "sonar-pro",
+      "sonar-reasoning"
+    ],
+    "defaultModel": "sonar",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [],
+    "supportsModelList": false,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "P"
+  },
+  {
+    "id": "cohere",
+    "name": "Cohere",
+    "icon": "C",
+    "iconColor": "#d946ef",
+    "defaultBaseUrl": "https://api.cohere.com/v2",
+    "apiType": "custom",
+    "suggestedModels": [
+      "command-r-plus",
+      "command-r",
+      "command-a-03-2025"
+    ],
+    "defaultModel": "command-r-plus",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [],
+    "supportsModelList": false,
+    "testEndpoint": {
+      "kind": "cohere-chat",
+      "path": "/chat"
+    },
+    "avatar": "C"
+  },
+  {
+    "id": "huggingface",
+    "name": "Hugging Face Inference",
+    "icon": "HF",
+    "iconColor": "#fbbf24",
+    "defaultBaseUrl": "https://router.huggingface.co/v1",
+    "apiType": "openai-compatible",
+    "suggestedModels": [
+      "Qwen/Qwen2.5-VL-7B-Instruct",
+      "Qwen/Qwen2.5-VL-72B-Instruct",
+      "meta-llama/Llama-3.2-11B-Vision-Instruct"
+    ],
+    "defaultModel": "Qwen/Qwen2.5-VL-7B-Instruct",
+    "keyRequired": true,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [
+      "Qwen/Qwen2.5-VL-7B-Instruct",
+      "Qwen/Qwen2.5-VL-72B-Instruct",
+      "meta-llama/Llama-3.2-11B-Vision-Instruct"
+    ],
+    "supportsModelList": false,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "HF"
+  },
+  {
+    "id": "ollama",
+    "name": "Ollama",
+    "icon": "OL",
+    "iconColor": "#111827",
+    "defaultBaseUrl": "http://localhost:11434",
+    "apiType": "ollama",
+    "suggestedModels": [
+      "llama3.2-vision",
+      "qwen2.5vl",
+      "minicpm-v"
+    ],
+    "defaultModel": "llama3.2-vision",
+    "keyRequired": false,
+    "baseUrlEditable": true,
+    "isLocal": true,
+    "visionCapableModels": [
+      "llama3.2-vision",
+      "qwen2.5vl",
+      "minicpm-v"
+    ],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "ollama-tags",
+      "path": "/api/tags"
+    },
+    "avatar": "OL"
+  },
+  {
+    "id": "lm-studio",
+    "name": "LM Studio",
+    "icon": "LM",
+    "iconColor": "#2563eb",
+    "defaultBaseUrl": "http://localhost:1234/v1",
+    "apiType": "openai-compatible",
+    "suggestedModels": [
+      "local-model",
+      "qwen2.5-vl-7b-instruct",
+      "llava-1.5-7b"
+    ],
+    "defaultModel": "local-model",
+    "keyRequired": false,
+    "baseUrlEditable": true,
+    "isLocal": true,
+    "visionCapableModels": [
+      "qwen2.5-vl-7b-instruct",
+      "llava-1.5-7b"
+    ],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "LM"
+  },
+  {
+    "id": "custom-openai",
+    "name": "Custom OpenAI-compatible",
+    "icon": "API",
+    "iconColor": "#475569",
+    "defaultBaseUrl": "http://localhost:8000/v1",
+    "apiType": "openai-compatible",
+    "suggestedModels": [],
+    "defaultModel": "",
+    "keyRequired": false,
+    "baseUrlEditable": true,
+    "isLocal": false,
+    "visionCapableModels": [],
+    "supportsModelList": true,
+    "testEndpoint": {
+      "kind": "openai-chat",
+      "path": "/chat/completions"
+    },
+    "avatar": "API"
+  }
+]

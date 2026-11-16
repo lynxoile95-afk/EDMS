@@ -1,0 +1,365 @@
+/** Tiny inline SVG icon set — no icon font, no network, RTL-safe. */
+
+import type { SVGProps } from "react";
+import type { MarkupKind } from "@/lib/types";
+
+type IconProps = SVGProps<SVGSVGElement>;
+
+const base = {
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.7,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+  "aria-hidden": true,
+};
+
+export const IconHome = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M3 11l9-8 9 8" />
+    <path d="M5 10v10h14V10M9 20v-6h6v6" />
+  </svg>
+);
+
+export const IconBell = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M6 17h12l-1.5-2V10a4.5 4.5 0 0 0-9 0v5z" />
+    <path d="M10 20h4" />
+  </svg>
+);
+
+export const IconUpload = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M12 16V4M8 8l4-4 4 4" />
+    <path d="M5 14v5h14v-5" />
+  </svg>
+);
+
+export const IconUsers = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="9" cy="8" r="3" />
+    <path d="M3 20a6 6 0 0 1 12 0M17 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 6" />
+  </svg>
+);
+
+export const IconDoc = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M6 2h8l5 5v15H6z" />
+    <path d="M14 2v5h5M9 12h7M9 16h7M9 8h2" />
+  </svg>
+);
+
+export const IconClipboard = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="5" y="4" width="14" height="17" rx="2" />
+    <path d="M9 4V2h6v2M9 10h6M9 14h4" />
+  </svg>
+);
+
+export const IconValidation = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5 3h9l5 5v10a3 3 0 0 1-3 3H5z" />
+    <path d="M14 3v5h5" />
+    <circle cx="17" cy="17" r="4" fill="currentColor" stroke="none" opacity=".16" />
+    <path d="m15.2 17 1.2 1.2 2.5-2.7" />
+  </svg>
+);
+
+export const IconDocs = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M8 2h7l4 4v13H8z" />
+    <path d="M15 2v4h4" />
+    <path d="M5 6v16h11" />
+  </svg>
+);
+
+export const IconFolder = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M3 7h6l2 2h10v10H3z" />
+    <path d="M3 7V5h6l2 2" />
+  </svg>
+);
+
+export const IconEdit = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4 20h4l11-11-4-4L4 16z" />
+    <path d="M14 5l4 4" />
+  </svg>
+);
+
+export const IconView = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" />
+    <circle cx="12" cy="12" r="2.6" />
+  </svg>
+);
+
+export const IconEye = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" />
+    <circle cx="12" cy="12" r="2.5" />
+  </svg>
+);
+
+export const IconPrint = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M7 9V3h10v6" />
+    <rect x="4" y="9" width="16" height="7" rx="1" />
+    <path d="M7 16h10v5H7z" />
+  </svg>
+);
+
+export const IconFlow = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="3" y="3" width="6" height="5" />
+    <rect x="15" y="16" width="6" height="5" />
+    <path d="M6 8v6a3 3 0 0 0 3 3h6" />
+    <path d="M12 14l3 3-3 3" />
+  </svg>
+);
+
+export const IconChain = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M9 15l6-6" />
+    <path d="M7 12l-2 2a3 3 0 0 0 4 4l2-2" />
+    <path d="M17 12l2-2a3 3 0 0 0-4-4l-2 2" />
+  </svg>
+);
+
+export const IconMail = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="2" y="5" width="20" height="14" rx="1" />
+    <path d="M2 6l10 7 10-7" />
+  </svg>
+);
+
+export const IconComment = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M3 4h18v12H8l-5 4z" />
+    <path d="M7 9h10M7 12h6" />
+  </svg>
+);
+
+export const IconAdd = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 8v8M8 12h8" />
+  </svg>
+);
+
+export const IconDelete = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M8.5 8.5l7 7M15.5 8.5l-7 7" />
+  </svg>
+);
+
+export const IconRefresh = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M20 12a8 8 0 1 1-2.6-5.9" />
+    <path d="M20 4v4h-4" />
+  </svg>
+);
+
+export const IconSave = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4 4h12l4 4v12H4z" />
+    <path d="M8 4v6h8V4M8 20v-6h8v6" />
+  </svg>
+);
+
+export const IconSearch = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="11" cy="11" r="6" />
+    <path d="M16 16l5 5" />
+  </svg>
+);
+
+export const IconArrow = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M20 12H6" />
+    <path d="M11 7l-5 5 5 5" />
+  </svg>
+);
+
+export const IconArchive = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="3" y="4" width="18" height="4" />
+    <path d="M5 8v12h14V8" />
+    <path d="M10 12h4" />
+  </svg>
+);
+
+export const IconClock = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+);
+
+export const IconLock = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="5" y="11" width="14" height="9" rx="1" />
+    <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+  </svg>
+);
+
+export const IconPaperclip = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M20 11l-8 8a4 4 0 0 1-6-6l8-8a3 3 0 0 1 4 4l-8 8a1.6 1.6 0 0 1-2-2l7-7" />
+  </svg>
+);
+
+/** Annotation/ribbon icons stay inline so the review toolbar remains offline-capable. */
+export const IconCursor = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5 3l4 17 3-6 6 3L5 3z" />
+    <path d="M12 14l3 5" />
+  </svg>
+);
+
+export const IconHand = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M8 11V5a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v6-3a1.5 1.5 0 0 1 3 0v5c0 5-3 8-7 8h-1c-3 0-5-2-6-4l-2-4a1.5 1.5 0 0 1 2.7-1.3z" />
+  </svg>
+);
+
+export const IconStickyNote = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5 3h14v13l-5 5H5z" />
+    <path d="M14 21v-5h5M8 8h8M8 12h5" />
+  </svg>
+);
+
+export const IconHighlight = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5 16l8-8 4 4-8 8H5z" />
+    <path d="M13 8l2-2 4 4-2 2M4 21h16" />
+  </svg>
+);
+
+export const IconUnderline = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M6 4v6a6 6 0 0 0 12 0V4" />
+    <path d="M4 20h16" />
+  </svg>
+);
+
+export const IconStrikethrough = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M6 7a4 4 0 0 1 7.5-2M18 17a4 4 0 0 1-7.5 2" />
+    <path d="M4 12h16" />
+  </svg>
+);
+
+export const IconCallout = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4 4h15v10H9l-5 4z" />
+    <path d="M8 8h7M8 11h4" />
+  </svg>
+);
+
+export const IconEllipse = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <ellipse cx="12" cy="12" rx="8" ry="6" />
+  </svg>
+);
+
+export const IconEraser = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5 15l8-10a2 2 0 0 1 3-.2l3.2 3.2a2 2 0 0 1-.1 2.8l-7.4 7.4H7z" />
+    <path d="M13 18h7" />
+  </svg>
+);
+
+export const IconUndo = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M9 7H4v5" />
+    <path d="M4 12c2-5 10-7 15-3 2 1.5 2 4.5 0 6" />
+  </svg>
+);
+
+export const IconRedo = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M15 7h5v5" />
+    <path d="M20 12c-2-5-10-7-15-3-2 1.5-2 4.5 0 6" />
+  </svg>
+);
+
+export const IconRectangle = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="4" y="5" width="16" height="14" rx="1" />
+  </svg>
+);
+
+export const IconCloud = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5 7l3-3 3 2 3-2 3 3 3 1-1 4 1 3-4 3-3-2-3 2-3-3-3-1 1-4z" strokeDasharray="2 1.5" />
+  </svg>
+);
+
+export const IconText = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5 5h14M12 5v14M8 19h8" />
+    <path d="M8 5v3M16 5v3" />
+  </svg>
+);
+
+export const IconPen = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4 20l1.5-5.5L16 4l4 4-10.5 10.5z" />
+    <path d="M13 7l4 4M4 20l4.5-1.5" />
+  </svg>
+);
+
+export const IconZoomIn = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="10.5" cy="10.5" r="6" />
+    <path d="M10.5 7.5v6M7.5 10.5h6M15 15l5 5" />
+  </svg>
+);
+
+export const IconZoomOut = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="10.5" cy="10.5" r="6" />
+    <path d="M7.5 10.5h6M15 15l5 5" />
+  </svg>
+);
+
+export const IconFit = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+    <path d="M9 9h6v6H9z" />
+  </svg>
+);
+
+export const IconGrid = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="3" y="4" width="18" height="16" />
+    <path d="M3 9h18M3 15h18M9 4v16M15 4v16" />
+  </svg>
+);
+
+export const IconPerson = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="8" r="3.4" />
+    <path d="M5 20a7 7 0 0 1 14 0" />
+  </svg>
+);
+
+export function MarkupKindIcon({ kind, ...props }: { kind: MarkupKind } & IconProps) {
+  switch (kind) {
+    case "sticky_note": return <IconStickyNote {...props} />;
+    case "highlight": return <IconHighlight {...props} />;
+    case "underline": return <IconUnderline {...props} />;
+    case "strikethrough": return <IconStrikethrough {...props} />;
+    case "rectangle": return <IconRectangle {...props} />;
+    case "ellipse": return <IconEllipse {...props} />;
+    case "revision_cloud": return <IconCloud {...props} />;
+    case "arrow": return <IconArrow {...props} />;
+    case "free_text": return <IconText {...props} />;
+    case "callout": return <IconCallout {...props} />;
+    case "freehand": return <IconPen {...props} />;
+  }
+}

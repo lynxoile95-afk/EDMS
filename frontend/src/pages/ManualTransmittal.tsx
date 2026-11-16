@@ -23,8 +23,22 @@ const DOC_STATUS_OPTIONS = ["Commented", "No Comment", "Approve As Note"] as con
 
 type ManualTransmittalType = "OT" | "OS";
 
+const MANUAL_REQUEST_TIMEOUT_MS = 30_000;
+
 function messageOf(error: unknown): string {
-  return error instanceof ApiError ? error.detail : "ثبت ترانسمیتال دستی ناموفق بود.";
+  if (error instanceof ApiError) return error.detail;
+  if (error instanceof Error && error.message) return error.message;
+  return "ثبت ترانسمیتال دستی ناموفق بود.";
+}
+
+function withTimeout<T>(operation: Promise<T>, message: string): Promise<T> {
+  let timer: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(message)), MANUAL_REQUEST_TIMEOUT_MS);
+  });
+  return Promise.race([operation, timeout]).finally(() => {
+    if (timer !== undefined) window.clearTimeout(timer);
+  });
 }
 
 export function ManualTransmittalPage() {
@@ -168,36 +182,54 @@ export function ManualTransmittalPage() {
 
     setBusy(true);
     try {
-      const created = await api.post<TransmittalDetail>(`/projects/${project.id}/transmittals/manual`, {
-        rows: selectedItems.map((item) => ({
-          mdl_item_id: item.id,
-          revision: selected[item.id].revision.trim(),
-          page_count: Math.max(1, Number(selected[item.id].page_count) || 1),
-          note: selected[item.id].note.trim() || null,
-          doc_status: selected[item.id].doc_status,
-        })),
-        purpose,
-        type,
-        issue_date: issueDate,
-        final_approver_id: finalApproverId,
-        from_org: fromOrg.trim() || null,
-        to_org: toOrg.trim() || null,
-        remarks: remarks.trim() || null,
-      });
+      const created = await withTimeout(
+        api.post<TransmittalDetail>(`/projects/${project.id}/transmittals/manual`, {
+          rows: selectedItems.map((item) => ({
+            mdl_item_id: item.id,
+            revision: selected[item.id].revision.trim(),
+            page_count: Math.max(1, Number(selected[item.id].page_count) || 1),
+            note: selected[item.id].note.trim() || null,
+            doc_status: selected[item.id].doc_status,
+          })),
+          purpose,
+          type,
+          issue_date: issueDate,
+          final_approver_id: finalApproverId,
+          from_org: fromOrg.trim() || null,
+          to_org: toOrg.trim() || null,
+          remarks: remarks.trim() || null,
+        }),
+        "ایجاد پیش‌نویس بیش از زمان مجاز طول کشید؛ اتصال شبکه را بررسی کنید و دوباره تلاش کنید.",
+      );
       setDraftId(created.id);
 
-      for (const item of selectedItems) {
+      const uploadTasks = selectedItems.flatMap((item) => {
         const line = created.lines.find((candidate) => candidate.mdl_item_id === item.id);
         const files = attachments[item.id] ?? [];
-        if (files.length === 0) continue;
-        if (!line) throw new Error(`ردیف مدرک «${item.doc_code}» در پیش‌نویس پیدا نشد.`);
-        for (const file of files) {
+        if (files.length === 0) return [];
+        if (!line) {
+          return [Promise.reject(new Error(`ردیف مدرک «${item.doc_code}» در پیش‌نویس پیدا نشد.`))];
+        }
+        return files.map((file) => {
           const form = new FormData();
           form.append("line_id", line.id);
           form.append("kind", "pdf");
           form.append("file", file);
-          await api.postForm(`/transmittals/${created.id}/attachments`, form);
-        }
+          return withTimeout(
+            api.postForm(`/transmittals/${created.id}/attachments`, form),
+            `بارگذاری فایل «${file.name}» بیش از زمان مجاز طول کشید؛ پیش‌نویس ایجاد شده و می‌توانید آن را از کارتابل ادامه دهید.`,
+          );
+        });
+      });
+      const uploadResults = await Promise.allSettled(uploadTasks);
+      const uploadFailures = uploadResults.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (uploadFailures.length > 0) {
+        const firstFailure = uploadFailures[0]?.reason;
+        throw new Error(
+          `پیش‌نویس ${created.id} ایجاد شد، اما ${persianDigits(uploadFailures.length)} فایل از ${persianDigits(uploadTasks.length)} فایل بارگذاری نشد. ${messageOf(firstFailure)} پیش‌نویس را باز کنید و بارگذاری را ادامه دهید.`,
+        );
       }
       navigate(`/transmittals/${created.id}`);
     } catch (err) {

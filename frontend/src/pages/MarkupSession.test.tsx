@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { MarkupAnnotation, MarkupSession } from "@/lib/types";
@@ -21,6 +21,17 @@ vi.mock("@/lib/markups", () => ({
   submitMarkupSession: mocks.submit,
   replyToMarkup: mocks.reply,
   downloadMarkupOutput: mocks.download,
+  toMarkupAnnotationInputs: (annotations: MarkupAnnotation[], persisted: MarkupAnnotation[]) => {
+    const persistedIds = new Set(persisted.map((annotation) => annotation.id));
+    return annotations.map((annotation) => ({
+      ...(persistedIds.has(annotation.id) ? { id: annotation.id } : {}),
+      kind: annotation.kind,
+      page_no: annotation.page_no,
+      points: annotation.points,
+      text: annotation.text,
+      color: annotation.color,
+    }));
+  },
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -96,6 +107,7 @@ function session(overrides: Partial<MarkupSession> = {}): MarkupSession {
 }
 
 function renderPage(entry = "/markups/new?transmittal_id=transmittal-1&file_id=file-1") {
+  cleanup();
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
@@ -107,6 +119,7 @@ function renderPage(entry = "/markups/new?transmittal_id=transmittal-1&file_id=f
 }
 
 afterEach(() => {
+  cleanup();
   vi.clearAllMocks();
   window.localStorage.clear();
 });
@@ -115,7 +128,24 @@ beforeEach(() => {
   mocks.create.mockResolvedValue(session());
   mocks.get.mockResolvedValue(session());
   mocks.blobData.mockResolvedValue({ arrayBuffer: async () => new ArrayBuffer(16) });
-  mocks.save.mockImplementation(async (_id: string, annotations: MarkupAnnotation[]) => session({ draft_version: 1, annotations }));
+  mocks.save.mockImplementation(async (_id: string, annotations: MarkupAnnotation[]) => session({
+    draft_version: 1,
+    annotations: annotations.map((annotation, index) => ({
+      ...annotation,
+      id: annotation.id ?? `server-annotation-${index + 1}`,
+      number: index + 1,
+      text: annotation.text ?? null,
+      author_id: null,
+      author_name: "نویسنده",
+      created_at: annotation.created_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      reply_status: "open",
+      reply_text: null,
+      replied_by_id: null,
+      replied_by_name: null,
+      replied_at: null,
+    })),
+  }));
   mocks.submit.mockResolvedValue({
     session: session({ status: "submitted", can_edit: false }),
     outputs: [
@@ -131,7 +161,7 @@ describe("MarkupSessionPage", () => {
   it("keeps a local draft backup and warns before unload", async () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "mock add markup" }));
-    await waitFor(() => expect(window.localStorage.getItem("edms-markup-draft:session-1")).toContain("نظر محلی"));
+    expect(window.localStorage.getItem("edms-markup-draft:session-1")).toContain("نظر محلی");
 
     const event = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(event);
@@ -146,12 +176,13 @@ describe("MarkupSessionPage", () => {
 
     renderPage();
     expect(await screen.findByText(/نسخه محلی ذخیره‌نشده بازیابی شد/)).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: "ذخیره دستی" }).at(-1)!);
-    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
-
+    expect(screen.queryByRole("button", { name: "ذخیره دستی" })).toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: /ثبت نهایی و تولید Comment/ }).at(-1)!);
+    await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    expect(mocks.save.mock.calls[0][1][0]).not.toHaveProperty("id");
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith("session-1"));
     expect(await screen.findByRole("button", { name: "دریافت PDF نشانه‌گذاری" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "دریافت Comment Sheet" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "دریافت Comment Sheet" }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("dialog", { name: /Comment Sheet/ })).toBeTruthy();
   });
 });

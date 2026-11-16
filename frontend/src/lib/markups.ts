@@ -20,6 +20,26 @@ export interface MarkupAnnotationInput {
   color: string;
 }
 
+/**
+ * The editor needs a local id before the first save so selection and dragging
+ * remain stable. The API id is assigned by the database, so only ids already
+ * returned by the current session may be sent back on a later save.
+ */
+export function toMarkupAnnotationInputs(
+  annotations: MarkupAnnotation[],
+  persistedAnnotations: MarkupAnnotation[],
+): MarkupAnnotationInput[] {
+  const persistedIds = new Set(persistedAnnotations.map((annotation) => annotation.id));
+  return annotations.map((annotation) => ({
+    ...(persistedIds.has(annotation.id) ? { id: annotation.id } : {}),
+    kind: annotation.kind,
+    page_no: annotation.page_no,
+    points: annotation.points,
+    text: annotation.text,
+    color: annotation.color,
+  }));
+}
+
 export async function createMarkupSession(transmittalId: string, fileId: string): Promise<MarkupSession> {
   return api.post<MarkupSession>("/markups", { transmittal_id: transmittalId, file_id: fileId });
 }

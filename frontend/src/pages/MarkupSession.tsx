@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { MarkupEditor } from "@/components/MarkupEditor";
-import { ErrorBox, Button, Spinner } from "@/components/ui";
+import { ErrorBox, Button, Modal, Spinner } from "@/components/ui";
+import { PdfViewer } from "@/components/PdfViewer";
 import { Window } from "@/components/window";
 import { api, ApiError } from "@/lib/api";
 import {
@@ -11,6 +12,7 @@ import {
   replyToMarkup,
   saveMarkupAnnotations,
   submitMarkupSession,
+  toMarkupAnnotationInputs,
 } from "@/lib/markups";
 import type { MarkupAnnotation, MarkupReplyStatus, MarkupSession } from "@/lib/types";
 import { persianDigits } from "@/lib/format";
@@ -49,6 +51,10 @@ export function MarkupSessionPage() {
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replyStatuses, setReplyStatuses] = useState<Record<string, Extract<MarkupReplyStatus, "accepted" | "rejected" | "resolved">>>({});
   const [savedOutputs, setSavedOutputs] = useState<{ attachment_id: string; kind: "pdf" | "sheet"; filename: string }[]>([]);
+  const [commentSheetFilename, setCommentSheetFilename] = useState<string | null>(null);
+  const [commentSheetData, setCommentSheetData] = useState<ArrayBuffer | null>(null);
+  const [commentSheetLoading, setCommentSheetLoading] = useState(false);
+  const [commentSheetError, setCommentSheetError] = useState<string | null>(null);
 
   const isNew = !routeSessionId || routeSessionId === "new";
   const queryTransmittalId = search.get("transmittal_id") ?? "";
@@ -74,7 +80,7 @@ export function MarkupSessionPage() {
           if (Array.isArray(parsed.annotations) && parsed.annotations.length && (parsed.version ?? 0) >= loaded.draft_version) {
             setAnnotations(parsed.annotations);
             setDirty(true);
-            setNotice("نسخه محلی ذخیره‌نشده بازیابی شد؛ برای ثبت آن ذخیره را بزنید.");
+            setNotice("نسخه محلی ذخیره‌نشده بازیابی شد؛ ذخیره خودکار فعال است و با ثبت نهایی ارسال می‌شود.");
           }
         }
       } catch {
@@ -123,7 +129,7 @@ export function MarkupSessionPage() {
     try {
       localStorage.setItem(localKey(session.id), JSON.stringify({ version: session.draft_version + 1, annotations }));
     } catch {
-      setNotice("ذخیره محلی مرورگر در دسترس نیست؛ اتصال را حفظ کنید و دستی ذخیره کنید.");
+      setNotice("ذخیره محلی مرورگر در دسترس نیست؛ اتصال را حفظ کنید و ثبت نهایی را بدون بستن صفحه انجام دهید.");
     }
   }, [annotations, dirty, session]);
 
@@ -142,7 +148,11 @@ export function MarkupSessionPage() {
     setBusy(true);
     setError(null);
     try {
-      const saved = await saveMarkupAnnotations(session.id, annotations, session.draft_version);
+      const saved = await saveMarkupAnnotations(
+        session.id,
+        toMarkupAnnotationInputs(annotations, session.annotations),
+        session.draft_version,
+      );
       setSession(saved);
       setAnnotations(saved.annotations);
       setDirty(false);
@@ -176,8 +186,33 @@ export function MarkupSessionPage() {
           JSON.stringify({ version: session.draft_version + 1, annotations: next }),
         );
       } catch {
-        setNotice("ذخیره محلی مرورگر در دسترس نیست؛ اتصال را حفظ کنید و دستی ذخیره کنید.");
+        setNotice("ذخیره محلی مرورگر در دسترس نیست؛ اتصال را حفظ کنید و ثبت نهایی را بدون بستن صفحه انجام دهید.");
       }
+    }
+  };
+
+  const closeCommentSheet = () => {
+    setCommentSheetFilename(null);
+    setCommentSheetData(null);
+    setCommentSheetLoading(false);
+    setCommentSheetError(null);
+  };
+
+  const openCommentSheet = async (
+    transmittalId: string,
+    output: { attachment_id: string; filename: string },
+  ) => {
+    setCommentSheetFilename(output.filename);
+    setCommentSheetData(null);
+    setCommentSheetError(null);
+    setCommentSheetLoading(true);
+    try {
+      const blob = await api.blobData(`/transmittals/${transmittalId}/attachments/${output.attachment_id}/preview`);
+      setCommentSheetData(await blob.arrayBuffer());
+    } catch (err) {
+      setCommentSheetError(err instanceof ApiError ? err.detail : "بازکردن Comment Sheet ناموفق بود؛ فایل را دریافت کنید.");
+    } finally {
+      setCommentSheetLoading(false);
     }
   };
 
@@ -195,6 +230,8 @@ export function MarkupSessionPage() {
       setDirty(false);
       localStorage.removeItem(localKey(session.id));
       setNotice(`ثبت نهایی انجام شد؛ ${persianDigits(result.annotation_count)} نظر در Comment Sheet ثبت شد.`);
+      const commentSheet = result.outputs.find((output) => output.kind === "sheet");
+      if (commentSheet) await openCommentSheet(result.session.transmittal_id, commentSheet);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "ثبت نهایی و تولید خروجی ناموفق بود.");
     } finally {
@@ -243,7 +280,8 @@ export function MarkupSessionPage() {
   if (!session) return <div className="p-3"><ErrorBox message={error ?? "جلسه بازبینی پیدا نشد."} /></div>;
 
   return (
-    <Window
+    <>
+      <Window
       title={<span className="ltr" dir="ltr">PDF Review Markup — {session.original_filename}</span>}
       subtitle={session.document_code ? `${session.document_code} · Rev ${session.revision_label ?? "—"}` : undefined}
       onClose={close}
@@ -260,7 +298,6 @@ export function MarkupSessionPage() {
             {dirty ? <span className="font-bold text-[#9a3d32]">● تغییر ذخیره‌نشده</span> : <span className="text-[#3f8f45]">● ذخیره‌شده</span>}
           </div>
           <div className="flex items-center gap-1">
-            {session.status === "draft" && session.can_edit ? <Button className="btn-sm" disabled={busy || !dirty} onClick={() => void save()}>ذخیره دستی</Button> : null}
             {session.status === "draft" && session.can_edit ? <Button variant="primary" className="btn-sm" disabled={busy} onClick={() => void submit()}>ثبت نهایی و تولید Comment</Button> : null}
             {savedOutputs.map((output) => (
               <Button key={output.attachment_id} className="btn-sm" disabled={busy} onClick={() => void downloadOutput(output.attachment_id, output.filename)}>
@@ -332,6 +369,44 @@ export function MarkupSessionPage() {
         </div>
       </div>
     </Window>
+    <Modal
+      open={Boolean(commentSheetFilename)}
+      title={commentSheetFilename ? `Comment Sheet — ${commentSheetFilename}` : "Comment Sheet"}
+      onClose={closeCommentSheet}
+      width="max-w-6xl"
+      footer={
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[9.5px] text-[#5c6b78]">نتیجه ثبت نهایی از انبار اسناد با احراز هویت باز شده است.</span>
+          <div className="flex items-center gap-2">
+            {savedOutputs.find((output) => output.kind === "sheet") ? (
+              <Button
+                className="btn-sm"
+                disabled={busy}
+                onClick={() => {
+                  const output = savedOutputs.find((item) => item.kind === "sheet");
+                  if (output && session) void downloadOutput(output.attachment_id, output.filename);
+                }}
+              >
+                دریافت Comment Sheet
+              </Button>
+            ) : null}
+            <Button className="btn-sm" onClick={closeCommentSheet}>بستن</Button>
+          </div>
+        </div>
+      }
+    >
+      {commentSheetLoading ? <Spinner label="در حال بازکردن Comment Sheet…" /> : null}
+      {commentSheetError ? <ErrorBox message={commentSheetError} /> : null}
+      {commentSheetData ? (
+        <div className="h-[62vh] min-h-[30rem] border border-[#a8a284] bg-[#e9edf0]">
+          <PdfViewer data={commentSheetData} />
+        </div>
+      ) : null}
+      {!commentSheetLoading && !commentSheetError && !commentSheetData ? (
+        <p className="text-[10.5px] text-[#5c6b78]">فایل Comment Sheet برای نمایش آماده نیست.</p>
+      ) : null}
+    </Modal>
+    </>
   );
 }
 

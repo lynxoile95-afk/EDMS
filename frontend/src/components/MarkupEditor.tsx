@@ -1,10 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import * as pdfjs from "pdfjs-dist";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type { MarkupAnnotation, MarkupKind, MarkupPoint } from "@/lib/types";
 import { persianDigits } from "@/lib/format";
-import { Button, Spinner } from "./ui";
+import {
+  IconArrow,
+  IconCloud,
+  IconCursor,
+  IconDelete,
+  IconFit,
+  IconHighlight,
+  IconPen,
+  IconRectangle,
+  IconStickyNote,
+  IconText,
+  IconZoomIn,
+  IconZoomOut,
+} from "./icons";
+import { Spinner } from "./ui";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -35,6 +50,53 @@ const TOOL_LABELS: Record<Tool, string> = {
 
 const TOOL_ORDER: Tool[] = ["select", "sticky_note", "highlight", "rectangle", "revision_cloud", "arrow", "free_text", "freehand"];
 const DEFAULT_COLOR = "#d64545";
+
+function ToolIcon({ tool }: { tool: Tool }) {
+  const props = { className: "h-4 w-4" };
+  switch (tool) {
+    case "select": return <IconCursor {...props} />;
+    case "sticky_note": return <IconStickyNote {...props} />;
+    case "highlight": return <IconHighlight {...props} />;
+    case "rectangle": return <IconRectangle {...props} />;
+    case "revision_cloud": return <IconCloud {...props} />;
+    case "arrow": return <IconArrow {...props} />;
+    case "free_text": return <IconText {...props} />;
+    case "freehand": return <IconPen {...props} />;
+  }
+}
+
+function RibbonButton({
+  icon,
+  label,
+  onClick,
+  active = false,
+  disabled = false,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={`group flex min-w-[2.8rem] flex-col items-center justify-center gap-0.5 rounded-sm border px-1 py-0.5 transition-colors ${
+        active
+          ? "border-[#1f4e79] bg-[#dbe8f3] font-bold text-[#1f3864]"
+          : "border-transparent text-[#33475b] hover:border-[#b9c5cf] hover:bg-white"
+      } disabled:cursor-not-allowed disabled:opacity-45`}
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+    >
+      <span className="flex h-5 items-center justify-center">{icon}</span>
+      <span className="whitespace-nowrap text-[8px] leading-3">{label}</span>
+    </button>
+  );
+}
+
 const MIN_ZOOM = 0.55;
 const MAX_ZOOM = 2.5;
 
@@ -356,35 +418,49 @@ export function MarkupEditor({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-[#e9edf0]" dir="rtl">
-      <div className="flex flex-wrap items-center gap-1 border-b border-[#b9c5cf] bg-[#f7f8f2] px-2 py-1 text-[10px]">
-        <div className="flex items-center gap-1" dir="ltr">
-          <Button className="btn-sm" onClick={() => go(page - 1)} disabled={loading || page <= 1}>‹</Button>
-          <span className="min-w-[92px] text-center" dir="rtl">صفحه {persianDigits(page)} از {persianDigits(documentPageCount || 1)}</span>
-          <Button className="btn-sm" onClick={() => go(page + 1)} disabled={loading || page >= documentPageCount}>›</Button>
+      <div className="flex flex-wrap items-stretch gap-1 border-b border-[#b9c5cf] bg-[#f7f8f2] px-2 py-1 text-[10px] shadow-sm">
+        <div className="flex items-center gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1" dir="ltr">
+          <RibbonButton
+            icon={<IconArrow className="h-4 w-4 rotate-180" />}
+            label="صفحه قبل"
+            onClick={() => go(page - 1)}
+            disabled={loading || page <= 1}
+          />
+          <span className="min-w-[5.2rem] text-center text-[9px]" dir="rtl">صفحه {persianDigits(page)} از {persianDigits(documentPageCount || 1)}</span>
+          <RibbonButton
+            icon={<IconArrow className="h-4 w-4" />}
+            label="صفحه بعد"
+            onClick={() => go(page + 1)}
+            disabled={loading || page >= documentPageCount}
+          />
         </div>
-        <span className="mx-1 h-4 border-r border-[#c3ccd6]" />
-        {!readOnly ? TOOL_ORDER.map((item) => (
-          <button
-            key={item}
-            type="button"
-            className={`border px-1.5 py-1 ${tool === item ? "border-[#1f4e79] bg-[#dbe8f3] font-bold text-[#1f3864]" : "border-[#c3ccd6] bg-white text-[#33475b]"}`}
-            onClick={() => setTool(item)}
-            title={TOOL_LABELS[item]}
-          >
-            {TOOL_LABELS[item]}
-          </button>
-        )) : <span className="font-bold text-[#5c6b78]">جلسه ثبت نهایی‌شده — فقط خواندنی</span>}
+        <span className="mx-0.5 border-r border-[#c3ccd6]" />
         {!readOnly ? (
-          <label className="mr-auto flex items-center gap-1" title="رنگ نشانه‌گذاری">
-            رنگ
-            <input type="color" value={color} onChange={(event) => setColor(event.target.value)} className="h-6 w-7 cursor-pointer border-0 bg-transparent p-0" />
+          <div className="flex flex-wrap items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1">
+            {TOOL_ORDER.map((item) => (
+              <RibbonButton
+                key={item}
+                icon={<ToolIcon tool={item} />}
+                label={TOOL_LABELS[item]}
+                active={tool === item}
+                onClick={() => setTool(item)}
+              />
+            ))}
+          </div>
+        ) : <span className="flex items-center px-2 font-bold text-[#5c6b78]">جلسه ثبت نهایی‌شده — فقط خواندنی</span>}
+        {!readOnly ? (
+          <label className="flex min-w-[3.2rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1 text-[8px] text-[#33475b]" title="رنگ نشانه‌گذاری">
+            <span className="flex h-5 items-center">رنگ</span>
+            <input type="color" aria-label="رنگ نشانه‌گذاری" value={color} onChange={(event) => setColor(event.target.value)} className="h-4 w-7 cursor-pointer border-0 bg-transparent p-0" />
           </label>
-        ) : <span className="mr-auto" />}
-        <Button className="btn-sm" onClick={() => setZoom(1)} disabled={loading}>عرض متناسب</Button>
-        <Button className="btn-sm" onClick={() => setZoom((value) => Math.max(MIN_ZOOM, value - 0.15))} disabled={loading}>−</Button>
-        <span className="w-10 text-center text-[9px]">{Math.round(zoom * 100)}%</span>
-        <Button className="btn-sm" onClick={() => setZoom((value) => Math.min(MAX_ZOOM, value + 0.15))} disabled={loading}>＋</Button>
-        {!readOnly ? <Button className="btn-sm" disabled={!effectiveSelectedId} onClick={removeSelected}>حذف</Button> : null}
+        ) : null}
+        <div className="flex items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1">
+          <RibbonButton icon={<IconFit className="h-4 w-4" />} label="عرض متناسب" onClick={() => setZoom(1)} disabled={loading} />
+          <RibbonButton icon={<IconZoomOut className="h-4 w-4" />} label="کوچک‌نمایی" onClick={() => setZoom((value) => Math.max(MIN_ZOOM, value - 0.15))} disabled={loading} />
+          <span className="flex min-w-[2.5rem] items-center justify-center text-[9px]" dir="ltr">{Math.round(zoom * 100)}%</span>
+          <RibbonButton icon={<IconZoomIn className="h-4 w-4" />} label="بزرگ‌نمایی" onClick={() => setZoom((value) => Math.min(MAX_ZOOM, value + 0.15))} disabled={loading} />
+        </div>
+        {!readOnly ? <RibbonButton icon={<IconDelete className="h-4 w-4" />} label="حذف" disabled={!effectiveSelectedId} onClick={removeSelected} /> : null}
       </div>
       {error ? <div className="m-2 border border-[#c98a86] bg-[#fdeeee] p-2 text-[10px] text-[#8a2b25]">{error}</div> : null}
       <div ref={hostRef} className="min-h-0 flex-1 overflow-auto p-4" dir="ltr">

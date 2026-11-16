@@ -17,7 +17,14 @@ import type {
   TransmittalLine,
   TransmittalReferral,
 } from "@/lib/types";
-import { createMarkupSession, downloadMarkupOutput, replyToMarkup, saveMarkupAnnotations, submitMarkupSession } from "@/lib/markups";
+import {
+  createMarkupSession,
+  downloadMarkupOutput,
+  replyToMarkup,
+  saveMarkupAnnotations,
+  submitMarkupSession,
+  toMarkupAnnotationInputs,
+} from "@/lib/markups";
 import { Button, EmptyState, ErrorBox, Modal, Spinner } from "@/components/ui";
 import { AttachmentPreview } from "@/components/AttachmentPreview";
 import { MarkupEditor } from "@/components/MarkupEditor";
@@ -284,7 +291,7 @@ export function TransmittalDetail() {
     try {
       const saved = await saveMarkupAnnotations(
         previewMarkupSession.id,
-        previewMarkupAnnotations,
+        toMarkupAnnotationInputs(previewMarkupAnnotations, previewMarkupSession.annotations),
         previewMarkupSession.draft_version,
       );
       setPreviewMarkupSession(saved);
@@ -877,13 +884,33 @@ export function TransmittalDetail() {
       setPreviewMarkupSession(result.session);
       setPreviewMarkupAnnotations(result.session.annotations);
       setPreviewMarkupDirty(false);
-      setPreviewMarkupNotice("ثبت نهایی انجام شد؛ فایل‌ها به‌عنوان Comment ایجاد شدند.");
+      setPreviewMarkupNotice("ثبت نهایی انجام شد؛ Comment Sheet در پنجره پیش‌نمایش باز می‌شود.");
       localStorage.removeItem(`edms-markup-draft:${result.session.id}`);
-      if (result.session.revision_id) {
-        const revisionPath = `/documents/${result.session.revision_id}/comments?markup_session_id=${result.session.id}`;
-        closeAttachmentPreview(true);
-        navigate(revisionPath);
+      const commentSheet = result.outputs.find((output) => output.kind === "sheet");
+      if (commentSheet) {
+        await openAttachmentPreview(
+          {
+            id: commentSheet.attachment_id,
+            line_id: null,
+            revision_id: result.session.revision_id,
+            kind: "comment",
+            related_type: "comment_sheet",
+            filename: commentSheet.filename,
+            content_type: "application/pdf",
+            size_bytes: 0,
+            uploaded_at: new Date().toISOString(),
+            uploaded_by_id: user?.id ?? null,
+            uploaded_by_name: user?.full_name ?? null,
+            access_user_ids: [],
+            access_restricted: false,
+          },
+          false,
+        );
+        setPreviewActionError("Comment Sheet نتیجه ثبت نهایی باز شد.");
+      } else {
+        setPreviewActionError("ثبت نهایی انجام شد، اما Comment Sheet در پاسخ سامانه پیدا نشد.");
       }
+      await load();
     } catch (err) {
       setPreviewMarkupError(err instanceof ApiError ? err.detail : "ثبت نهایی و تولید خروجی ناموفق بود.");
     } finally {
@@ -2282,14 +2309,9 @@ export function TransmittalDetail() {
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 {previewMarkupSession.status === "draft" && previewMarkupSession.can_edit ? (
-                  <>
-                    <Button className="btn-sm" disabled={previewMarkupBusy || !previewMarkupDirty} onClick={() => void savePreviewMarkup()}>
-                      ذخیره دستی
-                    </Button>
-                    <Button variant="primary" className="btn-sm" disabled={previewMarkupBusy} onClick={() => void submitPreviewMarkup()}>
-                      {previewMarkupBusy ? "در حال پردازش…" : "ثبت نهایی و ثبت در Comment"}
-                    </Button>
-                  </>
+                  <Button variant="primary" className="btn-sm" disabled={previewMarkupBusy} onClick={() => void submitPreviewMarkup()}>
+                    {previewMarkupBusy ? "در حال پردازش…" : "ثبت نهایی و ثبت در Comment"}
+                  </Button>
                 ) : null}
                 {previewMarkupSession.outputs.map((output) => (
                   <Button key={output.attachment_id} className="btn-sm" disabled={previewMarkupBusy} onClick={() => void downloadPreviewMarkupOutput(output)}>

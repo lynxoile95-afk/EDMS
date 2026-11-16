@@ -896,6 +896,7 @@ def delete_comment(comment_id: uuid.UUID, db: DbSession, user: CurrentUser) -> R
         raise HTTPException(status_code=409, detail="نظر پس از مشاهده و ثبت نهایی قابل حذف نیست.")
     acl.assert_can_review(db, user, project.id)
     storage_keys = [attachment.file_path for attachment in (comment.attachments or [])]
+    markup_service.handle_deleted_comment(db, user, comment)
     audit.record(
         db,
         action="comment.markup_delete",

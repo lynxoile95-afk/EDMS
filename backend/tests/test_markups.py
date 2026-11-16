@@ -9,7 +9,7 @@ import fitz
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import Comment, DocumentRevision, MDLItem
+from app.models import Comment, DocumentRevision, MDLItem, MarkupSession
 from app.services import transmittal_service
 from app.services.markup_rendering import render_annotated_pdf
 from app.services.storage import get_storage
@@ -322,6 +322,48 @@ def test_submitted_markup_delete_is_available_before_registration(
     removed = client.delete(f"/api/v1/comments/{session_id}", headers=headers)
     assert removed.status_code == 204, removed.text
     assert client.get(f"/api/v1/markups/{session_id}", headers=headers).status_code == 404
+
+
+def test_new_submit_reclaims_orphaned_legacy_session(
+    client: TestClient, db: Session, project, users
+):
+    draft = _draft(client, db, project, users)
+    headers = auth_headers(client, "dcc@edms-test.com")
+    upload = client.post(
+        f"/api/v1/transmittals/{draft.id}/attachments",
+        headers=headers,
+        data={"line_id": str(draft.lines[0].id), "kind": "pdf"},
+        files={"file": ("legacy-cleanup.pdf", _pdf(), "application/pdf")},
+    )
+    assert upload.status_code == 201, upload.text
+    file_id = upload.json()["attachment"]["id"]
+    first = client.post(
+        "/api/v1/markups",
+        headers=headers,
+        json={"transmittal_id": str(draft.id), "file_id": file_id},
+    )
+    assert first.status_code == 201, first.text
+    first_id = uuid.UUID(first.json()["id"])
+    submitted = client.post(f"/api/v1/markups/{first_id}/submit", headers=headers)
+    assert submitted.status_code == 200, submitted.text
+
+    # This is the legacy state left when the old per-annotation Comment rows
+    # were deleted without deleting their submitted MarkupSession.
+    first_session = db.get(MarkupSession, first_id)
+    assert first_session is not None
+    first_session.generated_comment_ids = [str(uuid.uuid4())]
+    db.commit()
+
+    second = client.post(
+        "/api/v1/markups",
+        headers=headers,
+        json={"transmittal_id": str(draft.id), "file_id": file_id},
+    )
+    assert second.status_code == 201, second.text
+    second_id = second.json()["id"]
+    resubmitted = client.post(f"/api/v1/markups/{second_id}/submit", headers=headers)
+    assert resubmitted.status_code == 200, resubmitted.text
+    assert db.get(MarkupSession, first_id) is None
 
 
 def test_markup_admin_delete_is_audited_and_draft_is_author_only(

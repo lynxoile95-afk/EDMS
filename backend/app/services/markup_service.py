@@ -282,6 +282,131 @@ def registration_was_opened(session: MarkupSession) -> bool:
     return REGISTRATION_VIEWED_MARKER in (session.generated_comment_ids or [])
 
 
+def _live_generated_comment_ids(db: Session, session: MarkupSession) -> list[uuid.UUID]:
+    """Return generated Comment ids that still have a durable row."""
+    return [comment_id for comment_id in generated_comment_ids(session) if db.get(Comment, comment_id) is not None]
+
+
+def _remove_staged_outputs(session: MarkupSession) -> list[str]:
+    """Remove this session's generated metadata rows and storage objects."""
+    storage = get_storage()
+    metadata = dict(session.transmittal.meta or {})
+    output_ids = {
+        str(value)
+        for value in (session.submitted_pdf_attachment_id, session.comment_sheet_attachment_id)
+        if value
+    }
+    for item in metadata.get("attachments") or []:
+        if str(item.get("markup_session_id") or "") == str(session.id) and item.get("id"):
+            output_ids.add(str(item["id"]))
+
+    kept: list[dict[str, Any]] = []
+    deleted_ids: list[str] = []
+    for item in metadata.get("attachments") or []:
+        if str(item.get("id")) in output_ids:
+            deleted_ids.append(str(item.get("id")))
+            try:
+                storage.delete(str(item.get("storage_key")))
+            except Exception:
+                pass
+        else:
+            kept.append(item)
+    metadata["attachments"] = kept
+    session.transmittal.meta = metadata
+    return deleted_ids
+
+
+def reclaim_orphaned_submitted_session(db: Session, user: User, session: MarkupSession) -> bool:
+    """Drop a legacy submitted session whose durable Comments were deleted.
+
+    Older markup submissions created one Comment per annotation. If an operator
+    deleted those rows, the session and its staged files remained behind and
+    later submissions hit the status-scope unique constraint. Only a session
+    with stale Comment ids and no registration-opened marker is reclaimable;
+    current staged sessions and finalized registrations remain protected.
+    """
+    if _status(session) != "submitted":
+        return False
+    if registration_was_opened(session) or not generated_comment_ids(session):
+        return False
+    if _live_generated_comment_ids(db, session):
+        return False
+    project = acl.require_transmittal(db, user, session.transmittal)
+    acl.assert_can_review(db, user, project.id)
+    deleted_ids = _remove_staged_outputs(session)
+    audit.record(
+        db,
+        action="comment.markup_orphan_cleanup",
+        entity_type="markup_session",
+        entity_id=session.id,
+        actor=user,
+        project_id=project.id,
+        before={"status": _status(session), "generated_comment_ids": session.generated_comment_ids or []},
+        after={"output_ids": deleted_ids},
+    )
+    db.delete(session)
+    db.flush()
+    return True
+
+
+def prepare_submit(db: Session, user: User, session: MarkupSession) -> None:
+    """Resolve an older submitted row before changing a draft to submitted."""
+    conflicts = db.execute(
+        select(MarkupSession).where(
+            MarkupSession.transmittal_id == session.transmittal_id,
+            MarkupSession.source_attachment_id == session.source_attachment_id,
+            MarkupSession.user_id == session.user_id,
+            MarkupSession.status == "submitted",
+            MarkupSession.id != session.id,
+        )
+    ).scalars()
+    for conflict in conflicts:
+        if reclaim_orphaned_submitted_session(db, user, conflict):
+            continue
+        raise HTTPException(
+            status_code=409,
+            detail="برای این فایل یک جلسه بازبینی ثبت‌شده وجود دارد؛ ابتدا ثبت نظر قبلی را تکمیل یا حذف کنید.",
+        )
+
+
+def handle_deleted_comment(db: Session, user: User, comment: Comment) -> None:
+    """Detach a deleted legacy markup Comment from its submitted session."""
+    sessions = db.execute(
+        select(MarkupSession).where(
+            MarkupSession.revision_id == comment.revision_id,
+            MarkupSession.status == "submitted",
+        )
+    ).scalars()
+    for session in sessions:
+        comment_ids = generated_comment_ids(session)
+        if comment.id not in comment_ids:
+            continue
+        if registration_was_opened(session):
+            raise HTTPException(status_code=409, detail="پس از مشاهده و ثبت نهایی قابل حذف نیست.")
+        remaining_ids = [
+            comment_id
+            for comment_id in comment_ids
+            if comment_id != comment.id and db.get(Comment, comment_id) is not None
+        ]
+        if remaining_ids:
+            session.generated_comment_ids = [str(comment_id) for comment_id in remaining_ids]
+            continue
+        project = acl.require_transmittal(db, user, session.transmittal)
+        acl.assert_can_review(db, user, project.id)
+        deleted_ids = _remove_staged_outputs(session)
+        audit.record(
+            db,
+            action="comment.markup_session_cleanup",
+            entity_type="markup_session",
+            entity_id=session.id,
+            actor=user,
+            project_id=project.id,
+            before={"generated_comment_ids": session.generated_comment_ids or []},
+            after={"output_ids": deleted_ids},
+        )
+        db.delete(session)
+
+
 def mark_registration_opened(db: Session, user: User, session: MarkupSession) -> MarkupSession:
     """Persist the irreversible row-action transition before opening the form."""
     if _status(session) != "submitted":
@@ -546,6 +671,10 @@ def submit(db: Session, user: User, session: MarkupSession) -> MarkupSubmitOut:
     if session.user_id != user.id:
         raise acl.AccessDenied("فقط نویسنده جلسه می‌تواند آن را ثبت نهایی کند.")
     project = _capability(db, user, session.transmittal)
+    # A legacy Comment deletion could leave its submitted MarkupSession behind.
+    # Reclaim only that orphaned state before the draft status transition so the
+    # scoped uniqueness constraint never leaks as a raw IntegrityError.
+    prepare_submit(db, user, session)
     source, digest = _source_bytes(
         {"storage_key": session.original_storage_key}
     )
@@ -747,32 +876,7 @@ def delete_staged_submission(db: Session, user: User, session: MarkupSession) ->
         raise HTTPException(status_code=409, detail="پس از مشاهده و ثبت نهایی قابل حذف نیست.")
     project = acl.require_transmittal(db, user, session.transmittal)
     acl.assert_can_review(db, user, project.id)
-    storage = get_storage()
-    metadata = dict(session.transmittal.meta or {})
-    output_ids = {
-        str(value)
-        for value in (session.submitted_pdf_attachment_id, session.comment_sheet_attachment_id)
-        if value
-    }
-    # Use the session marker as the authoritative set, so a future output can
-    # be cleaned up as well without making it visible in the main attachment
-    # list.
-    for item in metadata.get("attachments") or []:
-        if str(item.get("markup_session_id") or "") == str(session.id):
-            output_ids.add(str(item.get("id")))
-    kept: list[dict[str, Any]] = []
-    deleted_ids: list[str] = []
-    for item in metadata.get("attachments") or []:
-        if str(item.get("id")) in output_ids:
-            deleted_ids.append(str(item.get("id")))
-            try:
-                storage.delete(str(item.get("storage_key")))
-            except Exception:
-                pass
-        else:
-            kept.append(item)
-    metadata["attachments"] = kept
-    session.transmittal.meta = metadata
+    deleted_ids = _remove_staged_outputs(session)
     audit.record(
         db,
         action="comment.markup_delete",

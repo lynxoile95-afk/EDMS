@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -320,6 +319,24 @@ def test_validation_error_is_persian(client: TestClient):
     response = client.post("/api/v1/auth/login", json={"email": "not-an-email"})
     assert response.status_code == 422
     assert "معتبر نیستند" in response.json()["detail"]
+
+
+def test_documented_preview_admin_email_alias_logs_in(client: TestClient, users, monkeypatch):
+    """The visible preview credential works when an older local admin exists."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "bootstrap_admin_email", "admin@edms-test.com")
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "admin@example.com", "password": "secret123"},
+    )
+    assert response.status_code == 200, response.text
+    me = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {response.json()['access_token']}"},
+    )
+    assert me.status_code == 200
+    assert me.json()["email"] == "admin@edms-test.com"
 
 
 def test_refresh_rotates_tokens(client: TestClient, users):

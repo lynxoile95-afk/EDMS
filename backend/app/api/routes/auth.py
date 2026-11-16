@@ -33,7 +33,19 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/login", response_model=TokenPair, summary="ورود با ایمیل و رمز عبور")
 def login(payload: LoginRequest, request: Request, response: Response, db: DbSession) -> TokenPair:
-    user = db.execute(select(User).where(User.email == payload.email.lower())).scalar_one_or_none()
+    email = payload.email.lower()
+    user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+    if user is None and email == "admin@example.com":
+        # Preview deployments created before the documented credentials used
+        # admin@arena.local. Keep the visible admin@example.com button usable
+        # without copying or mutating the persisted account.
+        configured_admin = settings.bootstrap_admin_email.lower()
+        fallback_emails = {configured_admin, "admin@arena.local"}
+        fallback_emails.discard(email)
+        for fallback_email in fallback_emails:
+            user = db.execute(select(User).where(User.email == fallback_email)).scalar_one_or_none()
+            if user is not None:
+                break
     if user is None or not user.is_active or not user.hashed_password:
         # constant-ish response: never reveal whether the address exists
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="ایمیل یا رمز عبور نادرست است.")

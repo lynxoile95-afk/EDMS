@@ -121,6 +121,30 @@ def _assert_attachments_editable(
         )
 
 
+def _visible_attachments(transmittal: Transmittal) -> list[dict]:
+    """Return only operator-facing attachments for the transmittal workspace.
+
+    Markup submission outputs are staged in the existing transmittal metadata so
+    the Comment Registration prefill can fetch them by authenticated ID. They
+    are not ordinary document attachments, however, and must not appear beside
+    the source PDF in the transmittal attachment list. The markup session and
+    attachment endpoints continue to read the complete metadata internally.
+    """
+    return [
+        item
+        for item in (transmittal.meta or {}).get("attachments", [])
+        if str(item.get("kind") or "") != "comment"
+    ]
+
+
+def _public_meta(transmittal: Transmittal) -> dict:
+    """Build response metadata without leaking staged markup output rows."""
+    metadata = dict(transmittal.meta or {})
+    if "attachments" in metadata:
+        metadata["attachments"] = _visible_attachments(transmittal)
+    return metadata
+
+
 def _out(transmittal: Transmittal) -> TransmittalOut:
     acknowledged = sum(
         1 for r in transmittal.recipients if str(r.ack_status) == "acknowledged"
@@ -152,7 +176,7 @@ def _out(transmittal: Transmittal) -> TransmittalOut:
         manual_workflow=bool(transmittal.manual_workflow),
         remarks=transmittal.remarks,
         meta={
-            **(transmittal.meta or {}),
+            **_public_meta(transmittal),
             "due_date_jalali": format_jalali(transmittal.due_date) if transmittal.due_date else None,
             "issued_at_jalali": format_jalali(transmittal.issued_at) if transmittal.issued_at else None,
         },
@@ -504,7 +528,7 @@ def _detail(db, transmittal: Transmittal) -> TransmittalDetail:
         lines=lines,
         recipients=recipients,
         referrals=[_referral_out(item) for item in transmittal.referrals],
-        attachments=[_attachment_out(item) for item in (transmittal.meta or {}).get("attachments", [])],
+        attachments=[_attachment_out(item) for item in _visible_attachments(transmittal)],
         pdf_url=pdf_url,
         preview_number=None if transmittal.number else preview,
         stage_label=routing.STAGE_LABELS.get(str(transmittal.stage)),

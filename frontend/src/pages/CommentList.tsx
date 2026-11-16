@@ -6,9 +6,9 @@ import persian from "react-date-object/calendars/persian";
 import persian_fa from "react-date-object/locales/persian_fa";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
-import { getMarkupSession } from "@/lib/markups";
+import { getMarkupSession, openMarkupRegistration as markMarkupRegistrationOpened } from "@/lib/markups";
 import { useAuth } from "@/lib/auth";
-import type { Comment, CommentAttachment, CommentList as CommentListType, DocumentAttachment } from "@/lib/types";
+import type { Comment, CommentAttachment, CommentList as CommentListType, DocumentAttachment, MarkupSession } from "@/lib/types";
 import { AttachmentPreview } from "@/components/AttachmentPreview";
 import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Modal, ProgressBar, Spinner } from "@/components/ui";
 import { FField, FieldGrid } from "@/components/window";
@@ -151,10 +151,69 @@ function toDocumentAttachment(attachment: CommentAttachment): DocumentAttachment
   };
 }
 
+function commentFromMarkupSession(session: MarkupSession, existing: Comment | undefined): Comment {
+  const outputAttachments: CommentAttachment[] = session.outputs.map((output) => ({
+    id: output.attachment_id,
+    comment_id: session.id,
+    file_name: output.filename,
+    file_size: output.size_bytes ?? 0,
+    mime_type: output.content_type ?? "application/pdf",
+    uploaded_by_id: session.author_id,
+    uploaded_by_name: session.author_name,
+    uploaded_at: session.submitted_at ?? new Date().toISOString(),
+    download_url: output.download_url,
+  }));
+  if (existing) {
+    return {
+      ...existing,
+      attachments: existing.attachments.length ? existing.attachments : outputAttachments,
+      attachment_count: existing.attachments.length || outputAttachments.length,
+    };
+  }
+  const pages = session.annotations.map((annotation) => annotation.page_no);
+  const first = session.annotations[0];
+  return {
+    id: session.id,
+    registration_id: session.id,
+    revision_id: session.revision_id ?? "",
+    comment_list_id: session.id,
+    seq_no: 1,
+    code: "2",
+    category: "PDF markup",
+    related_comment_id: null,
+    discipline_id: null,
+    discipline_code: null,
+    discipline_name: null,
+    text: `خروجی بازبینی PDF «${session.original_filename}» برای ثبت نظر آماده است.`,
+    page_no: pages.length ? Math.min(...pages) : null,
+    from_page_no: pages.length ? Math.min(...pages) : null,
+    to_page_no: pages.length ? Math.max(...pages) : null,
+    bbox: first?.points ?? [],
+    status: "open",
+    disposition: null,
+    status_change_date: null,
+    personal_remarks: null,
+    coordinator_date: null,
+    judgment: "draft",
+    judgment_comments: null,
+    remarks: null,
+    response_text: null,
+    responded_at: null,
+    author_id: session.author_id,
+    author_name: session.author_name,
+    created_at: session.submitted_at ?? new Date().toISOString(),
+    revision_time: null,
+    attachments: outputAttachments,
+    attachment_count: outputAttachments.length,
+    staged_registration_opened: false,
+  };
+}
+
 function CommentRegistrationModal({
   open,
   document,
   editing,
+  finalizing,
   canEditCoordinator,
   form,
   setForm,
@@ -176,6 +235,7 @@ function CommentRegistrationModal({
   open: boolean;
   document: RevisionDocument | null;
   editing: Comment | null;
+  finalizing: boolean;
   canEditCoordinator: boolean;
   form: RegistrationForm;
   setForm: (updater: (previous: RegistrationForm) => RegistrationForm) => void;
@@ -198,6 +258,7 @@ function CommentRegistrationModal({
   const registrationTime = editing ? jalaliDateTime(editing.created_at) : "اکنون / پس از Save";
   const revisionTime = editing?.revision_time ? jalaliDateTime(editing.revision_time) : "—";
   const relatedDocument = [document?.doc_code, document?.title].filter(Boolean).join(" — ") || "—";
+  const registrationFieldsLocked = Boolean(editing) && !finalizing;
 
   const set = (key: keyof RegistrationForm, value: string) => {
     setForm((previous) => ({ ...previous, [key]: value }));
@@ -208,13 +269,13 @@ function CommentRegistrationModal({
   return (
     <Modal
       open={open}
-      title={editing ? "Coordinator Comment — نظر هماهنگ‌کننده" : "Comment Registration — ثبت نظر جدید"}
+      title={editing && !finalizing ? "Coordinator Comment — نظر هماهنگ‌کننده" : "Comment Registration — ثبت نظر جدید"}
       onClose={onClose}
       width="max-w-5xl"
       footer={
         <>
           <Button variant="primary" disabled={busy || form.text.trim().length < 2} onClick={onSave}>
-            {busy ? "در حال ذخیره…" : editing ? "Save Coordinator Comment — ذخیره نظر هماهنگ‌کننده" : "Save — ذخیره"}
+            {busy ? "در حال ذخیره…" : finalizing ? "Save — ثبت نهایی" : editing ? "Save Coordinator Comment — ذخیره نظر هماهنگ‌کننده" : "Save — ذخیره"}
           </Button>
           <Button variant="secondary" disabled={busy} onClick={onClose}>
             Close — بستن
@@ -264,18 +325,18 @@ function CommentRegistrationModal({
             onChange={(event) => set("disciplineCode", event.target.value.toUpperCase())}
             placeholder="مثلاً CIV"
             dir="ltr"
-            disabled={Boolean(editing)}
+disabled={registrationFieldsLocked}
           />
         </FField>
         <FField label="Code:">
-          <select className="input" value={form.code} onChange={(event) => set("code", event.target.value)} disabled={Boolean(editing)}>
+          <select className="input" value={form.code} onChange={(event) => set("code", event.target.value)} disabled={registrationFieldsLocked}>
             {Object.entries(CODE_LABELS).map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
             ))}
           </select>
         </FField>
         <FField label="Status:">
-          <select className="input" value={form.disposition} onChange={(event) => set("disposition", event.target.value)} disabled={Boolean(editing)}>
+          <select className="input" value={form.disposition} onChange={(event) => set("disposition", event.target.value)} disabled={registrationFieldsLocked}>
             <option value="">— انتخاب وضعیت —</option>
             {Object.entries(DISPOSITION_LABELS).map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
@@ -283,13 +344,13 @@ function CommentRegistrationModal({
           </select>
         </FField>
         <FField label="Status Change Date:" full>
-          <JalaliDateField value={form.statusChangeDate} onChange={(value) => set("statusChangeDate", value)} disabled={Boolean(editing)} />
+          <JalaliDateField value={form.statusChangeDate} onChange={(value) => set("statusChangeDate", value)} disabled={registrationFieldsLocked} />
         </FField>
         <FField label="From Page:">
-          <input className="input" type="number" min={1} value={form.fromPageNo} onChange={(event) => set("fromPageNo", event.target.value)} dir="ltr" disabled={Boolean(editing)} />
+          <input className="input" type="number" min={1} value={form.fromPageNo} onChange={(event) => set("fromPageNo", event.target.value)} dir="ltr" disabled={registrationFieldsLocked} />
         </FField>
         <FField label="To Page:">
-          <input className="input" type="number" min={1} value={form.toPageNo} onChange={(event) => set("toPageNo", event.target.value)} dir="ltr" disabled={Boolean(editing)} />
+          <input className="input" type="number" min={1} value={form.toPageNo} onChange={(event) => set("toPageNo", event.target.value)} dir="ltr" disabled={registrationFieldsLocked} />
         </FField>
         <FField label="Comment Description:" full>
           <textarea
@@ -297,12 +358,12 @@ function CommentRegistrationModal({
             value={form.text}
             onChange={(event) => set("text", event.target.value)}
             placeholder="شرح نظر را وارد کنید…"
-            readOnly={Boolean(editing)}
+            readOnly={registrationFieldsLocked}
             required
           />
         </FField>
         <FField label="Personal Remarks:" full>
-          <textarea className="input min-h-[45px] w-full disabled:bg-[#e8ebee] disabled:text-[#89939d]" value={form.personalRemarks} onChange={(event) => set("personalRemarks", event.target.value)} placeholder="اختیاری" readOnly={Boolean(editing)} />
+          <textarea className="input min-h-[45px] w-full disabled:bg-[#e8ebee] disabled:text-[#89939d]" value={form.personalRemarks} onChange={(event) => set("personalRemarks", event.target.value)} placeholder="اختیاری" readOnly={registrationFieldsLocked} />
         </FField>
       </FieldGrid>
 
@@ -310,7 +371,9 @@ function CommentRegistrationModal({
       <div className="border border-[#a8a284] bg-white p-2">
         {editing ? (
           <div className="rounded border border-[#d1d8df] bg-[#f1f4f6] px-3 py-3 text-center text-[10px] text-[#5c6b78]">
-            پیوست‌های ثبت‌شده پس از ثبت نظر قابل افزودن یا حذف نیستند؛ فقط هماهنگ‌کننده می‌تواند نظر خود را در بخش Coordinator ثبت کند.
+            {finalizing
+              ? "دو فایل خروجی بازبینی برای ثبت نهایی آماده شده‌اند؛ افزودن یا حذف پیوست در این مرحله مجاز نیست."
+              : "پیوست‌های ثبت‌شده پس از ثبت نظر قابل افزودن یا حذف نیستند؛ فقط هماهنگ‌کننده می‌تواند نظر خود را در بخش Coordinator ثبت کند."}
           </div>
         ) : (
           <label
@@ -431,6 +494,7 @@ export function CommentList() {
   const [closing, setClosing] = useState<{ id: string; disposition: string } | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Comment | null>(null);
+  const [finalizingCommentId, setFinalizingCommentId] = useState<string | null>(null);
   const [form, setForm] = useState<RegistrationForm>(emptyForm);
   const [files, setFiles] = useState<File[]>([]);
   const [removedAttachmentIds, setRemovedAttachmentIds] = useState<string[]>([]);
@@ -480,37 +544,56 @@ export function CommentList() {
 
   useEffect(() => { void load(); }, [load]);
 
+  const comments = useMemo(() => lists.flatMap((list) => list.comments), [lists]);
+  const markStagedRowOpened = useCallback((sessionId: string) => {
+    setLists((current) => current.map((list) => ({
+      ...list,
+      comments: list.comments.map((comment) => comment.id === sessionId
+        ? { ...comment, staged_registration_opened: true }
+        : comment),
+    })));
+  }, []);
+
   useEffect(() => {
     if (!markupSessionId || !revisionId || !canRegister || markupPrefillDone) return;
     let cancelled = false;
     setMarkupPrefillLoading(true);
     void (async () => {
       try {
-        const session = await getMarkupSession(markupSessionId);
-        if (session.revision_id !== revisionId) {
+        const loaded = await getMarkupSession(markupSessionId);
+        if (loaded.revision_id !== revisionId) {
           throw new Error("نشست نشانه‌گذاری به این بازنگری متصل نیست.");
         }
-        const outputFiles = await Promise.all(
-          session.outputs.map(async (output) => {
-            const blob = await api.blobData(
-              `/transmittals/${session.transmittal_id}/attachments/${output.attachment_id}/preview`,
-            );
-            return new File([blob], output.filename, { type: "application/pdf" });
-          }),
+        // The explicit row transition is recorded before the modal opens. This
+        // is what makes Delete unavailable even if the operator closes and
+        // refreshes the page without saving the form.
+        const session = await markMarkupRegistrationOpened(markupSessionId);
+        markStagedRowOpened(markupSessionId);
+        // Fetch both authenticated outputs before opening the modal. They are
+        // displayed as existing staged attachments; they are never re-uploaded
+        // from the browser during final registration.
+        if (session.outputs.length < 2) {
+          throw new Error("هر دو فایل خروجی PDF برای ثبت در Comment لازم است.");
+        }
+        await Promise.all(
+          session.outputs.map((output) => api.blobData(
+            `/transmittals/${session.transmittal_id}/attachments/${output.attachment_id}/preview`,
+          )),
         );
         if (cancelled) return;
-        const pages = session.annotations.map((annotation) => annotation.page_no);
-        const firstPage = pages.length ? String(Math.min(...pages)) : "";
-        const lastPage = pages.length ? String(Math.max(...pages)) : "";
-        setForm((previous) => ({
-          ...previous,
-          text: `خروجی بازبینی PDF «${session.original_filename}» برای ثبت در Comment Registration آماده شد.`,
-          fromPageNo: firstPage,
-          toPageNo: lastPage,
-        }));
-        setFiles(outputFiles);
+        const stagedComment = commentFromMarkupSession(
+          session,
+          comments.find((comment) => comment.id === markupSessionId),
+        );
+        const registration = formFromComment(stagedComment);
+        setForm({
+          ...registration,
+          judgment: registration.judgment === "draft" ? "OK" : registration.judgment,
+        });
+        setFiles([]);
         setRemovedAttachmentIds([]);
-        setEditing(null);
+        setEditing(stagedComment);
+        setFinalizingCommentId(session.id);
         setModalError(null);
         setMarkupPrefillActive(true);
         setMarkupPrefillDone(true);
@@ -527,9 +610,7 @@ export function CommentList() {
     return () => {
       cancelled = true;
     };
-  }, [canRegister, markupPrefillDone, markupSessionId, revisionId]);
-
-  const comments = useMemo(() => lists.flatMap((list) => list.comments), [lists]);
+  }, [canRegister, markStagedRowOpened, markupPrefillDone, markupSessionId, revisionId]);
   const returnTransmittalId = useMemo(
     () => lists.find((list) => list.transmittal_id)?.transmittal_id ?? null,
     [lists],
@@ -539,6 +620,7 @@ export function CommentList() {
 
   const openNew = () => {
     setEditing(null);
+    setFinalizingCommentId(null);
     setForm(emptyForm());
     setFiles([]);
     setRemovedAttachmentIds([]);
@@ -549,6 +631,7 @@ export function CommentList() {
 
   const openEdit = (comment: Comment) => {
     setEditing(comment);
+    setFinalizingCommentId(null);
     setForm(formFromComment(comment));
     setFiles([]);
     setRemovedAttachmentIds([]);
@@ -557,10 +640,51 @@ export function CommentList() {
     setModalOpen(true);
   };
 
+  const openMarkupRegistration = async (comment: Comment) => {
+    if (!revisionId || finalizingCommentId === comment.id) return;
+    setMarkupPrefillLoading(true);
+    setActionError(null);
+    try {
+      const loaded = await getMarkupSession(comment.id);
+      if (loaded.revision_id !== revisionId) {
+        throw new Error("نشست نشانه‌گذاری به این بازنگری متصل نیست.");
+      }
+      const session = await markMarkupRegistrationOpened(comment.id);
+      markStagedRowOpened(comment.id);
+      if (session.outputs.length < 2) {
+        throw new Error("هر دو فایل خروجی PDF برای ثبت در Comment لازم است.");
+      }
+      await Promise.all(
+        session.outputs.map((output) => api.blobData(
+          `/transmittals/${session.transmittal_id}/attachments/${output.attachment_id}/preview`,
+        )),
+      );
+      const stagedComment = commentFromMarkupSession(session, comment);
+      const registration = formFromComment(stagedComment);
+      setEditing(stagedComment);
+      setFinalizingCommentId(session.id);
+      setForm({
+        ...registration,
+        judgment: registration.judgment === "draft" ? "OK" : registration.judgment,
+      });
+      setFiles([]);
+      setRemovedAttachmentIds([]);
+      setModalError(null);
+      setProgress(0);
+      setMarkupPrefillActive(true);
+      setModalOpen(true);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.detail : "بازکردن خروجی‌های بازبینی ناموفق بود.");
+    } finally {
+      setMarkupPrefillLoading(false);
+    }
+  };
+
   const closeModal = () => {
     if (busy) return;
     setModalOpen(false);
     setEditing(null);
+    setFinalizingCommentId(null);
     if (markupPrefillActive) {
       // Files created from authenticated output blobs are temporary browser
       // objects; never keep them around after the registration dialog closes.
@@ -668,7 +792,7 @@ export function CommentList() {
     if (accepted.length) setFiles((previous) => [...previous, ...accepted]);
   };
 
-  const buildFormData = () => {
+  const buildFormData = (includeFiles = true) => {
     const data = new FormData();
     data.append("text", form.text.trim());
     data.append("code", form.code);
@@ -682,7 +806,7 @@ export function CommentList() {
     data.append("judgment", form.judgment);
     if (form.judgmentComments.trim()) data.append("judgment_comments", form.judgmentComments.trim());
     if (form.remarks.trim()) data.append("remarks", form.remarks.trim());
-    files.forEach((file) => data.append("files", file, file.name));
+    if (includeFiles) files.forEach((file) => data.append("files", file, file.name));
     return data;
   };
 
@@ -705,15 +829,20 @@ export function CommentList() {
     setModalError(null);
     setProgress(0);
     try {
+      const finalizing = Boolean(finalizingCommentId && editing?.id === finalizingCommentId);
       const path = editing ? `/comments/${editing.id}` : `/revisions/${revisionId}/comments/multipart`;
+      const data = buildFormData(!finalizing);
       const saved = editing
-        ? await api.patchFormWithProgress<Comment>(path, buildFormData(), setProgress)
-        : await api.postFormWithProgress<Comment>(path, buildFormData(), setProgress);
-      for (const attachmentId of removedAttachmentIds) {
-        await api.delete(`/comments/${saved.id}/attachments/${attachmentId}`);
+        ? await api.patchFormWithProgress<Comment>(path, data, setProgress)
+        : await api.postFormWithProgress<Comment>(path, data, setProgress);
+      if (!finalizing) {
+        for (const attachmentId of removedAttachmentIds) {
+          await api.delete(`/comments/${saved.id}/attachments/${attachmentId}`);
+        }
       }
       setModalOpen(false);
       setEditing(null);
+      setFinalizingCommentId(null);
       setFiles([]);
       setRemovedAttachmentIds([]);
       setMarkupPrefillActive(false);
@@ -743,6 +872,21 @@ export function CommentList() {
       await load();
     } catch (err) {
       setActionError(err instanceof ApiError ? err.detail : "بستن نظر ناموفق بود.");
+    }
+  };
+
+  const deleteMarkupComment = async (comment: Comment) => {
+    if (finalizingCommentId === comment.id) return;
+    if (!window.confirm("نظر بازبینی و دو فایل پیوست آن حذف شود؟")) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.delete(`/comments/${comment.id}`);
+      await load();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.detail : "حذف نظر ناموفق بود.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -793,7 +937,27 @@ export function CommentList() {
                 {comment.response_text ? <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2"><p className="text-[11px] font-medium text-slate-500">پاسخ پیمانکار</p><p className="mt-1 text-xs leading-6 text-slate-700">{comment.response_text}</p><p className="mt-1 text-[10px] text-slate-400">{jalaliDateTime(comment.responded_at)}</p></div> : null}
                 <div className="mt-2 flex flex-wrap gap-2">
                   {comment.status !== "closed" ? <Button variant="secondary" className="px-2 py-1 text-[11px]" onClick={() => setAnswering({ comment, text: comment.response_text ?? "" })}>ثبت پاسخ</Button> : null}
-                  {canEditCoordinator && comment.status !== "closed" ? <Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => openEdit(comment)}>باز کردن / نظر هماهنگ‌کننده</Button> : null}
+                  {canEditCoordinator && comment.status !== "closed" ? <Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => openEdit(comment)}>بازکردن/نظر هماهنگ‌کننده</Button> : null}
+                  {comment.category === "PDF markup" && canRegister ? (
+                    <>
+                      <Button
+                        variant="secondary"
+                        className="px-2 py-1 text-[11px]"
+                        disabled={comment.judgment !== "draft" || finalizingCommentId === comment.id || busy}
+                        onClick={() => void openMarkupRegistration(comment)}
+                      >
+                        مشاهده و ثبت نهایی
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="px-2 py-1 text-[11px] text-rose-700"
+                        disabled={comment.judgment !== "draft" || comment.staged_registration_opened || finalizingCommentId === comment.id || busy}
+                        onClick={() => void deleteMarkupComment(comment)}
+                      >
+                        حذف
+                      </Button>
+                    </>
+                  ) : null}
                   {comment.status === "answered" && canRegister ? (closing?.id === comment.id ? <span className="flex items-center gap-1"><select aria-label="وضعیت بستن نظر" className="h-7 rounded border border-slate-300 bg-white px-1 text-[11px]" value={closing.disposition} onChange={(event) => setClosing({ id: comment.id, disposition: event.target.value })}>{Object.entries(DISPOSITION_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => void close(comment, closing.disposition)}>ثبت</Button><Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => setClosing(null)}>انصراف</Button></span> : <Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => setClosing({ id: comment.id, disposition: comment.disposition ?? "accepted" })}>بستن نظر</Button>) : null}
                 </div>
               </div>
@@ -806,6 +970,7 @@ export function CommentList() {
         open={modalOpen}
         document={revisionDetails?.doc ?? null}
         editing={editing}
+        finalizing={Boolean(finalizingCommentId && editing?.id === finalizingCommentId)}
         canEditCoordinator={canEditCoordinator}
         form={form}
         setForm={setForm}

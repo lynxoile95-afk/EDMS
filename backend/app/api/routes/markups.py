@@ -72,6 +72,19 @@ def submit_markup(markup_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Mar
 
 
 @router.post(
+    "/{markup_id}/registration-opened",
+    response_model=MarkupSessionOut,
+    summary="ثبت مشاهده فرم نهایی Comment",
+)
+def open_markup_registration(markup_id: uuid.UUID, db: DbSession, user: CurrentUser) -> MarkupSessionOut:
+    session = markup_service.get_authorized(db, user, markup_id)
+    markup_service.mark_registration_opened(db, user, session)
+    db.commit()
+    db.refresh(session)
+    return markup_service.session_out(db, session, user)
+
+
+@router.post(
     "/{markup_id}/annotations/{number}/reply",
     response_model=MarkupSessionOut,
     summary="پاسخ مالک به یک نشانه‌گذاری",

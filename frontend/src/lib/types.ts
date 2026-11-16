@@ -593,13 +593,13 @@ export interface MarkupSession {
   can_reply: boolean;
   submitted_pdf_attachment_id: string | null;
   comment_sheet_attachment_id: string | null;
-  outputs: { attachment_id: string; filename: string; kind: "pdf" | "sheet"; download_url: string }[];
+  outputs: { attachment_id: string; filename: string; kind: "pdf" | "sheet"; download_url: string; size_bytes: number; content_type: string }[];
   annotations: MarkupAnnotation[];
 }
 
 export interface MarkupSubmitResult {
   session: MarkupSession;
-  outputs: { attachment_id: string; filename: string; kind: "pdf" | "sheet"; download_url: string }[];
+  outputs: { attachment_id: string; filename: string; kind: "pdf" | "sheet"; download_url: string; size_bytes: number; content_type: string }[];
   annotation_count: number;
 }
 
@@ -631,7 +631,7 @@ export interface Comment {
   page_no: number | null;
   from_page_no: number | null;
   to_page_no: number | null;
-  bbox: number[];
+  bbox: unknown[];
   status: "open" | "answered" | "closed";
   disposition: "accepted" | "canceled" | "commented" | "no_comment" | "rejected" | null;
   status_change_date: string | null;
@@ -648,6 +648,7 @@ export interface Comment {
   revision_time: string | null;
   attachments: CommentAttachment[];
   attachment_count: number;
+  staged_registration_opened?: boolean;
 }
 
 export interface CommentList {

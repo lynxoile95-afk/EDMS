@@ -131,6 +131,10 @@ export async function submitMarkupSession(sessionId: string): Promise<MarkupSubm
   return api.post<MarkupSubmitResult>(`/markups/${sessionId}/submit`);
 }
 
+export async function openMarkupRegistration(sessionId: string): Promise<MarkupSession> {
+  return api.post<MarkupSession>(`/markups/${sessionId}/registration-opened`);
+}
+
 export async function replyToMarkup(
   sessionId: string,
   number: number,

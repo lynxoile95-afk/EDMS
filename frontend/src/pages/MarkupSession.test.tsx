@@ -115,6 +115,7 @@ function renderPage(entry = "/markups/new?transmittal_id=transmittal-1&file_id=f
       <Routes>
         <Route path="/markups/new" element={<MarkupSessionPage />} />
         <Route path="/markups/:sessionId" element={<MarkupSessionPage />} />
+        <Route path="/documents/:revisionId/comments" element={<div data-testid="comment-list-target">Comment List</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -187,8 +188,6 @@ describe("MarkupSessionPage", () => {
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
     expect(mocks.save.mock.calls[0][1][0]).not.toHaveProperty("id");
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith("session-1"));
-    expect(await screen.findByRole("button", { name: "دریافت PDF نشانه‌گذاری" })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "دریافت Comment Sheet" }).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByRole("dialog", { name: /Comment Sheet/ })).toBeTruthy();
+    expect(await screen.findByTestId("comment-list-target")).toBeTruthy();
   });
 });

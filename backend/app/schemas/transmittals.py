@@ -482,6 +482,9 @@ class CommentOut(ORMModel):
     revision_time: datetime | None = None
     attachments: list[CommentAttachmentOut] = []
     attachment_count: int = 0
+    # True only for a virtual, staged PDF-markup row after the operator has
+    # opened Comment Registration. It is not persisted on ordinary comments.
+    staged_registration_opened: bool = False
 
 
 class CommentListOut(ORMModel):

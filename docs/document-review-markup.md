@@ -19,12 +19,13 @@
 * `GET /markups?file_id=...` و `GET /markups/{id}`؛
 * `PUT /markups/{id}/annotations` برای ذخیره جایگزین‌پذیر پیش‌نویس؛
 * `POST /markups/{id}/submit`؛
+* `POST /markups/{id}/registration-opened` برای قفل‌شدن حذف پس از بازکردن فرم Comment Registration؛
 * `POST /markups/{id}/annotations/{number}/reply`؛
 * `DELETE /markups/{id}` برای مدیر.
 
 دانلود خروجی‌ها مسیر موجود پیوست ترانسمیتال را reuse می‌کند:
 `GET /transmittals/{transmittal_id}/attachments/{attachment_id}/download`؛
-با این کار هیچ endpoint دیگری زیر `/markups` اضافه نمی‌شود و همان ACL/Content-Disposition موجود حفظ می‌شود.
+خروجی‌ها همچنان با مسیر موجود پیوست ترانسمیتال دریافت می‌شوند و endpoint جدید فقط وضعیت مشاهده فرم را ثبت می‌کند؛ ACL/Content-Disposition موجود حفظ می‌شود.
 
 نقاط نشانه‌گذاری در JSON با مختصات نرمال‌شده `0..1` ذخیره می‌شوند. جدول‌های جدید فقط `markup_sessions` و `markup_annotations` هستند و migration `0016_document_markup` در downgrade فقط همین دو جدول و ایندکس‌هایشان را حذف می‌کند.
 
@@ -36,4 +37,4 @@
 
 ## عدم تغییر فایل اصلی
 
-هنگام ایجاد جلسه SHA-256 فایل اصلی ثبت می‌شود. در submit دوباره hash و تعداد صفحات بررسی می‌شود. خروجی با PyMuPDF در حافظه ساخته و در storage با کلید جدید ذخیره می‌شود؛ رکورد پیوست PDF اصلی، کلید و bytes آن دست‌نخورده می‌ماند. دو خروجی علاوه بر metadata ترانسمیتال به Comment/CommentAttachmentهای موجود نیز متصل می‌شوند تا در Comment List و Related/Attachment viewهای فعلی قابل دسترسی باشند.
+هنگام ایجاد جلسه SHA-256 فایل اصلی ثبت می‌شود. در submit دوباره hash و تعداد صفحات بررسی می‌شود. خروجی با PyMuPDF در حافظه ساخته و در storage با کلید جدید ذخیره می‌شود؛ رکورد پیوست PDF اصلی، کلید و bytes آن دست‌نخورده می‌ماند. دو خروجی ابتدا فقط در metadata ترانسمیتال و جلسه بازبینی به‌صورت staging احراز هویت‌شده نگه‌داری می‌شوند و در Attachment List اصلی نمایش داده نمی‌شوند؛ پس از تکمیل و ذخیره صریح فرم Comment Registration، به Comment/CommentAttachment موجود متصل می‌شوند تا در Comment List و Related/Attachment viewهای فعلی قابل دسترسی باشند.

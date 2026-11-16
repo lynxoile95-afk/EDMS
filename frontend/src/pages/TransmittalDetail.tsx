@@ -433,8 +433,11 @@ export function TransmittalDetail() {
     return counts;
   }, {});
   const revisionIds = Array.from(new Set(data.lines.map((line) => line.revision_id)));
-  const nativeAttachments = (data.attachments ?? []).filter((attachment) => attachment.kind === "native");
-  const relatedAttachments = (data.attachments ?? []).filter((attachment) => attachment.kind === "related");
+  // Markup outputs are staged for Comment Registration and intentionally do not
+  // appear as ordinary files beside the source PDF in this workspace.
+  const visibleAttachments = (data.attachments ?? []).filter((attachment) => attachment.kind !== "comment");
+  const nativeAttachments = visibleAttachments.filter((attachment) => attachment.kind === "native");
+  const relatedAttachments = visibleAttachments.filter((attachment) => attachment.kind === "related");
 
   // --- review route -------------------------------------------------------
   const stage = data.stage ?? "draft";
@@ -926,33 +929,15 @@ export function TransmittalDetail() {
         setPreviewMarkupSession(result.session);
         setPreviewMarkupAnnotations(result.session.annotations);
         setPreviewMarkupDirty(false);
-        setPreviewMarkupNotice("ثبت نهایی انجام شد؛ Comment Sheet در پنجره پیش‌نمایش باز می‌شود.");
         localStorage.removeItem(`edms-markup-draft:${result.session.id}`);
-        const commentSheet = result.outputs.find((output) => output.kind === "sheet");
-        if (commentSheet) {
-          await openAttachmentPreview(
-            {
-              id: commentSheet.attachment_id,
-              line_id: null,
-              revision_id: result.session.revision_id,
-              kind: "comment",
-              related_type: "comment_sheet",
-              filename: commentSheet.filename,
-              content_type: "application/pdf",
-              size_bytes: 0,
-              uploaded_at: new Date().toISOString(),
-              uploaded_by_id: user?.id ?? null,
-              uploaded_by_name: user?.full_name ?? null,
-              access_user_ids: [],
-              access_restricted: false,
-            },
-            false,
-          );
-          setPreviewActionError("Comment Sheet نتیجه ثبت نهایی باز شد.");
-        } else {
-          setPreviewActionError("ثبت نهایی انجام شد، اما Comment Sheet در پاسخ سامانه پیدا نشد.");
+        const revisionId = result.session.revision_id;
+        if (!revisionId) {
+          setPreviewActionError("ثبت نهایی انجام شد، اما بازنگری مدرک برای ثبت در Comment یافت نشد.");
+          return;
         }
-        await load();
+        navigate(
+          `/documents/${revisionId}/comments?markup_session_id=${encodeURIComponent(result.session.id)}&show=all`,
+        );
       } catch (err) {
         setPreviewMarkupError(err instanceof ApiError ? err.detail : "ثبت نهایی و تولید خروجی ناموفق بود.");
       } finally {
@@ -1220,7 +1205,7 @@ export function TransmittalDetail() {
             <IconPaperclip className="h-4 w-4" /> پیوست‌های مدرک / Document Attachments
           </span>
           <span className="text-[9.5px] text-[#5c6b78]">
-            {persianDigits((data.attachments ?? []).length)} فایل برای {persianDigits(data.line_count)} مدرک
+            {persianDigits(visibleAttachments.length)} فایل برای {persianDigits(data.line_count)} مدرک
           </span>
           {attachmentsLocked && !canManageNative ? (
             <span className="border border-[#9bc3a0] bg-[#eef8ef] px-1.5 py-0.5 text-[9.5px] font-bold text-[#286437]">
@@ -1374,7 +1359,7 @@ export function TransmittalDetail() {
           </div>
           <div className="max-h-[25vh] overflow-auto">
             {data.lines.map((line) => {
-              const lineAttachments = (data.attachments ?? []).filter((attachment) => attachment.line_id === line.id);
+              const lineAttachments = visibleAttachments.filter((attachment) => attachment.line_id === line.id);
               return (
                 <div key={line.id} className="flex flex-wrap items-center gap-2 border-b border-[#e6e1c8] px-2 py-1 last:border-b-0">
                   <div className="min-w-[15rem] flex-1">

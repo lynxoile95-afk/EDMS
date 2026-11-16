@@ -9,7 +9,7 @@ import fitz
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import DocumentRevision, MDLItem
+from app.models import Comment, DocumentRevision, MDLItem
 from app.services import transmittal_service
 from app.services.markup_rendering import render_annotated_pdf
 from app.services.storage import get_storage
@@ -235,6 +235,46 @@ def test_markup_permissions_save_reload_submit_outputs_and_original_hash(
     assert sheet.status_code == 200
     assert b"Comment" in sheet.content
 
+    # Submission stages only the authenticated output files. No durable Comment
+    # exists until the operator explicitly saves Comment Registration.
+    assert db.query(Comment).filter(Comment.revision_id == draft.lines[0].revision_id).count() == 0
+    pending_lists = client.get(
+        f"/api/v1/revisions/{draft.lines[0].revision_id}/comment-lists", headers=dcc_headers
+    )
+    assert pending_lists.status_code == 200, pending_lists.text
+    pending_comments = [comment for item in pending_lists.json() for comment in item["comments"]]
+    assert len(pending_comments) == 1
+    pending = pending_comments[0]
+    assert pending["id"] == session_id
+    assert pending["category"] == "PDF markup"
+    assert pending["judgment"] == "draft"
+    assert [item["file_name"] for item in pending["attachments"]] == [
+        pdf_output["filename"],
+        sheet_output["filename"],
+    ]
+
+    opened = client.post(f"/api/v1/markups/{session_id}/registration-opened", headers=dcc_headers)
+    assert opened.status_code == 200, opened.text
+    locked_delete = client.delete(f"/api/v1/comments/{session_id}", headers=dcc_headers)
+    assert locked_delete.status_code == 409, locked_delete.text
+    registered = client.patch(
+        f"/api/v1/comments/{session_id}",
+        headers=dcc_headers,
+        data={
+            "text": "شرح نهایی اپراتور",
+            "code": "1",
+            "from_page_no": "1",
+            "to_page_no": "1",
+            "judgment": "draft",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    registered_body = registered.json()
+    assert registered_body["id"] != session_id
+    assert registered_body["judgment"] == "OK"
+    assert registered_body["attachment_count"] == 2
+    assert db.query(Comment).filter(Comment.revision_id == draft.lines[0].revision_id).count() == 1
+
     locked = client.put(
         f"/api/v1/markups/{session_id}/annotations",
         headers=dcc_headers,
@@ -252,7 +292,36 @@ def test_markup_permissions_save_reload_submit_outputs_and_original_hash(
 
     detail = client.get(f"/api/v1/transmittals/{draft.id}", headers=dcc_headers)
     assert detail.status_code == 200
-    assert sum(item["kind"] == "comment" for item in detail.json()["attachments"]) == 2
+    # Generated markup outputs remain available to the authenticated markup
+    # session and Comment Registration prefill, but are not ordinary files in
+    # the transmittal attachment list.
+    assert sum(item["kind"] == "comment" for item in detail.json()["attachments"]) == 0
+
+
+def test_submitted_markup_delete_is_available_before_registration(
+    client: TestClient, db: Session, project, users
+):
+    draft = _draft(client, db, project, users)
+    headers = auth_headers(client, "dcc@edms-test.com")
+    upload = client.post(
+        f"/api/v1/transmittals/{draft.id}/attachments",
+        headers=headers,
+        data={"line_id": str(draft.lines[0].id), "kind": "pdf"},
+        files={"file": ("delete-before-register.pdf", _pdf(), "application/pdf")},
+    )
+    assert upload.status_code == 201, upload.text
+    created = client.post(
+        "/api/v1/markups",
+        headers=headers,
+        json={"transmittal_id": str(draft.id), "file_id": upload.json()["attachment"]["id"]},
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    submitted = client.post(f"/api/v1/markups/{session_id}/submit", headers=headers)
+    assert submitted.status_code == 200, submitted.text
+    removed = client.delete(f"/api/v1/comments/{session_id}", headers=headers)
+    assert removed.status_code == 204, removed.text
+    assert client.get(f"/api/v1/markups/{session_id}", headers=headers).status_code == 404
 
 
 def test_markup_admin_delete_is_audited_and_draft_is_author_only(

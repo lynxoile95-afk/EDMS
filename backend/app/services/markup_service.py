@@ -10,17 +10,15 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import (
     Comment,
-    CommentAttachment,
     MarkupAnnotation,
     MarkupAnnotationStyle,
     MarkupSession,
-    NumberSequence,
     Project,
     Transmittal,
     TransmittalLine,
@@ -36,13 +34,18 @@ from app.schemas.markups import (
     MarkupSessionOut,
     MarkupSubmitOut,
 )
-from app.services import acl, audit, transmittal_service
+from app.services import acl, audit
 from app.services.markup_rendering import (
     output_filenames,
     render_annotated_pdf,
     render_comment_sheet,
 )
 from app.services.storage import build_key, get_storage
+
+# Stored in the existing JSON projection so the row-level Delete action remains
+# locked after an operator has opened Comment Registration, without adding a
+# feature table or changing the source document schema.
+REGISTRATION_VIEWED_MARKER = "__comment_registration_viewed__"
 
 DEFAULT_MARKUP_STROKE_WIDTH = 2.5
 MIN_MARKUP_STROKE_WIDTH = 1.0
@@ -225,6 +228,8 @@ def _session_out(db: Session, session: MarkupSession, user: User) -> MarkupSessi
                 f"{settings.api_v1_prefix}/transmittals/{session.transmittal_id}/attachments/"
                 f"{item['id']}/download"
             ),
+            size_bytes=int(item.get("size_bytes") or 0),
+            content_type=str(item.get("content_type") or "application/pdf"),
         )
         for item in output_rows
         if _safe_uuid(str(item.get("id") or "")) is not None
@@ -258,6 +263,48 @@ def _session_out(db: Session, session: MarkupSession, user: User) -> MarkupSessi
 
 def session_out(db: Session, session: MarkupSession, user: User) -> MarkupSessionOut:
     return _session_out(db, session, user)
+
+
+def generated_comment_ids(session: MarkupSession) -> list[uuid.UUID]:
+    """Return only durable Comment ids from the existing JSON projection."""
+    result: list[uuid.UUID] = []
+    for value in session.generated_comment_ids or []:
+        try:
+            result.append(uuid.UUID(str(value)))
+        except (TypeError, ValueError):
+            # The same legacy JSON field also carries the registration-opened
+            # marker. It is deliberately not a Comment id.
+            continue
+    return result
+
+
+def registration_was_opened(session: MarkupSession) -> bool:
+    return REGISTRATION_VIEWED_MARKER in (session.generated_comment_ids or [])
+
+
+def mark_registration_opened(db: Session, user: User, session: MarkupSession) -> MarkupSession:
+    """Persist the irreversible row-action transition before opening the form."""
+    if _status(session) != "submitted":
+        raise HTTPException(status_code=409, detail="جلسه هنوز خروجی ثبت‌شده ندارد.")
+    if generated_comment_ids(session):
+        raise HTTPException(status_code=409, detail="ثبت Comment این جلسه قبلاً انجام شده است.")
+    project = acl.require_transmittal(db, user, session.transmittal)
+    acl.assert_can_review(db, user, project.id)
+    values = list(session.generated_comment_ids or [])
+    if REGISTRATION_VIEWED_MARKER not in values:
+        values.append(REGISTRATION_VIEWED_MARKER)
+        session.generated_comment_ids = values
+        db.flush()
+        audit.record(
+            db,
+            action="comment.markup_registration_open",
+            entity_type="markup_session",
+            entity_id=session.id,
+            actor=user,
+            project_id=project.id,
+            after={"registration_opened": True},
+        )
+    return session
 
 
 def create_or_get(db: Session, user: User, payload: MarkupCreate) -> MarkupSession:
@@ -445,26 +492,6 @@ def save_annotations(db: Session, user: User, session: MarkupSession, payload: M
     return session
 
 
-def _next_comment_number(db: Session, project_id: uuid.UUID, comment_list_id: uuid.UUID) -> int:
-    scope_key = f"comment-list:{comment_list_id}"
-    sequence = db.execute(
-        select(NumberSequence)
-        .where(NumberSequence.project_id == project_id, NumberSequence.scope_key == scope_key)
-        .with_for_update()
-    ).scalar_one_or_none()
-    if sequence is None:
-        current = db.execute(
-            select(func.coalesce(func.max(Comment.seq_no), 0)).where(Comment.comment_list_id == comment_list_id)
-        ).scalar_one()
-        sequence = NumberSequence(project_id=project_id, scope_key=scope_key, next_value=int(current or 0) + 1)
-        db.add(sequence)
-        db.flush()
-    value = int(sequence.next_value)
-    sequence.next_value = value + 1
-    db.flush()
-    return value
-
-
 def _annotation_dict(annotation: MarkupAnnotation) -> dict[str, Any]:
     return {
         "number": annotation.number,
@@ -593,68 +620,10 @@ def submit(db: Session, user: User, session: MarkupSession) -> MarkupSubmitOut:
                 )
             )
 
-        comment_list = transmittal_service.ensure_comment_list(
-            db, revision_id=session.revision_id, transmittal_id=session.transmittal_id
-        )
-        db.flush()
-        comment_ids: list[str] = []
-        comment_objects: list[Comment] = []
-        for annotation in annotations:
-            comment = Comment(
-                comment_list_id=comment_list.id,
-                revision_id=session.revision_id,
-                sheet_id=None,
-                author_id=user.id,
-                seq_no=_next_comment_number(db, project.id, comment_list.id),
-                code="2",
-                category="PDF markup",
-                text=annotation.text or f"PDF markup: {annotation.kind}",
-                page_no=annotation.page_no,
-                from_page_no=annotation.page_no,
-                to_page_no=annotation.page_no,
-                bbox=annotation.points or [],
-                status=CommentStatus.OPEN,
-                disposition=None,
-                judgment="draft",
-                personal_remarks=None,
-                remarks=None,
-            )
-            db.add(comment)
-            db.flush()
-            comment_ids.append(str(comment.id))
-            comment_objects.append(comment)
-        if not comment_objects:
-            # Keep generated files discoverable through the existing Comment
-            # attachment viewer even when a user submits an empty sheet.
-            comment = Comment(
-                comment_list_id=comment_list.id,
-                revision_id=session.revision_id,
-                author_id=user.id,
-                seq_no=_next_comment_number(db, project.id, comment_list.id),
-                code="3",
-                category="PDF markup",
-                text="Comment Sheet generated without annotations",
-                page_no=1,
-                bbox=[],
-                status=CommentStatus.OPEN,
-                judgment="draft",
-            )
-            db.add(comment)
-            db.flush()
-            comment_ids.append(str(comment.id))
-            comment_objects.append(comment)
-        for attachment_id, key, data in generated:
-            db.add(
-                CommentAttachment(
-                    comment_id=comment_objects[0].id,
-                    file_name=next(item["filename"] for item in attachments if item["id"] == str(attachment_id)),
-                    file_path=key,
-                    file_size=len(data),
-                    mime_type="application/pdf",
-                    uploaded_by_id=user.id,
-                )
-            )
-
+        # The two generated PDFs are staged in the existing transmittal
+        # metadata and the MarkupSession only.  Comment/CommentAttachment rows
+        # are intentionally not created here: the operator must complete the
+        # ordinary Comment Registration form and explicitly save it first.
         metadata = dict(session.transmittal.meta or {})
         existing_attachments = list(metadata.get("attachments") or [])
         metadata["attachments"] = [*existing_attachments, *attachments]
@@ -663,7 +632,7 @@ def submit(db: Session, user: User, session: MarkupSession) -> MarkupSubmitOut:
         session.submitted_at = now
         session.submitted_pdf_attachment_id = attachments[0]["id"]
         session.comment_sheet_attachment_id = attachments[1]["id"]
-        session.generated_comment_ids = comment_ids
+        session.generated_comment_ids = []
         db.flush()
         audit.record(
             db,
@@ -696,6 +665,8 @@ def submit(db: Session, user: User, session: MarkupSession) -> MarkupSubmitOut:
                 f"{settings.api_v1_prefix}/transmittals/{session.transmittal_id}/attachments/"
                 f"{item['id']}/download"
             ),
+            size_bytes=int(item.get("size_bytes") or 0),
+            content_type=str(item.get("content_type") or "application/pdf"),
         )
         for item in attachments
     ]
@@ -729,9 +700,15 @@ def reply(db: Session, user: User, session: MarkupSession, number: int, payload:
     # Keep the existing Comment List projection synchronized without adding a
     # second reply table.  The generated comment IDs follow annotation.number.
     comment_id = None
-    generated_ids = session.generated_comment_ids or []
-    if 0 < number <= len(generated_ids):
-        comment_id = _safe_uuid(str(generated_ids[number - 1]))
+    durable_ids = generated_comment_ids(session)
+    if len(durable_ids) == 1:
+        # Explicit Comment Registration creates one durable row for the staged
+        # handoff; keep every annotation reply reflected in that row.
+        comment_id = durable_ids[0]
+    elif 0 < number <= len(durable_ids):
+        # Preserve compatibility with older sessions that created one row per
+        # annotation before the staged-registration handoff was introduced.
+        comment_id = durable_ids[number - 1]
     comment = db.get(Comment, comment_id) if comment_id is not None else None
     if comment is not None:
         comment.response_text = payload.text
@@ -754,6 +731,58 @@ def reply(db: Session, user: User, session: MarkupSession, number: int, payload:
         after={"session_id": session.id, "number": number, "status": payload.status},
     )
     return annotation
+
+
+def delete_staged_submission(db: Session, user: User, session: MarkupSession) -> None:
+    """Delete a submitted-but-unregistered markup handoff.
+
+    This reuses MarkupSession and Transmittal.meta as the reversible staging
+    area. Once Comment Registration is opened, the marker written by
+    ``mark_registration_opened`` makes this operation permanently unavailable;
+    after registration the durable Comment itself is likewise immutable.
+    """
+    if _status(session) != "submitted":
+        raise HTTPException(status_code=409, detail="فقط پیش‌نویس ارسالی بازبینی قابل حذف است.")
+    if registration_was_opened(session) or generated_comment_ids(session):
+        raise HTTPException(status_code=409, detail="پس از مشاهده و ثبت نهایی قابل حذف نیست.")
+    project = acl.require_transmittal(db, user, session.transmittal)
+    acl.assert_can_review(db, user, project.id)
+    storage = get_storage()
+    metadata = dict(session.transmittal.meta or {})
+    output_ids = {
+        str(value)
+        for value in (session.submitted_pdf_attachment_id, session.comment_sheet_attachment_id)
+        if value
+    }
+    # Use the session marker as the authoritative set, so a future output can
+    # be cleaned up as well without making it visible in the main attachment
+    # list.
+    for item in metadata.get("attachments") or []:
+        if str(item.get("markup_session_id") or "") == str(session.id):
+            output_ids.add(str(item.get("id")))
+    kept: list[dict[str, Any]] = []
+    deleted_ids: list[str] = []
+    for item in metadata.get("attachments") or []:
+        if str(item.get("id")) in output_ids:
+            deleted_ids.append(str(item.get("id")))
+            try:
+                storage.delete(str(item.get("storage_key")))
+            except Exception:
+                pass
+        else:
+            kept.append(item)
+    metadata["attachments"] = kept
+    session.transmittal.meta = metadata
+    audit.record(
+        db,
+        action="comment.markup_delete",
+        entity_type="markup_session",
+        entity_id=session.id,
+        actor=user,
+        project_id=project.id,
+        before={"status": _status(session), "output_ids": deleted_ids},
+    )
+    db.delete(session)
 
 
 def delete(db: Session, user: User, session: MarkupSession) -> None:

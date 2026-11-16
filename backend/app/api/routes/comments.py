@@ -23,6 +23,7 @@ from app.models import (
     CommentList,
     Discipline,
     DocumentRevision,
+    MarkupSession,
     NumberSequence,
     User,
 )
@@ -35,7 +36,7 @@ from app.schemas.transmittals import (
     CommentOut,
     CommentRespond,
 )
-from app.services import acl, audit, notification, transmittal_service
+from app.services import acl, audit, markup_service, notification, transmittal_service
 from app.services.storage import build_key, get_storage
 from app.utils.jalali import format_jalali
 
@@ -54,6 +55,8 @@ COORDINATOR_ROLE_NAMES = {
     "project_manager",
     "system_admin",
 }
+
+
 def _comment_attachment_out(attachment: CommentAttachment) -> CommentAttachmentOut:
     return CommentAttachmentOut(
         id=attachment.id,
@@ -109,6 +112,126 @@ def _comment_out(comment: Comment) -> CommentOut:
         attachments=[_comment_attachment_out(item) for item in (comment.attachments or [])],
         attachment_count=len(comment.attachments or []),
     )
+
+
+def _safe_uuid(value: object) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _staged_output_rows(session: MarkupSession) -> list[dict]:
+    return [
+        item
+        for item in (session.transmittal.meta or {}).get("attachments", [])
+        if str(item.get("markup_session_id") or "") == str(session.id)
+        and str(item.get("related_type") or "") in {"markup_pdf", "comment_sheet"}
+        and _safe_uuid(item.get("id")) is not None
+    ]
+
+
+def _staged_attachment_out(session: MarkupSession, item: dict) -> CommentAttachmentOut:
+    attachment_id = _safe_uuid(item.get("id"))
+    assert attachment_id is not None
+    return CommentAttachmentOut(
+        id=attachment_id,
+        comment_id=session.id,
+        file_name=str(item.get("filename") or "markup-output.pdf"),
+        file_size=int(item.get("size_bytes") or 0),
+        mime_type=str(item.get("content_type") or "application/pdf"),
+        uploaded_by_id=_safe_uuid(item.get("uploaded_by_id")) or session.user_id,
+        uploaded_by_name=item.get("uploaded_by_name") or (session.user.full_name if session.user else None),
+        uploaded_at=item.get("uploaded_at") or session.submitted_at or session.updated_at,
+        download_url=(
+            f"{settings.api_v1_prefix}/transmittals/{session.transmittal_id}/attachments/"
+            f"{attachment_id}/download"
+        ),
+    )
+
+
+def _staged_comment_out(session: MarkupSession, comment_list_id: uuid.UUID, seq_no: int) -> CommentOut:
+    annotations = list(session.annotations or [])
+    pages = [item.page_no for item in annotations if item.page_no]
+    first = annotations[0] if annotations else None
+    created_at = session.submitted_at or session.updated_at or session.created_at
+    revision = session.revision
+    return CommentOut(
+        id=session.id,
+        registration_id=str(session.id),
+        revision_id=session.revision_id,  # submitted sessions are revision-bound
+        comment_list_id=comment_list_id,
+        seq_no=seq_no,
+        code="2",
+        category="PDF markup",
+        related_comment_id=None,
+        discipline_id=None,
+        discipline_code=None,
+        discipline_name=None,
+        text=(next((item.text for item in annotations if item.text), None)
+              or f"خروجی بازبینی PDF «{session.original_filename}» برای ثبت نظر آماده است."),
+        page_no=min(pages) if pages else None,
+        from_page_no=min(pages) if pages else None,
+        to_page_no=max(pages) if pages else None,
+        bbox=first.points or [] if first is not None else [],
+        status="open",
+        disposition=None,
+        status_change_date=None,
+        personal_remarks=None,
+        coordinator_date=None,
+        judgment="draft",
+        judgment_comments=None,
+        remarks=None,
+        response_text=None,
+        responded_at=None,
+        author_id=session.user_id,
+        author_name=session.user.full_name if session.user else None,
+        created_at=created_at,
+        revision_time=(getattr(revision, "registered_at", None) or getattr(revision, "created_at", None))
+        if revision
+        else None,
+        attachments=[_staged_attachment_out(session, item) for item in _staged_output_rows(session)],
+        attachment_count=len(_staged_output_rows(session)),
+        staged_registration_opened=markup_service.registration_was_opened(session),
+    )
+
+
+def _append_staged_markup_comments(
+    db, user: User, revision_id: uuid.UUID, lists: list[CommentListOut]
+) -> list[CommentListOut]:
+    sessions = db.execute(
+        select(MarkupSession)
+        .where(MarkupSession.revision_id == revision_id, MarkupSession.status == "submitted")
+        .order_by(MarkupSession.submitted_at, MarkupSession.created_at)
+    ).scalars()
+    result = list(lists)
+    for session in sessions:
+        # Once registration has created a real Comment, the normal projection
+        # is authoritative and the virtual row must disappear.
+        if markup_service.generated_comment_ids(session):
+            continue
+        try:
+            acl.require_transmittal(db, user, session.transmittal)
+        except (acl.AccessDenied, acl.NotFound):
+            continue
+        target = next(
+            (item for item in result if str(item.transmittal_id or "") == str(session.transmittal_id)),
+            None,
+        )
+        if target is None:
+            target = CommentListOut(
+                id=session.id,
+                revision_id=revision_id,
+                transmittal_id=session.transmittal_id,
+                status="open",
+                opened_at=session.submitted_at or session.created_at,
+                closed_at=None,
+                comments=[],
+            )
+            result.append(target)
+        next_seq = max((item.seq_no for item in target.comments), default=0) + 1
+        target.comments.append(_staged_comment_out(session, target.id, next_seq))
+    return result
 
 
 def _coordinator_can_edit(db, user: User, project_id: uuid.UUID) -> bool:
@@ -384,7 +507,7 @@ def list_comment_lists(revision_id: uuid.UUID, db: DbSession, user: CurrentUser)
     lists = db.execute(
         select(CommentList).where(CommentList.revision_id == revision_id).order_by(CommentList.opened_at)
     ).scalars()
-    return [
+    result = [
         CommentListOut(
             id=item.id,
             revision_id=item.revision_id,
@@ -396,6 +519,7 @@ def list_comment_lists(revision_id: uuid.UUID, db: DbSession, user: CurrentUser)
         )
         for item in lists
     ]
+    return _append_staged_markup_comments(db, user, revision_id, result)
 
 
 @router.post(
@@ -504,6 +628,132 @@ async def add_comment_multipart(
     return _comment_out(comment)
 
 
+def _finalize_staged_markup(
+    *,
+    db,
+    user: User,
+    session: MarkupSession,
+    text: str,
+    code: str,
+    related_comment_id: uuid.UUID | None,
+    discipline_id: uuid.UUID | None,
+    discipline_code: str | None,
+    page_no: int | None,
+    from_page_no: int | None,
+    to_page_no: int | None,
+    disposition: str | None,
+    status_change_date: date | None,
+    personal_remarks: str | None,
+    coordinator_date: date | None,
+    judgment: str,
+    judgment_comments: str | None,
+    remarks: str | None,
+) -> CommentOut:
+    if _safe_uuid(session.revision_id) is None:
+        raise HTTPException(status_code=422, detail="جلسه بازبینی به بازنگری مدرک متصل نیست.")
+    revision = db.get(DocumentRevision, session.revision_id)
+    if revision is None:
+        raise HTTPException(status_code=404, detail="بازنگری یافت نشد.")
+    if session.status != "submitted":
+        raise HTTPException(status_code=409, detail="خروجی بازبینی هنوز برای ثبت در Comment آماده نیست.")
+    project = acl.require_project(db, user, revision.project_id)
+    acl.assert_can_review(db, user, project.id)
+
+    existing_ids = markup_service.generated_comment_ids(session)
+    if existing_ids:
+        existing = db.get(Comment, existing_ids[0])
+        if existing is not None:
+            return _comment_out(existing)
+
+    output_rows = _staged_output_rows(session)
+    if len(output_rows) < 2:
+        raise HTTPException(status_code=409, detail="هر دو فایل خروجی PDF برای ثبت نهایی لازم است.")
+    storage = get_storage()
+    for item in output_rows:
+        storage_key = str(item.get("storage_key") or "")
+        if not storage_key or not storage.exists(storage_key):
+            raise HTTPException(status_code=409, detail="یکی از فایل‌های خروجی بازبینی در انبار اسناد یافت نشد.")
+
+    normalized_text = text.strip()
+    if len(normalized_text) < 2:
+        raise HTTPException(status_code=422, detail="شرح نظر اجباری است و باید حداقل دو نویسه داشته باشد.")
+    if code not in {"1", "2", "3"}:
+        raise HTTPException(status_code=422, detail="کد نظر نامعتبر است.")
+    if disposition and disposition not in {item.value for item in CommentDisposition}:
+        raise HTTPException(status_code=422, detail="وضعیت نظر نامعتبر است.")
+    _validate_page_range(from_page_no, to_page_no)
+    resolved_discipline_id = _validate_related_fields(
+        db,
+        revision,
+        related_comment_id,
+        discipline_id,
+        discipline_code,
+    )
+    comment_list = transmittal_service.ensure_comment_list(
+        db,
+        revision_id=revision.id,
+        transmittal_id=session.transmittal_id,
+    )
+    db.flush()
+    annotations = list(session.annotations or [])
+    pages = [item.page_no for item in annotations if item.page_no]
+    first = annotations[0] if annotations else None
+    comment = Comment(
+        comment_list_id=comment_list.id,
+        revision_id=revision.id,
+        sheet_id=None,
+        author_id=user.id,
+        seq_no=_next_comment_no(db, project.id, comment_list.id),
+        code=code,
+        category="PDF markup",
+        text=normalized_text,
+        page_no=page_no or from_page_no or (min(pages) if pages else None),
+        from_page_no=from_page_no or (min(pages) if pages else None),
+        to_page_no=to_page_no or (max(pages) if pages else None),
+        bbox=first.points or [] if first is not None else [],
+        status=CommentStatus.OPEN,
+        disposition=disposition,
+        status_change_date=status_change_date,
+        personal_remarks=personal_remarks.strip() if personal_remarks else None,
+        coordinator_date=coordinator_date,
+        judgment=(judgment.strip() if judgment and judgment.strip().lower() != "draft" else "OK"),
+        judgment_comments=judgment_comments.strip() if judgment_comments else None,
+        remarks=remarks.strip() if remarks else None,
+    )
+    db.add(comment)
+    db.flush()
+    for item in output_rows:
+        attachment_id = _safe_uuid(item.get("id"))
+        if attachment_id is None:
+            continue
+        db.add(
+            CommentAttachment(
+                comment_id=comment.id,
+                file_name=str(item.get("filename") or "markup-output.pdf"),
+                file_path=str(item["storage_key"]),
+                file_size=int(item.get("size_bytes") or 0),
+                mime_type=str(item.get("content_type") or "application/pdf"),
+                uploaded_by_id=session.user_id,
+            )
+        )
+    values = [str(comment.id)]
+    if markup_service.registration_was_opened(session):
+        values.append(markup_service.REGISTRATION_VIEWED_MARKER)
+    session.generated_comment_ids = values
+    db.flush()
+    audit.record(
+        db,
+        action="comment.markup_register",
+        entity_type="markup_session",
+        entity_id=session.id,
+        actor=user,
+        project_id=project.id,
+        after={"comment_id": str(comment.id), "attachment_count": len(output_rows)},
+    )
+    _commit_comment_create(db, revision, project, user, comment)
+    return _comment_out(comment)
+
+
 @router.patch("/comments/{comment_id}", response_model=CommentOut, summary="ثبت نظر هماهنگ‌کننده روی نظر موجود")
 async def update_comment(
     comment_id: uuid.UUID,
@@ -529,25 +779,94 @@ async def update_comment(
 ) -> CommentOut:
     comment = db.get(Comment, comment_id)
     if comment is None:
+        staged_session = db.get(MarkupSession, comment_id)
+        if staged_session is not None:
+            if files:
+                raise HTTPException(status_code=409, detail="فایل‌های خروجی بازبینی از قبل در انبار اسناد آماده‌اند.")
+            authorized_session = markup_service.get_authorized(db, user, staged_session.id)
+            return _finalize_staged_markup(
+                db=db,
+                user=user,
+                session=authorized_session,
+                text=text,
+                code=code,
+                related_comment_id=related_comment_id,
+                discipline_id=discipline_id,
+                discipline_code=discipline_code,
+                page_no=page_no,
+                from_page_no=from_page_no,
+                to_page_no=to_page_no,
+                disposition=disposition,
+                status_change_date=status_change_date,
+                personal_remarks=personal_remarks,
+                coordinator_date=coordinator_date,
+                judgment=judgment,
+                judgment_comments=judgment_comments,
+                remarks=remarks,
+            )
         raise HTTPException(status_code=404, detail="نظر یافت نشد.")
     revision = db.get(DocumentRevision, comment.revision_id)
     project = acl.require_project(db, user, revision.project_id)
-    _assert_comment_editor(db, user, project.id, comment)
     if files:
         raise HTTPException(status_code=409, detail="پس از ثبت نظر، افزودن پیوست مجاز نیست.")
 
-    # The original registration fields above remain accepted for compatibility
-    # with older clients, but they are deliberately ignored. A coordinator may
-    # only fill the coordinator-owned fields below; the author's text, code,
-    # pages, disposition and existing evidence cannot be changed.
-    comment.coordinator_date = coordinator_date
-    comment.judgment = judgment.strip() or "draft"
-    comment.judgment_comments = judgment_comments.strip() if judgment_comments else None
-    comment.remarks = remarks.strip() if remarks else None
+    # A markup-generated row is a registration draft. The new «مشاهده و ثبت
+    # نهایی» action may fill the ordinary registration columns on that row while
+    # retaining its two authenticated PDF evidence files. Once saved, the
+    # judgment is promoted out of `draft`, which is also the server-side lock
+    # used by the Delete action.
+    is_markup_registration = (
+        comment.category == "PDF markup"
+        and str(comment.status) == CommentStatus.OPEN.value
+        and (comment.judgment or "draft").strip().lower() == "draft"
+    )
+    if is_markup_registration:
+        acl.assert_can_review(db, user, project.id)
+        normalized_text = text.strip()
+        if len(normalized_text) < 2:
+            raise HTTPException(status_code=422, detail="شرح نظر اجباری است و باید حداقل دو نویسه داشته باشد.")
+        if code not in {"1", "2", "3"}:
+            raise HTTPException(status_code=422, detail="کد نظر نامعتبر است.")
+        if disposition and disposition not in {item.value for item in CommentDisposition}:
+            raise HTTPException(status_code=422, detail="وضعیت نظر نامعتبر است.")
+        _validate_page_range(from_page_no, to_page_no)
+        resolved_discipline_id = _validate_related_fields(
+            db,
+            revision,
+            related_comment_id,
+            discipline_id,
+            discipline_code,
+        )
+        comment.text = normalized_text
+        comment.code = code
+        comment.related_comment_id = related_comment_id
+        comment.discipline_id = resolved_discipline_id
+        comment.page_no = page_no or from_page_no
+        comment.from_page_no = from_page_no
+        comment.to_page_no = to_page_no
+        comment.disposition = disposition
+        comment.status_change_date = status_change_date
+        comment.personal_remarks = personal_remarks.strip() if personal_remarks else None
+        comment.coordinator_date = coordinator_date
+        # «ثبت نهایی» must be durable even if an older client submits the
+        # compatibility default `draft`.
+        comment.judgment = judgment.strip() if judgment.strip().lower() != "draft" else "OK"
+        comment.judgment_comments = judgment_comments.strip() if judgment_comments else None
+        comment.remarks = remarks.strip() if remarks else None
+        action = "comment.markup_register"
+    else:
+        _assert_comment_editor(db, user, project.id, comment)
+        # Existing coordinator editing remains deliberately narrow: the author's
+        # text, code, pages, disposition and evidence cannot be changed.
+        comment.coordinator_date = coordinator_date
+        comment.judgment = judgment.strip() or "draft"
+        comment.judgment_comments = judgment_comments.strip() if judgment_comments else None
+        comment.remarks = remarks.strip() if remarks else None
+        action = "comment.coordinator_update"
     try:
         audit.record(
             db,
-            action="comment.coordinator_update",
+            action=action,
             entity_type="comment",
             entity_id=comment.id,
             actor=user,
@@ -559,6 +878,40 @@ async def update_comment(
         db.rollback()
         raise
     return _comment_out(comment)
+
+
+@router.delete("/comments/{comment_id}", status_code=204, summary="حذف پیش‌نویس نظر بازبینی")
+def delete_comment(comment_id: uuid.UUID, db: DbSession, user: CurrentUser) -> Response:
+    comment = db.get(Comment, comment_id)
+    if comment is None:
+        staged_session = db.get(MarkupSession, comment_id)
+        if staged_session is not None:
+            markup_service.delete_staged_submission(db, user, staged_session)
+            db.commit()
+            return Response(status_code=204)
+        raise HTTPException(status_code=404, detail="نظر یافت نشد.")
+    revision = db.get(DocumentRevision, comment.revision_id)
+    project = acl.require_project(db, user, revision.project_id)
+    if comment.category != "PDF markup" or (comment.judgment or "draft").strip().lower() != "draft":
+        raise HTTPException(status_code=409, detail="نظر پس از مشاهده و ثبت نهایی قابل حذف نیست.")
+    acl.assert_can_review(db, user, project.id)
+    storage_keys = [attachment.file_path for attachment in (comment.attachments or [])]
+    audit.record(
+        db,
+        action="comment.markup_delete",
+        entity_type="comment",
+        entity_id=comment.id,
+        actor=user,
+        project_id=project.id,
+    )
+    db.delete(comment)
+    db.commit()
+    for key in storage_keys:
+        try:
+            get_storage().delete(key)
+        except Exception:
+            pass
+    return Response(status_code=204)
 
 
 @router.delete(

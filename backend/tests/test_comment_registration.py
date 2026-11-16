@@ -136,3 +136,50 @@ def test_server_rejects_invalid_page_range_and_attachment_extension(client: Test
         files={"files": ("malware.exe", b"not allowed", "application/octet-stream")},
     )
     assert bad_extension.status_code == 415
+
+
+def test_markup_registration_finalizes_existing_row_and_locks_delete(client: TestClient, db, project, users):
+    revision_id = _revision_id(client, db, project, users)
+    headers = _auth(client, "reviewer@edms-test.com")
+    draft = client.post(
+        f"/api/v1/revisions/{revision_id}/comments/multipart",
+        headers=headers,
+        data={"text": "ایراد آماده ثبت نهایی", "category": "PDF markup", "judgment": "draft"},
+        files=[
+            ("files", ("drawing_COMMENT.pdf", b"pdf", "application/pdf")),
+            ("files", ("drawing_COMMENT_SHEET.pdf", b"sheet", "application/pdf")),
+        ],
+    )
+    assert draft.status_code == 201, draft.text
+    comment = draft.json()
+    assert comment["attachment_count"] == 2
+
+    finalized = client.patch(
+        f"/api/v1/comments/{comment['id']}",
+        headers=headers,
+        data={
+            "text": "شرح تکمیل‌شده توسط اپراتور",
+            "code": "1",
+            "discipline_code": "CIV",
+            "from_page_no": "1",
+            "to_page_no": "2",
+            "judgment": "draft",  # server promotes the explicit final action to OK
+        },
+    )
+    assert finalized.status_code == 200, finalized.text
+    assert finalized.json()["text"] == "شرح تکمیل‌شده توسط اپراتور"
+    assert finalized.json()["code"] == "1"
+    assert finalized.json()["judgment"] == "OK"
+    assert finalized.json()["attachment_count"] == 2
+
+    locked_delete = client.delete(f"/api/v1/comments/{comment['id']}", headers=headers)
+    assert locked_delete.status_code == 409, locked_delete.text
+
+    draft_again = client.post(
+        f"/api/v1/revisions/{revision_id}/comments/multipart",
+        headers=headers,
+        data={"text": "پیش‌نویس قابل حذف", "category": "PDF markup", "judgment": "draft"},
+    )
+    assert draft_again.status_code == 201, draft_again.text
+    removed = client.delete(f"/api/v1/comments/{draft_again.json()['id']}", headers=headers)
+    assert removed.status_code == 204, removed.text

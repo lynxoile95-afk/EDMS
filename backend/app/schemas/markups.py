@@ -102,6 +102,8 @@ class MarkupOutputOut(BaseModel):
     filename: str
     kind: Literal["pdf", "sheet"]
     download_url: str
+    size_bytes: int = 0
+    content_type: str = "application/pdf"
 
 
 class MarkupSessionOut(BaseModel):

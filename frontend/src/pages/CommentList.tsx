@@ -1044,7 +1044,7 @@ export function CommentList() {
           <FField label="Code:">{answering?.comment.code ?? "—"}</FField>
           <FField label="Author:">{answering?.comment.author_name ?? "—"}</FField>
           <FField label="Created:">{answering ? jalaliDateTime(answering.comment.created_at) : "—"}</FField>
-          <FField label="Reply / Clarification:" full><textarea className="input min-h-[80px] w-full" value={answering?.text ?? ""} onChange={(event) => setAnswering((previous) => (previous ? { ...previous, text: event.target.value } : previous))} placeholder="پاسخ پیمانکار / توضیح اصلاح" /></FField>
+          <FField label="Reply / Clarification:" full><textarea className="input min-h-[260px] w-full resize-y" value={answering?.text ?? ""} onChange={(event) => setAnswering((previous) => (previous ? { ...previous, text: event.target.value } : previous))} placeholder="پاسخ پیمانکار / توضیح اصلاح" /></FField>
         </FieldGrid>
       </Modal>
     </div>

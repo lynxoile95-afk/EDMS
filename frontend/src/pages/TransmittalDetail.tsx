@@ -274,6 +274,39 @@ export function TransmittalDetail() {
     }
   };
 
+  // Keep these hooks above the loading/error guards. The detail page renders once
+  // while the newly-created transmittal is loading and again after the API reply;
+  // conditional hook order otherwise crashes React and leaves the preview blank.
+  const savePreviewMarkup = useCallback(async () => {
+    if (!previewMarkupSession?.can_edit || !previewMarkupDirty) return true;
+    setPreviewMarkupBusy(true);
+    setPreviewMarkupError(null);
+    try {
+      const saved = await saveMarkupAnnotations(
+        previewMarkupSession.id,
+        previewMarkupAnnotations,
+        previewMarkupSession.draft_version,
+      );
+      setPreviewMarkupSession(saved);
+      setPreviewMarkupAnnotations(saved.annotations);
+      setPreviewMarkupDirty(false);
+      setPreviewMarkupNotice("پیش‌نویس نشانه‌گذاری ذخیره شد.");
+      localStorage.removeItem(`edms-markup-draft:${saved.id}`);
+      return true;
+    } catch (err) {
+      setPreviewMarkupError(err instanceof ApiError ? err.detail : "ذخیره پیش‌نویس ناموفق بود؛ دوباره تلاش کنید.");
+      return false;
+    } finally {
+      setPreviewMarkupBusy(false);
+    }
+  }, [previewMarkupAnnotations, previewMarkupDirty, previewMarkupSession]);
+
+  useEffect(() => {
+    if (!previewMarkupDirty || !previewMarkupSession?.can_edit) return;
+    const timer = window.setTimeout(() => void savePreviewMarkup(), 1600);
+    return () => window.clearTimeout(timer);
+  }, [previewMarkupDirty, previewMarkupSession?.can_edit, savePreviewMarkup]);
+
   if (loading) return <Spinner label="در حال بارگذاری برگه ارسال…" />;
   if (error) return <ErrorBox message={error} onRetry={() => void load()} />;
   if (!data) return null;
@@ -832,36 +865,6 @@ export function TransmittalDetail() {
       }
     }
   };
-
-  const savePreviewMarkup = useCallback(async () => {
-    if (!previewMarkupSession?.can_edit || !previewMarkupDirty) return true;
-    setPreviewMarkupBusy(true);
-    setPreviewMarkupError(null);
-    try {
-      const saved = await saveMarkupAnnotations(
-        previewMarkupSession.id,
-        previewMarkupAnnotations,
-        previewMarkupSession.draft_version,
-      );
-      setPreviewMarkupSession(saved);
-      setPreviewMarkupAnnotations(saved.annotations);
-      setPreviewMarkupDirty(false);
-      setPreviewMarkupNotice("پیش‌نویس نشانه‌گذاری ذخیره شد.");
-      localStorage.removeItem(`edms-markup-draft:${saved.id}`);
-      return true;
-    } catch (err) {
-      setPreviewMarkupError(err instanceof ApiError ? err.detail : "ذخیره پیش‌نویس ناموفق بود؛ دوباره تلاش کنید.");
-      return false;
-    } finally {
-      setPreviewMarkupBusy(false);
-    }
-  }, [previewMarkupAnnotations, previewMarkupDirty, previewMarkupSession]);
-
-  useEffect(() => {
-    if (!previewMarkupDirty || !previewMarkupSession?.can_edit) return;
-    const timer = window.setTimeout(() => void savePreviewMarkup(), 1600);
-    return () => window.clearTimeout(timer);
-  }, [previewMarkupDirty, previewMarkupSession?.can_edit, savePreviewMarkup]);
 
   const submitPreviewMarkup = async () => {
     if (!previewMarkupSession?.can_edit) return;

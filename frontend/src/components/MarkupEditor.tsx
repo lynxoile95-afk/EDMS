@@ -75,14 +75,14 @@ const TOOL_LABELS: Record<Tool, string> = {
 
 const TOOL_GROUPS: Tool[][] = [
   ["select", "pan"],
-  ["highlight", "underline", "strikethrough"],
-  ["sticky_note", "free_text", "callout"],
+  ["highlight"],
+  ["free_text", "callout"],
   ["rectangle", "ellipse", "revision_cloud", "arrow", "freehand", "eraser"],
 ];
 const TEXT_TOOLS: TextTool[] = ["highlight", "underline", "strikethrough"];
 
 function ToolIcon({ tool }: { tool: Tool }) {
-  const props = { className: "h-4 w-4" };
+  const props = { className: "h-3.5 w-3.5" };
   switch (tool) {
     case "select": return <IconCursor {...props} />;
     case "pan": return <IconHand {...props} />;
@@ -117,7 +117,7 @@ function RibbonButton({
   return (
     <button
       type="button"
-      className={`group flex min-w-[2.8rem] flex-col items-center justify-center gap-0.5 rounded-sm border px-1 py-0.5 transition-colors ${
+      className={`group flex min-w-[2.1rem] flex-col items-center justify-center gap-0 rounded-sm border px-0.5 py-0.5 transition-colors ${
         active
           ? "border-[#1f4e79] bg-[#dbe8f3] font-bold text-[#1f3864]"
           : "border-transparent text-[#33475b] hover:border-[#b9c5cf] hover:bg-white"
@@ -127,8 +127,8 @@ function RibbonButton({
       title={label}
       aria-label={label}
     >
-      <span className="flex h-5 items-center justify-center">{icon}</span>
-      <span className="whitespace-nowrap text-[8px] leading-3">{label}</span>
+      <span className="flex h-4 items-center justify-center">{icon}</span>
+      <span className="whitespace-nowrap text-[7px] leading-3">{label}</span>
     </button>
   );
 }
@@ -257,6 +257,7 @@ export function MarkupEditor({
   const [color, setColor] = useState(DEFAULT_MARKUP_COLOR);
   const [strokeWidth, setStrokeWidth] = useState(DEFAULT_MARKUP_STROKE_WIDTH);
   const [fontSize, setFontSize] = useState(16);
+  const [lastCreatedId, setLastCreatedId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [fitScale, setFitScale] = useState(1);
   const [viewport, setViewport] = useState({ width: 612, height: 792 });
@@ -318,6 +319,12 @@ export function MarkupEditor({
   useEffect(() => {
     setPage(Math.max(1, initialPage));
   }, [initialPage]);
+
+  useEffect(() => {
+    if (!lastCreatedId) return;
+    const timer = window.setTimeout(() => setLastCreatedId(null), 850);
+    return () => window.clearTimeout(timer);
+  }, [lastCreatedId]);
 
   useEffect(() => {
     let disposed = false;
@@ -701,6 +708,7 @@ export function MarkupEditor({
         author_name: null,
       };
       publish([...annotationsRef.current, created]);
+      setLastCreatedId(created.id);
       select(created.id);
       window.getSelection()?.removeAllRanges();
       setTool("select");
@@ -755,6 +763,7 @@ export function MarkupEditor({
       created.text = entered.trim() || "نظر";
     }
     publish([...annotationsRef.current, created]);
+    setLastCreatedId(created.id);
     select(created.id);
     setTool("select");
   };
@@ -801,9 +810,10 @@ export function MarkupEditor({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-[#e9edf0]" dir="rtl">
-      <div className="flex flex-wrap items-stretch gap-1 border-b border-[#b9c5cf] bg-[#f7f8f2] px-2 py-1 text-[10px] shadow-sm">
+      <div className="sticky top-0 z-40 shrink-0 bg-[#e9edf0]/95 shadow-sm backdrop-blur">
+        <div className="flex flex-wrap items-stretch gap-1 border-b border-[#b9c5cf] bg-[#f7f8f2] px-2 py-1 text-[10px] shadow-sm">
         {!readOnly ? TOOL_GROUPS.map((group, groupIndex) => (
-          <div key={groupIndex} className={`flex flex-wrap items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1 ${groupIndex ? "border-r-2 border-r-[#c3ccd6]" : ""}`}>
+          <div key={groupIndex} className={`flex flex-nowrap items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1 ${groupIndex ? "border-r-2 border-r-[#c3ccd6]" : ""}`}>
             {group.map((item) => (
               <RibbonButton
                 key={item}
@@ -817,22 +827,22 @@ export function MarkupEditor({
         )) : <span className="flex items-center px-2 font-bold text-[#5c6b78]">جلسه ثبت نهایی‌شده — فقط خواندنی</span>}
         {!readOnly ? (
           <div className="flex items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1">
-            <RibbonButton icon={<IconUndo className="h-4 w-4" />} label="برگرداندن" disabled={!historyRef.current.length} onClick={undo} />
-            <RibbonButton icon={<IconRedo className="h-4 w-4" />} label="جلو" disabled={!futureRef.current.length} onClick={redo} />
+            <RibbonButton icon={<IconUndo className="h-3.5 w-3.5" />} label="برگرداندن" disabled={!historyRef.current.length} onClick={undo} />
+            <RibbonButton icon={<IconRedo className="h-3.5 w-3.5" />} label="جلو" disabled={!futureRef.current.length} onClick={redo} />
           </div>
         ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-1 border-b border-[#c3ccd6] bg-white px-2 py-0.5 text-[9px]" dir="rtl">
         <div className="flex items-center gap-0.5 rounded border border-[#d3d9de] bg-[#f7f8f2] px-1" dir="ltr">
           <RibbonButton
-            icon={<IconArrow className="h-4 w-4 rotate-180" />}
+            icon={<IconArrow className="h-3.5 w-3.5 rotate-180" />}
             label="صفحه قبل"
             onClick={() => go(page - 1)}
             disabled={loading || page <= 1}
           />
           <span className="min-w-[5.2rem] text-center text-[9px]" dir="rtl">صفحه {persianDigits(page)} از {persianDigits(documentPageCount || 1)}</span>
           <RibbonButton
-            icon={<IconArrow className="h-4 w-4" />}
+            icon={<IconArrow className="h-3.5 w-3.5" />}
             label="صفحه بعد"
             onClick={() => go(page + 1)}
             disabled={loading || page >= documentPageCount}
@@ -841,12 +851,12 @@ export function MarkupEditor({
         {!readOnly ? (
           <div className="flex min-h-[2.35rem] flex-wrap items-center gap-1 rounded border border-[#d3d9de] bg-[#f7f8f2] px-1.5 py-0.5 text-[8px] text-[#33475b]" title="پالت رنگ خط">
             <span className="font-bold">رنگ</span>
-            <div className="flex items-center gap-0.5" role="group" aria-label="پالت رنگ خطوط">
+            <div className="flex max-w-[14rem] flex-wrap items-center gap-0.5" role="group" aria-label="پالت رنگ خطوط">
               {MARKUP_COLOR_PALETTE.map((item) => (
                 <button
                   key={item.value}
                   type="button"
-                  className={`h-4 w-4 rounded-full border border-[#697783] shadow-sm transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-[#1f4e79] focus:ring-offset-1 ${color.toLowerCase() === item.value ? "ring-2 ring-[#1f4e79] ring-offset-1" : ""}`}
+                  className={`h-3.5 w-3.5 rounded-full border border-[#697783] shadow-sm transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-[#1f4e79] focus:ring-offset-1 ${color.toLowerCase() === item.value ? "ring-2 ring-[#1f4e79] ring-offset-1" : ""}`}
                   style={{ backgroundColor: item.value }}
                   aria-label={`رنگ خط ${item.label}`}
                   title={`رنگ خط: ${item.label}`}
@@ -875,12 +885,13 @@ export function MarkupEditor({
           </label>
         ) : null}
         <div className="flex items-stretch gap-0.5 rounded border border-[#d3d9de] bg-[#f7f8f2] px-1">
-          <RibbonButton icon={<IconFit className="h-4 w-4" />} label="عرض متناسب" onClick={() => setZoom(1)} disabled={loading} />
-          <RibbonButton icon={<IconZoomOut className="h-4 w-4" />} label="کوچک‌نمایی" onClick={() => setZoom((value) => Math.max(MIN_ZOOM, value - 0.15))} disabled={loading} />
+          <RibbonButton icon={<IconFit className="h-3.5 w-3.5" />} label="عرض متناسب" onClick={() => setZoom(1)} disabled={loading} />
+          <RibbonButton icon={<IconZoomOut className="h-3.5 w-3.5" />} label="کوچک‌نمایی" onClick={() => setZoom((value) => Math.max(MIN_ZOOM, value - 0.15))} disabled={loading} />
           <span className="flex min-w-[2.5rem] items-center justify-center text-[9px]" dir="ltr">{Math.round(zoom * 100)}%</span>
-          <RibbonButton icon={<IconZoomIn className="h-4 w-4" />} label="بزرگ‌نمایی" onClick={() => setZoom((value) => Math.min(MAX_ZOOM, value + 0.15))} disabled={loading} />
+          <RibbonButton icon={<IconZoomIn className="h-3.5 w-3.5" />} label="بزرگ‌نمایی" onClick={() => setZoom((value) => Math.min(MAX_ZOOM, value + 0.15))} disabled={loading} />
         </div>
-        {!readOnly ? <RibbonButton icon={<IconDelete className="h-4 w-4" />} label="حذف" disabled={!effectiveSelectedId} onClick={removeSelected} /> : null}
+        {!readOnly ? <RibbonButton icon={<IconDelete className="h-3.5 w-3.5" />} label="حذف" disabled={!effectiveSelectedId} onClick={removeSelected} /> : null}
+        </div>
       </div>
       {error ? <div className="m-2 border border-[#c98a86] bg-[#fdeeee] p-2 text-[10px] text-[#8a2b25]">{error}</div> : null}
       <div ref={hostRef} className="min-h-0 flex-1 overflow-auto p-4" dir="ltr">
@@ -933,6 +944,10 @@ export function MarkupEditor({
               const selected = annotation.id === effectiveSelectedId;
               const stroke = colorFor(annotation);
               const width = normalizeMarkupStrokeWidth(annotation.stroke_width) / 1000;
+              const entering = annotation.id === lastCreatedId;
+              const animationClass = entering
+                ? annotation.kind === "highlight" ? "markup-highlight-pulse" : "markup-annotation-enter"
+                : undefined;
               const common = {
                 "data-markup-id": annotation.id,
                 stroke,
@@ -942,15 +957,15 @@ export function MarkupEditor({
               const p = annotation.points;
               const textSize = Math.max(0.012, Math.min(0.06, (annotation.font_size ?? fontSize) / 600));
               if (annotation.kind === "freehand") {
-                return <polyline key={annotation.id} {...common} points={p.map((item) => `${item.x},${item.y}`).join(" ")} fill="none" />;
+                return <polyline key={annotation.id} {...common} className={animationClass} points={p.map((item) => `${item.x},${item.y}`).join(" ")} fill="none" />;
               }
               if (annotation.kind === "arrow") {
                 const first = p[0] ?? { x: box.x, y: box.y };
                 const last = p[p.length - 1] ?? { x: box.x + box.w, y: box.y + box.h };
-                return <line key={annotation.id} {...common} x1={first.x} y1={first.y} x2={last.x} y2={last.y} markerEnd="url(#markup-arrow-head)" />;
+                return <line key={annotation.id} {...common} className={animationClass} x1={first.x} y1={first.y} x2={last.x} y2={last.y} markerEnd="url(#markup-arrow-head)" />;
               }
               return (
-                <g key={annotation.id} data-markup-id={annotation.id} pointerEvents={isTextTool(tool) ? "none" : "auto"}>
+                <g key={annotation.id} data-markup-id={annotation.id} className={animationClass} pointerEvents={isTextTool(tool) ? "none" : "auto"}>
                   {annotation.kind === "highlight" ? pointRectangles(p).map((item, index) => {
                     const itemBox = bounds({ points: item, kind: annotation.kind });
                     return <rect key={index} {...common} x={itemBox.x} y={itemBox.y} width={itemBox.w} height={itemBox.h} fill={stroke} fillOpacity={0.25} />;

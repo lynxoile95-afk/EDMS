@@ -38,13 +38,19 @@ export function markupKindLabel(kind: MarkupAnnotation["kind"]): string {
 /** The palette deliberately excludes white and near-white strokes on PDF pages. */
 export const MARKUP_COLOR_PALETTE = [
   { value: "#d64545", label: "قرمز" },
-  { value: "#1f4e79", label: "آبی" },
-  { value: "#1f8a70", label: "سبز" },
-  { value: "#d97706", label: "نارنجی" },
+  { value: "#1d4ed8", label: "آبی" },
+  { value: "#15803d", label: "سبز" },
+  { value: "#d97706", label: "کهربایی" },
   { value: "#7c3aed", label: "بنفش" },
   { value: "#111827", label: "مشکی" },
+  { value: "#0891b2", label: "فیروزه‌ای" },
+  { value: "#be123c", label: "زرشکی" },
+  { value: "#db2777", label: "صورتی" },
+  { value: "#65a30d", label: "لیمویی" },
   { value: "#0f766e", label: "سبزآبی" },
-  { value: "#b91c1c", label: "قرمز تیره" },
+  { value: "#92400e", label: "قهوه‌ای" },
+  { value: "#4f46e5", label: "نیلی" },
+  { value: "#c2410c", label: "نارنجی تیره" },
 ] as const;
 
 function isLightMarkupColor(color: string): boolean {

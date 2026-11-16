@@ -2343,7 +2343,7 @@ export function TransmittalDetail() {
       {/* ---------- existing attachment viewer, with additive PDF markup mode ---------- */}
       <Modal
         open={Boolean(previewAttachment)}
-        title={previewAttachment ? `${previewMarkupSession ? "بازبینی و ایجاد کپی Comment" : "مشاهده پیوست"} — ${previewAttachment.filename}` : "مشاهده پیوست"}
+        title={previewAttachment ? `${previewMarkupSession ? "بازبینی و درج کامنت Comment" : "مشاهده پیوست"} — ${previewAttachment.filename}` : "مشاهده پیوست"}
         onClose={closeAttachmentPreview}
         width="max-w-6xl"
         footer={

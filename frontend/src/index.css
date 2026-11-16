@@ -1929,6 +1929,36 @@ footer {
 
 .pdf-page canvas { box-shadow: 0 4px 14px rgba(15, 35, 65, 0.12); }
 
+/* Subtle feedback for newly created PDF marks; the annotation model remains
+   unchanged and prefers-reduced-motion users get the same static result. */
+.markup-annotation-enter {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: markup-annotation-enter 280ms cubic-bezier(0.2, 0.75, 0.35, 1);
+}
+
+.markup-highlight-pulse {
+  animation: markup-highlight-pulse 720ms ease-out;
+}
+
+@keyframes markup-annotation-enter {
+  from { opacity: 0; transform: scale(0.86); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes markup-highlight-pulse {
+  0% { opacity: 0.15; }
+  45% { opacity: 0.8; }
+  100% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markup-annotation-enter,
+  .markup-highlight-pulse {
+    animation: none;
+  }
+}
+
 /* Keep compact document codes, dates and mixed Persian/Latin values readable. */
 .ltr,
 input[type="email"],

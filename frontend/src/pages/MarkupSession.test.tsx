@@ -120,7 +120,7 @@ function renderPage(entry = "/markups/new?transmittal_id=transmittal-1&file_id=f
 
 afterEach(() => {
   cleanup();
-  vi.clearAllMocks();
+  vi.restoreAllMocks();
   window.localStorage.clear();
 });
 
@@ -160,8 +160,9 @@ beforeEach(() => {
 describe("MarkupSessionPage", () => {
   it("keeps a local draft backup and warns before unload", async () => {
     renderPage();
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
     fireEvent.click(await screen.findByRole("button", { name: "mock add markup" }));
-    expect(window.localStorage.getItem("edms-markup-draft:session-1")).toContain("نظر محلی");
+    expect(setItem).toHaveBeenCalledWith("edms-markup-draft:session-1", expect.stringContaining("نظر محلی"));
 
     const event = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(event);

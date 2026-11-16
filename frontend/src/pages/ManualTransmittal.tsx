@@ -27,8 +27,8 @@ const MANUAL_REQUEST_TIMEOUT_MS = 30_000;
 
 function messageOf(error: unknown): string {
   if (error instanceof ApiError) return error.detail;
-  if (error instanceof Error && error.message) return error.message;
-  return "ثبت ترانسمیتال دستی ناموفق بود.";
+  if (error instanceof Error && /[\u0600-\u06ff]/.test(error.message)) return error.message;
+  return "ثبت ترانسمیتال دستی ناموفق بود؛ اتصال شبکه یا داده‌های ورودی را بررسی کنید.";
 }
 
 function withTimeout<T>(operation: Promise<T>, message: string): Promise<T> {

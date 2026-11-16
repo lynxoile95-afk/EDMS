@@ -32,7 +32,21 @@ def _hex_color(value: str | None, fallback: str = "#d64545") -> tuple[float, flo
     raw = value or fallback
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", raw):
         raw = fallback
-    return tuple(int(raw[index : index + 2], 16) / 255 for index in (1, 3, 5))  # type: ignore[return-value]
+    channels = tuple(int(raw[index : index + 2], 16) / 255 for index in (1, 3, 5))
+    # White and near-white strokes disappear on the source PDF. Preserve the
+    # existing annotation record but render legacy values with a visible red
+    # fallback until the reviewer chooses a palette color.
+    if all(channel >= 238 / 255 for channel in channels):
+        return _hex_color(fallback, fallback=fallback)
+    return channels  # type: ignore[return-value]
+
+
+def _stroke_width(value: Any, default: float = 2.5) -> float:
+    try:
+        width = float(value if value is not None else default)
+    except (TypeError, ValueError):
+        return default
+    return min(max(width, 1.0), 6.0)
 
 
 def _rect(page: Any, points: list[Any]) -> Any:
@@ -104,60 +118,61 @@ def _draw_annotation(page: Any, annotation: Any) -> None:
     points = annotation.get("points") or []
     kind = str(annotation.get("kind") or "")
     color = _hex_color(annotation.get("color"))
+    line_width = _stroke_width(annotation.get("stroke_width"))
     rect = _rect(page, points)
     page_points = _page_points(page, points)
     text = str(annotation.get("text") or "")
     try:
         if kind == "highlight":
-            page.draw_rect(rect, color=color, fill=color, width=1.5, fill_opacity=0.28, overlay=True)
+            page.draw_rect(rect, color=color, fill=color, width=line_width, fill_opacity=0.28, overlay=True)
         elif kind in {"rectangle", "revision_cloud"}:
             if kind == "rectangle":
-                page.draw_rect(rect, color=color, width=2, overlay=True)
+                page.draw_rect(rect, color=color, width=line_width, overlay=True)
             else:
                 # A light cloud approximation made from repeated circular arcs
                 # stays portable across PyMuPDF versions and is visibly distinct.
-                page.draw_rect(rect, color=color, width=1.5, overlay=True)
+                page.draw_rect(rect, color=color, width=line_width, overlay=True)
                 radius = min(10, max(4, min(rect.width, rect.height) / 8))
                 x = rect.x0 + radius
                 while x < rect.x1 - radius:
-                    page.draw_circle(fitz.Point(x, rect.y0), radius, color=color, width=1, overlay=True)
-                    page.draw_circle(fitz.Point(x, rect.y1), radius, color=color, width=1, overlay=True)
+                    page.draw_circle(fitz.Point(x, rect.y0), radius, color=color, width=line_width, overlay=True)
+                    page.draw_circle(fitz.Point(x, rect.y1), radius, color=color, width=line_width, overlay=True)
                     x += radius * 1.7
                 y = rect.y0 + radius
                 while y < rect.y1 - radius:
-                    page.draw_circle(fitz.Point(rect.x0, y), radius, color=color, width=1, overlay=True)
-                    page.draw_circle(fitz.Point(rect.x1, y), radius, color=color, width=1, overlay=True)
+                    page.draw_circle(fitz.Point(rect.x0, y), radius, color=color, width=line_width, overlay=True)
+                    page.draw_circle(fitz.Point(rect.x1, y), radius, color=color, width=line_width, overlay=True)
                     y += radius * 1.7
         elif kind == "arrow":
             if len(page_points) >= 2:
                 start, end = page_points[0], page_points[-1]
             else:
                 start, end = fitz.Point(rect.x0, rect.y0), fitz.Point(rect.x1, rect.y1)
-            page.draw_line(start, end, color=color, width=2, overlay=True)
+            page.draw_line(start, end, color=color, width=line_width, overlay=True)
             angle = math.atan2(end.y - start.y, end.x - start.x)
             length = max(8, min(20, rect.width / 5 or 10))
             wing_a = fitz.Point(end.x - length * math.cos(angle - 0.48), end.y - length * math.sin(angle - 0.48))
             wing_b = fitz.Point(end.x - length * math.cos(angle + 0.48), end.y - length * math.sin(angle + 0.48))
-            page.draw_polyline([wing_a, end, wing_b], color=color, width=2, overlay=True)
+            page.draw_polyline([wing_a, end, wing_b], color=color, width=line_width, overlay=True)
         elif kind == "freehand":
             if len(page_points) >= 2:
-                page.draw_polyline(page_points, color=color, width=2, closePath=False, overlay=True)
+                page.draw_polyline(page_points, color=color, width=line_width, closePath=False, overlay=True)
         elif kind == "sticky_note":
-            page.draw_rect(rect, color=color, fill=(1.0, 0.96, 0.65), width=1.2, fill_opacity=0.86, overlay=True)
+            page.draw_rect(rect, color=color, fill=(1.0, 0.96, 0.65), width=line_width, fill_opacity=0.86, overlay=True)
             _insert_text(page, rect + (4, 3, -4, -3), text or "نظر", color, size=9)
         elif kind == "free_text":
             _insert_text(page, rect, text or "نظر", color, size=max(8, min(18, rect.height * 0.55)))
         else:
-            page.draw_rect(rect, color=color, width=1.5, overlay=True)
+            page.draw_rect(rect, color=color, width=line_width, overlay=True)
             _insert_text(page, rect, text, color, size=9)
     except TypeError:
         # Older PyMuPDF builds do not expose opacity/overlay in every primitive.
         if kind in {"rectangle", "revision_cloud", "highlight"}:
-            page.draw_rect(rect, color=color, width=2)
+            page.draw_rect(rect, color=color, width=line_width)
         elif kind == "freehand" and len(page_points) >= 2:
-            page.draw_polyline(page_points, color=color, width=2)
+            page.draw_polyline(page_points, color=color, width=line_width)
         elif kind == "arrow" and len(page_points) >= 2:
-            page.draw_line(page_points[0], page_points[-1], color=color, width=2)
+            page.draw_line(page_points[0], page_points[-1], color=color, width=line_width)
         elif kind in {"sticky_note", "free_text"}:
             _insert_text(page, rect, text or "نظر", color, size=9)
 

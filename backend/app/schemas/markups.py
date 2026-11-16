@@ -33,6 +33,9 @@ class MarkupAnnotationInput(BaseModel):
     points: list[MarkupPoint] = Field(min_length=1, max_length=1000)
     text: str | None = Field(default=None, max_length=10000)
     color: str = Field(default="#d64545", pattern=r"^#[0-9A-Fa-f]{6}$")
+    # Stored in the feature-owned appearance table so existing markup columns
+    # and the source document schema remain untouched.
+    stroke_width: float = Field(default=2.5, ge=1, le=6)
 
     @field_validator("text")
     @classmethod
@@ -78,6 +81,7 @@ class MarkupAnnotationOut(BaseModel):
     points: list[MarkupPoint]
     text: str | None = None
     color: str
+    stroke_width: float = Field(default=2.5, ge=1, le=6)
     author_id: uuid.UUID | None = None
     author_name: str | None = None
     created_at: datetime

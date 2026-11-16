@@ -50,6 +50,8 @@ export function MarkupSessionPage() {
   const [dirty, setDirty] = useState(false);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replyStatuses, setReplyStatuses] = useState<Record<string, Extract<MarkupReplyStatus, "accepted" | "rejected" | "resolved">>>({});
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const [editingAnnotationText, setEditingAnnotationText] = useState("");
   const [savedOutputs, setSavedOutputs] = useState<{ attachment_id: string; kind: "pdf" | "sheet"; filename: string }[]>([]);
   const [commentSheetFilename, setCommentSheetFilename] = useState<string | null>(null);
   const [commentSheetData, setCommentSheetData] = useState<ArrayBuffer | null>(null);
@@ -189,6 +191,26 @@ export function MarkupSessionPage() {
         setNotice("ذخیره محلی مرورگر در دسترس نیست؛ اتصال را حفظ کنید و ثبت نهایی را بدون بستن صفحه انجام دهید.");
       }
     }
+  };
+
+  const beginAnnotationEdit = (annotation: MarkupAnnotation) => {
+    setEditingAnnotationId(annotation.id);
+    setEditingAnnotationText(annotation.text ?? "");
+  };
+
+  const cancelAnnotationEdit = () => {
+    setEditingAnnotationId(null);
+    setEditingAnnotationText("");
+  };
+
+  const saveAnnotationText = () => {
+    if (!editingAnnotationId || !session?.can_edit || session.status !== "draft") return;
+    const text = editingAnnotationText.trim();
+    changeAnnotations(annotations.map((annotation) => annotation.id === editingAnnotationId
+      ? { ...annotation, text: text || null, updated_at: new Date().toISOString() }
+      : annotation));
+    setNotice("متن نظر تغییر کرد و با ذخیره خودکار ثبت می‌شود.");
+    cancelAnnotationEdit();
   };
 
   const closeCommentSheet = () => {
@@ -335,7 +357,35 @@ export function MarkupSessionPage() {
                   >
                     <span>{labelText(annotation)}</span><span>صفحه {persianDigits(annotation.page_no)}</span>
                   </button>
-                  <p className="mt-1 whitespace-pre-wrap break-words text-[#33475b]">{annotation.text || "نشانه‌گذاری بدون متن"}</p>
+                  {editingAnnotationId === annotation.id ? (
+                    <div className="mt-1 border border-[#b9c5cf] bg-[#fbfcfd] p-1">
+                      <textarea
+                        className="input min-h-[3.5rem] w-full resize-y text-[10px]"
+                        value={editingAnnotationText}
+                        maxLength={10000}
+                        aria-label={`ویرایش متن نظر ${annotation.number}`}
+                        onChange={(event) => setEditingAnnotationText(event.target.value)}
+                      />
+                      <div className="mt-1 flex items-center justify-end gap-1">
+                        <Button className="btn-sm" onClick={cancelAnnotationEdit}>انصراف</Button>
+                        <Button variant="primary" className="btn-sm" onClick={saveAnnotationText}>ذخیره تغییر</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-1 flex items-start gap-1">
+                      <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[#33475b]">{annotation.text || "نشانه‌گذاری بدون متن"}</p>
+                      {session.status === "draft" && session.can_edit ? (
+                        <button
+                          type="button"
+                          className="shrink-0 text-[9px] font-bold text-[#1f4e79] underline hover:text-[#153552]"
+                          onClick={() => beginAnnotationEdit(annotation)}
+                          aria-label={`ویرایش نظر ${annotation.number}`}
+                        >
+                          ویرایش نظر
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
                   <div className="mt-1 flex items-center justify-between text-[9px] text-[#7a8794]">
                     <span>{annotation.author_name ?? session.author_name ?? "—"}</span>
                     <span>{statusLabel(annotation.reply_status)}</span>

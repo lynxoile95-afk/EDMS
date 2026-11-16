@@ -199,6 +199,8 @@ export function TransmittalDetail() {
   const [previewMarkupPage, setPreviewMarkupPage] = useState(1);
   const [previewMarkupReplyDrafts, setPreviewMarkupReplyDrafts] = useState<Record<string, string>>({});
   const [previewMarkupReplyStatuses, setPreviewMarkupReplyStatuses] = useState<Record<string, Extract<MarkupReplyStatus, "accepted" | "rejected" | "resolved">>>({});
+  const [previewMarkupEditingId, setPreviewMarkupEditingId] = useState<string | null>(null);
+  const [previewMarkupEditingText, setPreviewMarkupEditingText] = useState("");
   const [reviewMarkupEnabled, setReviewMarkupEnabled] = useState(true);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -773,6 +775,8 @@ export function TransmittalDetail() {
     setPreviewMarkupPage(1);
     setPreviewMarkupReplyDrafts({});
     setPreviewMarkupReplyStatuses({});
+    setPreviewMarkupEditingId(null);
+    setPreviewMarkupEditingText("");
     setPreviewLoading(false);
     setPreviewError(null);
     setPreviewActionError(null);
@@ -787,6 +791,8 @@ export function TransmittalDetail() {
       setPreviewMarkupNotice(null);
       setPreviewMarkupSelectedId(null);
       setPreviewMarkupPage(1);
+      setPreviewMarkupEditingId(null);
+      setPreviewMarkupEditingText("");
     }
     const requestId = previewRequestRef.current + 1;
     previewRequestRef.current = requestId;
@@ -836,6 +842,8 @@ export function TransmittalDetail() {
       setPreviewMarkupPage(1);
       setPreviewMarkupReplyDrafts({});
       setPreviewMarkupReplyStatuses({});
+      setPreviewMarkupEditingId(null);
+      setPreviewMarkupEditingText("");
       try {
         const local = localStorage.getItem(`edms-markup-draft:${session.id}`);
         if (session.can_edit && local) {
@@ -871,6 +879,26 @@ export function TransmittalDetail() {
         setPreviewMarkupNotice("ذخیره محلی مرورگر در دسترس نیست؛ اتصال را حفظ کنید.");
       }
     }
+  };
+
+  const beginPreviewMarkupEdit = (annotation: MarkupAnnotation) => {
+    setPreviewMarkupEditingId(annotation.id);
+    setPreviewMarkupEditingText(annotation.text ?? "");
+  };
+
+  const cancelPreviewMarkupEdit = () => {
+    setPreviewMarkupEditingId(null);
+    setPreviewMarkupEditingText("");
+  };
+
+  const savePreviewMarkupText = () => {
+    if (!previewMarkupEditingId || !previewMarkupSession?.can_edit || previewMarkupSession.status !== "draft") return;
+    const text = previewMarkupEditingText.trim();
+    changePreviewMarkup(previewMarkupAnnotations.map((annotation) => annotation.id === previewMarkupEditingId
+      ? { ...annotation, text: text || null, updated_at: new Date().toISOString() }
+      : annotation));
+    setPreviewMarkupNotice("متن نظر تغییر کرد و با ذخیره خودکار ثبت می‌شود.");
+    cancelPreviewMarkupEdit();
   };
 
   const submitPreviewMarkup = async () => {
@@ -2383,8 +2411,36 @@ export function TransmittalDetail() {
                         onClick={() => { setPreviewMarkupPage(annotation.page_no); setPreviewMarkupSelectedId(annotation.id); }}
                       >
                         <span className="flex items-center justify-between font-bold text-[#1f4e79]"><span>نظر {persianDigits(annotation.number)}</span><span>صفحه {persianDigits(annotation.page_no)}</span></span>
-                        <span className="mt-1 block whitespace-pre-wrap break-words text-[#33475b]">{annotation.text || "نشانه‌گذاری بدون متن"}</span>
                       </button>
+                      {previewMarkupEditingId === annotation.id ? (
+                        <div className="mt-1 border border-[#b9c5cf] bg-[#fbfcfd] p-1">
+                          <textarea
+                            className="input min-h-[3.5rem] w-full resize-y text-[10px]"
+                            value={previewMarkupEditingText}
+                            maxLength={10000}
+                            aria-label={`ویرایش متن نظر ${annotation.number}`}
+                            onChange={(event) => setPreviewMarkupEditingText(event.target.value)}
+                          />
+                          <div className="mt-1 flex items-center justify-end gap-1">
+                            <Button className="btn-sm" onClick={cancelPreviewMarkupEdit}>انصراف</Button>
+                            <Button variant="primary" className="btn-sm" onClick={savePreviewMarkupText}>ذخیره تغییر</Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-1 flex items-start gap-1">
+                          <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[#33475b]">{annotation.text || "نشانه‌گذاری بدون متن"}</span>
+                          {previewMarkupSession.status === "draft" && previewMarkupSession.can_edit ? (
+                            <button
+                              type="button"
+                              className="shrink-0 text-[9px] font-bold text-[#1f4e79] underline hover:text-[#153552]"
+                              onClick={() => beginPreviewMarkupEdit(annotation)}
+                              aria-label={`ویرایش نظر ${annotation.number}`}
+                            >
+                              ویرایش نظر
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
                       {previewMarkupSession.can_reply && previewMarkupSession.status === "submitted" ? (
                         <div className="mt-1 flex gap-1">
                           <input

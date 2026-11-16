@@ -18,6 +18,7 @@ from app.models import (
     Comment,
     CommentAttachment,
     MarkupAnnotation,
+    MarkupAnnotationStyle,
     MarkupSession,
     NumberSequence,
     Project,
@@ -42,6 +43,19 @@ from app.services.markup_rendering import (
     render_comment_sheet,
 )
 from app.services.storage import build_key, get_storage
+
+DEFAULT_MARKUP_STROKE_WIDTH = 2.5
+MIN_MARKUP_STROKE_WIDTH = 1.0
+MAX_MARKUP_STROKE_WIDTH = 6.0
+
+
+def _safe_stroke_width(value: float | None) -> float:
+    try:
+        width = float(value if value is not None else DEFAULT_MARKUP_STROKE_WIDTH)
+    except (TypeError, ValueError):
+        return DEFAULT_MARKUP_STROKE_WIDTH
+    return min(max(width, MIN_MARKUP_STROKE_WIDTH), MAX_MARKUP_STROKE_WIDTH)
+
 
 def _ensure_enabled() -> None:
     if not settings.review_markup_enabled:
@@ -167,6 +181,7 @@ def _annotation_out(annotation: MarkupAnnotation) -> MarkupAnnotationOut:
         points=annotation.points or [],
         text=annotation.text,
         color=annotation.color,
+        stroke_width=_safe_stroke_width(annotation.style.stroke_width if annotation.style else None),
         author_id=annotation.author_id,
         author_name=annotation.author_name,
         created_at=annotation.created_at,
@@ -410,6 +425,10 @@ def save_annotations(db: Session, user: User, session: MarkupSession, payload: M
             annotation.points = points
             annotation.text = item.text
             annotation.color = item.color
+        if annotation.style is None:
+            annotation.style = MarkupAnnotationStyle(stroke_width=_safe_stroke_width(item.stroke_width))
+        else:
+            annotation.style.stroke_width = _safe_stroke_width(item.stroke_width)
         updated.append(annotation)
     session.draft_version += 1
     session.last_saved_at = datetime.now(timezone.utc)
@@ -454,6 +473,7 @@ def _annotation_dict(annotation: MarkupAnnotation) -> dict[str, Any]:
         "points": annotation.points or [],
         "text": annotation.text,
         "color": annotation.color,
+        "stroke_width": _safe_stroke_width(annotation.style.stroke_width if annotation.style else None),
         "author_name": annotation.author_name,
         "reply_status": annotation.reply_status,
         "reply_text": annotation.reply_text,

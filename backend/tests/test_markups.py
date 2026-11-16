@@ -97,6 +97,7 @@ def test_markup_permissions_save_reload_submit_outputs_and_original_hash(
                     "points": [{"x": 0.1, "y": 0.1}, {"x": 0.4, "y": 0.3}],
                     "text": "ایراد نقشه",
                     "color": "#d64545",
+                    "stroke_width": 4.5,
                 },
                 {
                     "kind": "sticky_note",
@@ -104,15 +105,50 @@ def test_markup_permissions_save_reload_submit_outputs_and_original_hash(
                     "points": [{"x": 0.5, "y": 0.4}, {"x": 0.8, "y": 0.6}],
                     "text": "لطفاً اصلاح شود",
                     "color": "#e09f3e",
+                    "stroke_width": 1.5,
                 },
             ],
         },
     )
     assert saved.status_code == 200, saved.text
-    assert [item["number"] for item in saved.json()["annotations"]] == [1, 2]
+    saved_body = saved.json()
+    assert [item["number"] for item in saved_body["annotations"]] == [1, 2]
+    assert saved_body["annotations"][0]["stroke_width"] == 4.5
     reloaded = client.get(f"/api/v1/markups/{session_id}", headers=dcc_headers)
     assert reloaded.status_code == 200
     assert len(reloaded.json()["annotations"]) == 2
+    assert reloaded.json()["annotations"][0]["stroke_width"] == 4.5
+
+    edited = client.put(
+        f"/api/v1/markups/{session_id}/annotations",
+        headers=dcc_headers,
+        json={
+            "expected_version": saved_body["draft_version"],
+            "annotations": [
+                {
+                    "id": saved_body["annotations"][0]["id"],
+                    "kind": "rectangle",
+                    "page_no": 1,
+                    "points": [{"x": 0.1, "y": 0.1}, {"x": 0.4, "y": 0.3}],
+                    "text": "نظر ویرایش‌شده",
+                    "color": "#1f4e79",
+                    "stroke_width": 5,
+                },
+                {
+                    "id": saved_body["annotations"][1]["id"],
+                    "kind": "sticky_note",
+                    "page_no": 1,
+                    "points": [{"x": 0.5, "y": 0.4}, {"x": 0.8, "y": 0.6}],
+                    "text": "لطفاً اصلاح شود",
+                    "color": "#e09f3e",
+                    "stroke_width": 1.5,
+                },
+            ],
+        },
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["annotations"][0]["text"] == "نظر ویرایش‌شده"
+    assert edited.json()["annotations"][0]["stroke_width"] == 5
 
     submitted = client.post(f"/api/v1/markups/{session_id}/submit", headers=dcc_headers)
     assert submitted.status_code == 200, submitted.text

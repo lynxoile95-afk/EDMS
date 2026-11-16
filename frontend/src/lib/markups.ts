@@ -11,6 +11,41 @@ export interface MarkupPointInput {
   y: number;
 }
 
+export const DEFAULT_MARKUP_COLOR = "#d64545";
+export const DEFAULT_MARKUP_STROKE_WIDTH = 2.5;
+export const MIN_MARKUP_STROKE_WIDTH = 1;
+export const MAX_MARKUP_STROKE_WIDTH = 6;
+
+/** The palette deliberately excludes white and near-white strokes on PDF pages. */
+export const MARKUP_COLOR_PALETTE = [
+  { value: "#d64545", label: "قرمز" },
+  { value: "#1f4e79", label: "آبی" },
+  { value: "#1f8a70", label: "سبز" },
+  { value: "#d97706", label: "نارنجی" },
+  { value: "#7c3aed", label: "بنفش" },
+  { value: "#111827", label: "مشکی" },
+  { value: "#0f766e", label: "سبزآبی" },
+  { value: "#b91c1c", label: "قرمز تیره" },
+] as const;
+
+function isLightMarkupColor(color: string): boolean {
+  const channels = [1, 3, 5].map((index) => Number.parseInt(color.slice(index, index + 2), 16));
+  return channels.every((channel) => channel >= 238);
+}
+
+/** Normalize legacy/invalid white strokes to a visible offline-safe color. */
+export function normalizeMarkupColor(value: string | null | undefined): string {
+  const color = value ?? DEFAULT_MARKUP_COLOR;
+  if (!/^#[0-9a-f]{6}$/i.test(color) || isLightMarkupColor(color)) return DEFAULT_MARKUP_COLOR;
+  return color;
+}
+
+export function normalizeMarkupStrokeWidth(value: number | null | undefined): number {
+  const raw = Number(value ?? DEFAULT_MARKUP_STROKE_WIDTH);
+  if (!Number.isFinite(raw)) return DEFAULT_MARKUP_STROKE_WIDTH;
+  return Math.min(Math.max(raw, MIN_MARKUP_STROKE_WIDTH), MAX_MARKUP_STROKE_WIDTH);
+}
+
 export interface MarkupAnnotationInput {
   id?: string;
   kind: MarkupAnnotation["kind"];
@@ -18,6 +53,7 @@ export interface MarkupAnnotationInput {
   points: MarkupPointInput[];
   text?: string | null;
   color: string;
+  stroke_width: number;
 }
 
 /**
@@ -36,7 +72,8 @@ export function toMarkupAnnotationInputs(
     page_no: annotation.page_no,
     points: annotation.points,
     text: annotation.text,
-    color: annotation.color,
+    color: normalizeMarkupColor(annotation.color),
+    stroke_width: normalizeMarkupStrokeWidth(annotation.stroke_width),
   }));
 }
 

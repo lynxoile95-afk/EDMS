@@ -6,6 +6,15 @@ import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type { MarkupAnnotation, MarkupKind, MarkupPoint } from "@/lib/types";
 import { persianDigits } from "@/lib/format";
 import {
+  DEFAULT_MARKUP_COLOR,
+  DEFAULT_MARKUP_STROKE_WIDTH,
+  MARKUP_COLOR_PALETTE,
+  MAX_MARKUP_STROKE_WIDTH,
+  MIN_MARKUP_STROKE_WIDTH,
+  normalizeMarkupColor,
+  normalizeMarkupStrokeWidth,
+} from "@/lib/markups";
+import {
   IconArrow,
   IconCloud,
   IconCursor,
@@ -49,7 +58,6 @@ const TOOL_LABELS: Record<Tool, string> = {
 };
 
 const TOOL_ORDER: Tool[] = ["select", "sticky_note", "highlight", "rectangle", "revision_cloud", "arrow", "free_text", "freehand"];
-const DEFAULT_COLOR = "#d64545";
 
 function ToolIcon({ tool }: { tool: Tool }) {
   const props = { className: "h-4 w-4" };
@@ -134,7 +142,7 @@ function bounds(annotation: Pick<MarkupAnnotation, "points">): { x: number; y: n
 }
 
 function colorFor(annotation: Pick<MarkupAnnotation, "color">): string {
-  return /^#[0-9a-f]{6}$/i.test(annotation.color) ? annotation.color : DEFAULT_COLOR;
+  return normalizeMarkupColor(annotation.color);
 }
 
 export interface MarkupEditorProps {
@@ -173,7 +181,8 @@ export function MarkupEditor({
   const [documentPageCount, setDocumentPageCount] = useState(0);
   const [page, setPage] = useState(initialPage);
   const [tool, setTool] = useState<Tool>(readOnly ? "select" : "select");
-  const [color, setColor] = useState(DEFAULT_COLOR);
+  const [color, setColor] = useState(DEFAULT_MARKUP_COLOR);
+  const [strokeWidth, setStrokeWidth] = useState(DEFAULT_MARKUP_STROKE_WIDTH);
   const [zoom, setZoom] = useState(1);
   const [fitScale, setFitScale] = useState(1);
   const [viewport, setViewport] = useState({ width: 612, height: 792 });
@@ -193,6 +202,13 @@ export function MarkupEditor({
     setLocalSelectedId(id);
     onSelectedIdChange?.(id);
   }, [onSelectedIdChange]);
+
+  useEffect(() => {
+    const selected = effectiveSelectedId ? annotations.find((annotation) => annotation.id === effectiveSelectedId) : null;
+    if (!selected) return;
+    setColor(colorFor(selected));
+    setStrokeWidth(normalizeMarkupStrokeWidth(selected.stroke_width));
+  }, [annotations, effectiveSelectedId]);
 
   useEffect(() => {
     setPage(Math.max(1, initialPage));
@@ -318,6 +334,24 @@ export function MarkupEditor({
     onChange(annotations.map((annotation) => annotation.id === id ? { ...annotation, points: nextPoints } : annotation));
   };
 
+  const changeColor = (value: string) => {
+    const nextColor = normalizeMarkupColor(value);
+    setColor(nextColor);
+    if (readOnly || !effectiveSelectedId) return;
+    onChange(annotations.map((annotation) => annotation.id === effectiveSelectedId
+      ? { ...annotation, color: nextColor, updated_at: new Date().toISOString() }
+      : annotation));
+  };
+
+  const changeStrokeWidth = (value: number) => {
+    const nextWidth = normalizeMarkupStrokeWidth(value);
+    setStrokeWidth(nextWidth);
+    if (readOnly || !effectiveSelectedId) return;
+    onChange(annotations.map((annotation) => annotation.id === effectiveSelectedId
+      ? { ...annotation, stroke_width: nextWidth, updated_at: new Date().toISOString() }
+      : annotation));
+  };
+
   const pointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (readOnly || !hostRef.current) return;
     const target = event.target as HTMLElement;
@@ -375,7 +409,8 @@ export function MarkupEditor({
       page_no: page,
       points: points.length > 1 ? points : [draft.start, { x: clamp(draft.start.x + 0.08), y: clamp(draft.start.y + 0.05) }],
       text: null,
-      color,
+      color: normalizeMarkupColor(color),
+      stroke_width: normalizeMarkupStrokeWidth(strokeWidth),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       reply_status: "open",
@@ -449,9 +484,41 @@ export function MarkupEditor({
           </div>
         ) : <span className="flex items-center px-2 font-bold text-[#5c6b78]">جلسه ثبت نهایی‌شده — فقط خواندنی</span>}
         {!readOnly ? (
-          <label className="flex min-w-[3.2rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1 text-[8px] text-[#33475b]" title="رنگ نشانه‌گذاری">
-            <span className="flex h-5 items-center">رنگ</span>
-            <input type="color" aria-label="رنگ نشانه‌گذاری" value={color} onChange={(event) => setColor(event.target.value)} className="h-4 w-7 cursor-pointer border-0 bg-transparent p-0" />
+          <div className="flex min-h-[2.55rem] flex-wrap items-center gap-1 rounded border border-[#d3d9de] bg-white/70 px-1.5 py-0.5 text-[8px] text-[#33475b]" title="پالت رنگ خط">
+            <span className="font-bold">رنگ خط</span>
+            <div className="flex items-center gap-0.5" role="group" aria-label="پالت رنگ خطوط">
+              {MARKUP_COLOR_PALETTE.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={`h-4 w-4 rounded-full border border-[#697783] shadow-sm transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-[#1f4e79] focus:ring-offset-1 ${color.toLowerCase() === item.value ? "ring-2 ring-[#1f4e79] ring-offset-1" : ""}`}
+                  style={{ backgroundColor: item.value }}
+                  aria-label={`رنگ خط ${item.label}`}
+                  title={`رنگ خط: ${item.label}`}
+                  onClick={() => changeColor(item.value)}
+                />
+              ))}
+            </div>
+            <label className="flex cursor-pointer items-center gap-0.5 border-r border-[#d3d9de] pr-1" title="رنگ سفارشی خط">
+              <span className="sr-only">رنگ سفارشی خط</span>
+              <input type="color" aria-label="رنگ سفارشی خط" value={color} onChange={(event) => changeColor(event.target.value)} className="h-4 w-5 cursor-pointer border-0 bg-transparent p-0" />
+            </label>
+          </div>
+        ) : null}
+        {!readOnly ? (
+          <label className="flex min-h-[2.55rem] min-w-[8.5rem] items-center gap-1 rounded border border-[#d3d9de] bg-white/70 px-1.5 py-0.5 text-[8px] text-[#33475b]" title="ضخامت خط">
+            <span className="whitespace-nowrap font-bold">ضخامت</span>
+            <input
+              type="range"
+              min={MIN_MARKUP_STROKE_WIDTH}
+              max={MAX_MARKUP_STROKE_WIDTH}
+              step={0.5}
+              value={strokeWidth}
+              onChange={(event) => changeStrokeWidth(Number(event.target.value))}
+              aria-label="ضخامت خط"
+              className="w-16 accent-[#1f4e79]"
+            />
+            <output className="min-w-[2.1rem] text-center" dir="ltr">{strokeWidth.toFixed(1)}</output>
           </label>
         ) : null}
         <div className="flex items-stretch gap-0.5 rounded border border-[#d3d9de] bg-white/70 px-1">
@@ -487,7 +554,12 @@ export function MarkupEditor({
               const box = bounds(annotation);
               const selected = annotation.id === effectiveSelectedId;
               const stroke = colorFor(annotation);
-              const common = { "data-markup-id": annotation.id, stroke, strokeWidth: selected ? 0.004 : 0.0025, vectorEffect: "non-scaling-stroke" as const };
+              const width = normalizeMarkupStrokeWidth(annotation.stroke_width) / 1000;
+              const common = {
+                "data-markup-id": annotation.id,
+                stroke,
+                strokeWidth: selected ? width + 0.001 : width,
+              };
               const p = annotation.points;
               if (annotation.kind === "freehand") {
                 return <polyline key={annotation.id} {...common} points={p.map((item) => `${item.x},${item.y}`).join(" ")} fill="none" />;
@@ -505,7 +577,7 @@ export function MarkupEditor({
                   {annotation.kind === "sticky_note" ? <rect {...common} x={box.x} y={box.y} width={box.w} height={box.h} fill="#fff2a8" fillOpacity={0.9} /> : null}
                   {annotation.kind === "free_text" ? <text {...common} x={box.x} y={box.y + box.h * 0.8} fontSize={Math.max(0.014, box.h * 0.65)} fill={stroke} stroke="none">{annotation.text || "نظر"}</text> : null}
                   {annotation.kind === "sticky_note" ? <text x={box.x + 0.006} y={box.y + Math.min(0.03, box.h * 0.55)} fontSize={Math.max(0.01, box.h * 0.24)} fill="#482c00" stroke="none">{annotation.text || "نظر"}</text> : null}
-                  {selected && !readOnly ? <rect data-resize-handle="true" x={box.x + box.w - 0.012} y={box.y + box.h - 0.012} width="0.024" height="0.024" fill="white" stroke={stroke} strokeWidth="0.003" vectorEffect="non-scaling-stroke" /> : null}
+                  {selected && !readOnly ? <rect data-resize-handle="true" x={box.x + box.w - 0.012} y={box.y + box.h - 0.012} width="0.024" height="0.024" fill="white" stroke={stroke} strokeWidth={width} /> : null}
                 </g>
               );
             })}

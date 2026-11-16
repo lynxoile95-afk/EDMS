@@ -552,6 +552,8 @@ export interface MarkupAnnotation {
   points: MarkupPoint[];
   text: string | null;
   color: string;
+  /** PDF points; optional keeps older sessions compatible with the default width. */
+  stroke_width?: number;
   author_id: string | null;
   author_name: string | null;
   created_at: string;

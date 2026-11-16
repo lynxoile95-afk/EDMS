@@ -17,6 +17,9 @@ if TYPE_CHECKING:
     from app.models.transmittal import Transmittal
 
 
+DEFAULT_MARKUP_STROKE_WIDTH = 2.5
+
+
 class MarkupSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """A reversible personal draft for a PDF transmittal attachment."""
 
@@ -100,3 +103,32 @@ class MarkupAnnotation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     session: Mapped[MarkupSession] = relationship(back_populates="annotations")
     author: Mapped["User | None"] = relationship(foreign_keys=[author_id], lazy="joined")
     replied_by: Mapped["User | None"] = relationship(foreign_keys=[replied_by_id], lazy="joined")
+    style: Mapped["MarkupAnnotationStyle | None"] = relationship(
+        back_populates="annotation",
+        uselist=False,
+        cascade="all, delete-orphan",
+        lazy="joined",
+    )
+
+
+class MarkupAnnotationStyle(Base):
+    """Presentation settings owned by the markup feature.
+
+    Keeping line width in its own feature table avoids altering the original
+    annotation table while allowing old sessions to use the default width.
+    """
+
+    __tablename__ = "markup_annotation_styles"
+
+    annotation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("markup_annotations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    stroke_width: Mapped[float] = mapped_column(
+        Float,
+        default=DEFAULT_MARKUP_STROKE_WIDTH,
+        server_default="2.5",
+        nullable=False,
+    )
+
+    annotation: Mapped[MarkupAnnotation] = relationship(back_populates="style")

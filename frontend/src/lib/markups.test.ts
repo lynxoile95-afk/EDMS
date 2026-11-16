@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MarkupAnnotation } from "./types";
-import { toMarkupAnnotationInputs } from "./markups";
+import { normalizeMarkupColor, toMarkupAnnotationInputs } from "./markups";
 
 function annotation(id: string, number: number): MarkupAnnotation {
   return {
@@ -29,8 +29,13 @@ describe("toMarkupAnnotationInputs", () => {
     const local = annotation("local-annotation-2", 2);
     const [persistedInput, localInput] = toMarkupAnnotationInputs([persisted, local], [persisted]);
 
-    expect(persistedInput).toMatchObject({ id: "server-annotation-1", text: "نظر 1" });
+    expect(persistedInput).toMatchObject({ id: "server-annotation-1", text: "نظر 1", stroke_width: 2.5 });
     expect(localInput).not.toHaveProperty("id");
-    expect(localInput).toMatchObject({ kind: "sticky_note", page_no: 1, text: "نظر 2" });
+    expect(localInput).toMatchObject({ kind: "sticky_note", page_no: 1, text: "نظر 2", stroke_width: 2.5 });
+  });
+
+  it("replaces legacy white strokes with a visible default", () => {
+    expect(normalizeMarkupColor("#ffffff")).toBe("#d64545");
+    expect(normalizeMarkupColor("#1f4e79")).toBe("#1f4e79");
   });
 });

@@ -161,6 +161,7 @@ describe("MarkupSessionPage", () => {
   it("keeps a local draft backup and warns before unload", async () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "mock add markup" }));
+    await waitFor(() => expect(window.localStorage.getItem("edms-markup-draft:session-1")).not.toBeNull());
 
     const event = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(event);
@@ -176,6 +177,10 @@ describe("MarkupSessionPage", () => {
     renderPage();
     expect(await screen.findByText(/نسخه محلی ذخیره‌نشده بازیابی شد/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "ذخیره دستی" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "ویرایش نظر 1" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "ویرایش متن نظر 1" }), { target: { value: "نظر اصلاح‌شده" } });
+    fireEvent.click(screen.getByRole("button", { name: "ذخیره تغییر" }));
+    expect(screen.getByText("نظر اصلاح‌شده")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: /ثبت نهایی و تولید Comment/ }).at(-1)!);
     await waitFor(() => expect(mocks.save).toHaveBeenCalled());
     expect(mocks.save.mock.calls[0][1][0]).not.toHaveProperty("id");

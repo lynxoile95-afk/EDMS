@@ -38,6 +38,7 @@ vi.mock("@/lib/markups", () => ({
   replyToMarkup: vi.fn(),
   saveMarkupAnnotations: vi.fn(),
   submitMarkupSession: vi.fn(),
+  toMarkupAnnotationInputs: vi.fn((annotations) => annotations),
 }));
 
 vi.mock("@/components/MarkupEditor", () => ({

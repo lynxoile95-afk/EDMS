@@ -167,6 +167,18 @@ export function MarkupSessionPage() {
     setAnnotations(next);
     setDirty(true);
     setNotice("تغییرات در حافظه نگه‌داری شد؛ ذخیره خودکار فعال است.");
+    if (session?.can_edit) {
+      try {
+        // Write immediately as well as from the effect below so a sudden tab
+        // close cannot race React's next render.
+        localStorage.setItem(
+          localKey(session.id),
+          JSON.stringify({ version: session.draft_version + 1, annotations: next }),
+        );
+      } catch {
+        setNotice("ذخیره محلی مرورگر در دسترس نیست؛ اتصال را حفظ کنید و دستی ذخیره کنید.");
+      }
+    }
   };
 
   const submit = async () => {
